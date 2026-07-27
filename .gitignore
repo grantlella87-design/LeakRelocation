@@ -1,0 +1,44 @@
+﻿# Local caches and generated data
+layer_cache/
+assettype_cache_enrichment/
+assettype_sample_debug/
+assettype_only_small_test/
+assettype_domain_diagnostics/
+material_domain_diagnostics_v2/
+production_moved_leak_outputs/**/*.csv
+production_moved_leak_outputs/**/*.geojson
+production_moved_leak_outputs/**/*.gpkg
+production_moved_leak_outputs/**/*.log
+production_moved_leak_outputs/local_leaflet_view/relocated_*.geojson
+production_moved_leak_outputs/local_leaflet_view_with_pipes/*.geojson
+*.pkl.gz
+*.gpkg
+*.gdb/
+*.fgdb/
+*.sqlite
+*.db
+*.log
+*.bak
+*.tmp
+*.zip
+
+# Secrets and auth artifacts
+*token*
+*Token*
+*.secret
+*.secrets
+.env
+.env.*
+credentials.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
