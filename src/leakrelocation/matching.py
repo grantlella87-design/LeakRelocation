@@ -34,18 +34,18 @@ SERVICE_ASSETTYPE_LABELS = {
     999: "UNK",
 }
 
-# KNOWN DEFECT - behaviour preserved deliberately, see tests/test_matching.py.
-# These terms are matched as plain substrings against the uppercased label and
-# the first family that hits wins, so insertion order is significant:
-#   * "COPPER" contains "PE", and PLASTIC is checked first, so copper is
-#     classified PLASTIC and the COPPER family is unreachable. A copper leak
-#     therefore family-matches any plastic pipe.
-#   * Hyphenated spellings ("cast-iron") miss the spaced terms ("CAST IRON")
-#     and fall through to the raw label instead of a family.
-# Fixing either changes which pipes leaks relocate onto, so it needs a
-# deliberate decision and a production re-run rather than a silent edit.
+# Terms are matched against the label's *tokens*, not as raw substrings, and
+# the first family that hits wins so insertion order is significant.
+#
+# Substring matching was the historical behaviour and it misclassified
+# materials whose spelling happens to contain a short abbreviation: "COPPER"
+# contains "PE", so with PLASTIC checked first every copper pipe was classified
+# PLASTIC and the COPPER family below was unreachable. See match_term().
 MATERIAL_FAMILY_TERMS = {
-    "PLASTIC": ["PLASTIC", "POLY", "PE", "PVC", "ABS", "POLYBUTYLENE", "HD", "MD"],
+    # HDPE/MDPE are spelled out because token matching will not find the "HD"
+    # and "PE" inside them, and they are common in the supplemental leak data.
+    "PLASTIC": ["PLASTIC", "POLY", "PE", "PVC", "ABS", "POLYBUTYLENE",
+                "HD", "MD", "HDPE", "MDPE"],
     "IRON": ["CAST IRON", "DUCTILE", "WROUGHT IRON", "RECONDITIONED CAST"],
     "STEEL": ["STEEL", "BARE STEEL", "COATED STEEL", "GALVANIZED", "RECONDITIONED STEEL"],
     "COPPER": ["COPPER"],
@@ -117,13 +117,51 @@ def material_label(value):
     return clean(value)
 
 
+# A term shorter than this must match a whole token. Longer terms may match a
+# token prefix, so "POLY" still catches "POLYETHYLENE" while "PE" cannot match
+# inside "COPPER".
+PREFIX_MATCH_MIN_LENGTH = 4
+
+_TOKEN_SEPARATOR = re.compile(r"[^A-Z0-9]+")
+
+
+def material_tokens(value):
+    """Split a decoded material label into uppercase alphanumeric tokens.
+
+    Splitting on punctuation means "cast-iron" and "Cast Iron" tokenise the
+    same way, so both resolve to the IRON family.
+    """
+    return [token for token in _TOKEN_SEPARATOR.split(upper(material_label(value))) if token]
+
+
+def match_term(tokens, term):
+    """True when a family term matches the given tokens.
+
+    Multi-word terms ("CAST IRON") must appear as consecutive tokens. Single
+    terms must equal a token, or prefix one when long enough to be unambiguous
+    - see PREFIX_MATCH_MIN_LENGTH.
+    """
+    term_tokens = term.split()
+    if len(term_tokens) > 1:
+        width = len(term_tokens)
+        return any(tokens[i:i + width] == term_tokens
+                   for i in range(len(tokens) - width + 1))
+
+    single = term_tokens[0]
+    if single in tokens:
+        return True
+    if len(single) >= PREFIX_MATCH_MIN_LENGTH:
+        return any(token.startswith(single) for token in tokens)
+    return False
+
+
 def material_family(value):
     """Map a material to its broad family, falling back to the label itself."""
-    text = upper(material_label(value))
+    tokens = material_tokens(value)
     for family, terms in MATERIAL_FAMILY_TERMS.items():
-        if any(term in text for term in terms):
+        if any(match_term(tokens, term) for term in terms):
             return family
-    return text
+    return upper(material_label(value))
 
 
 def material_matches(leak_value, pipe_value):

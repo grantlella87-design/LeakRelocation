@@ -129,25 +129,81 @@ class TestMaterialMatches:
         assert matching.material_matches("", "") is False
 
 
-class TestKnownDefects:
-    """Pins existing incorrect behaviour so a future fix is a deliberate,
-    reviewed change rather than an accident. See MATERIAL_FAMILY_TERMS."""
+class TestCopperIsNotPlastic:
+    """Regression tests for the substring-matching defect.
 
-    def test_copper_is_classified_as_plastic(self):
-        # "COPPER" contains the substring "PE" and PLASTIC is tested first,
-        # so the COPPER family is unreachable.
-        assert matching.material_family("Copper") == "PLASTIC"
+    Family terms used to be matched as raw substrings. "COPPER" contains "PE"
+    and PLASTIC was tested first, so every copper pipe was classified PLASTIC,
+    the COPPER family was unreachable, and a copper leak relocated onto plastic
+    pipe.
+    """
 
-    def test_copper_leak_matches_plastic_pipe(self):
-        # Consequence of the above: a copper leak relocates onto plastic pipe.
-        assert matching.material_matches("Copper", "Plastic PE") is True
-        assert matching.material_matches("Copper", "PLASTIC") is True
+    @pytest.mark.parametrize("value", ["Copper", "COPPER", "Copper Tubing", 5])
+    def test_copper_classifies_as_copper(self, value):
+        assert matching.material_family(value) == "COPPER"
 
-    def test_hyphenated_spelling_misses_its_family(self):
-        # Terms are spaced ("CAST IRON"), so hyphenated input falls through
-        # to the raw label instead of resolving to IRON.
-        assert matching.material_family("cast-iron") == "CAST-IRON"
-        assert matching.material_family("Cast Iron") == "IRON"
+    @pytest.mark.parametrize("pipe", [
+        "Plastic PE", "PLASTIC", "Polyethylene", "Plastic PVC",
+        "Plastic ABS", "Polybutylene", "HDPE", "MDPE",
+    ])
+    def test_copper_leak_does_not_match_plastic_pipe(self, pipe):
+        assert matching.material_matches("Copper", pipe) is False
+        assert matching.material_matches(pipe, "Copper") is False
+
+    def test_copper_still_matches_copper(self):
+        assert matching.material_matches("Copper", "Copper") is True
+        assert matching.material_matches("Copper", 5) is True
+
+    def test_short_abbreviations_do_not_match_inside_words(self):
+        # The mechanism behind the defect: "PE" must be a token, not a substring.
+        assert matching.match_term(["COPPER"], "PE") is False
+        assert matching.match_term(["PE"], "PE") is True
+
+
+class TestHyphenatedSpellings:
+    """Terms are spaced ("CAST IRON"); tokenising on punctuation means
+    hyphenated spellings resolve to the same family."""
+
+    @pytest.mark.parametrize("value", ["cast-iron", "Cast-Iron", "Cast Iron", "CAST  IRON"])
+    def test_cast_iron_variants_resolve_to_iron(self, value):
+        assert matching.material_family(value) == "IRON"
+
+    def test_hyphenated_matches_spaced(self):
+        assert matching.material_matches("Cast Iron", "cast-iron") is True
+        assert matching.material_matches("ductile-iron", "Ductile Iron") is True
+
+
+class TestPlasticAbbreviations:
+    """HDPE/MDPE are spelled out in the term list because token matching will
+    not find the "HD"/"PE" inside them."""
+
+    @pytest.mark.parametrize("value", ["HDPE", "MDPE", "PE", "Polyethylene", "Polybutylene", "PVC"])
+    def test_plastic_abbreviations(self, value):
+        assert matching.material_family(value) == "PLASTIC"
+
+    def test_long_terms_may_prefix_match(self):
+        # "POLY" is long enough to prefix-match POLYETHYLENE.
+        assert matching.match_term(["POLYETHYLENE"], "POLY") is True
+
+    def test_short_terms_must_match_whole_token(self):
+        assert len("MD") < matching.PREFIX_MATCH_MIN_LENGTH
+        assert matching.match_term(["MDPE"], "MD") is False
+
+
+class TestMaterialTokens:
+    @pytest.mark.parametrize("value,tokens", [
+        ("Cast Iron", ["CAST", "IRON"]),
+        ("cast-iron", ["CAST", "IRON"]),
+        ("Plastic PE", ["PLASTIC", "PE"]),
+        ("", []),
+        (None, []),
+    ])
+    def test_tokenisation(self, value, tokens):
+        assert matching.material_tokens(value) == tokens
+
+    def test_multi_word_terms_need_consecutive_tokens(self):
+        assert matching.match_term(["CAST", "IRON"], "CAST IRON") is True
+        assert matching.match_term(["CAST", "STEEL", "IRON"], "CAST IRON") is False
 
 
 class TestDiameterMatches:

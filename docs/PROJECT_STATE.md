@@ -24,16 +24,28 @@ Default locations (overridable):
 - Local output folder:
   `~/Downloads/LeakRelocation-GeoPandas/production_moved_leak_outputs`
 
-## Known defects
+## Material family matching
 
-Two pre-existing material-classification defects are pinned by tests in
-`tests/test_matching.py` rather than fixed, because changing them changes which
-pipes leaks relocate onto:
+Family terms are matched against the *tokens* of a decoded material label, not
+as raw substrings. Terms shorter than four characters must equal a whole token;
+longer ones may match a token prefix, so `POLY` still catches `POLYETHYLENE`.
 
-- `"COPPER"` contains the substring `"PE"` and `PLASTIC` is tested first, so
-  copper classifies as `PLASTIC` and a copper leak matches any plastic pipe.
-- Hyphenated spellings (`"cast-iron"`) miss the spaced family terms
-  (`"CAST IRON"`) and fall through to the raw label.
+This replaced substring matching, which had two consequences:
+
+- `"COPPER"` contains `"PE"` and `PLASTIC` was tested first, so every copper
+  pipe classified as `PLASTIC`, the `COPPER` family was unreachable, and copper
+  leaks relocated onto plastic pipe.
+- Hyphenated spellings (`"cast-iron"`) missed the spaced terms (`"CAST IRON"`)
+  and fell through to the raw label.
+
+**Relocation results change as a result.** Across the full material domain the
+only pairs affected are copper-versus-plastic (which no longer match) and
+hyphenated-versus-spaced iron (which now do). `HDPE` and `MDPE` are listed
+explicitly in the plastic terms because token matching cannot see the `"HD"`
+and `"PE"` inside them.
+
+Existing GeoPackage output produced before this change was made will not agree
+with a fresh run for copper leaks.
 
 ## Important generated outputs not committed by default
 
