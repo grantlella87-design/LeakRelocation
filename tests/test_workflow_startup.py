@@ -137,6 +137,126 @@ class TestLoopbackSignIn:
         assert time.time() - started < 10
 
 
+class TestAuthorizeUrl:
+    """The redirect_uri travels as a query value. ":" and "/" are legal there,
+    so leaving them unescaped keeps the URL readable and removes
+    percent-encoding as a variable when the portal rejects a redirect."""
+
+    def test_loopback_redirect_is_not_over_encoded(self, lr):
+        url = lr.build_authorize_url("http://localhost:8770/")
+        assert "redirect_uri=http://localhost:8770/" in url
+        assert "%3A%2F%2F" not in url
+
+    def test_redirect_uri_round_trips(self, lr):
+        import urllib.parse
+        for redirect in ["http://localhost:8770/", "http://127.0.0.1:9000",
+                         "urn:ietf:wg:oauth:2.0:oob"]:
+            url = lr.build_authorize_url(redirect)
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            assert query["redirect_uri"][0] == redirect
+
+    def test_required_oauth_parameters_present(self, lr):
+        import urllib.parse
+        url = lr.build_authorize_url("http://localhost:8770/")
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        assert query["response_type"] == ["code"]
+        assert query["client_id"] == [lr.ARCGIS_CLIENT_ID]
+        assert "expiration" in query
+
+
+class _Response:
+    def __init__(self, status, body, is_json=True):
+        self.status_code = status
+        self._body = body
+        self._is_json = is_json
+
+    def json(self):
+        if not self._is_json:
+            raise ValueError("not json")
+        return self._body
+
+    @property
+    def text(self):
+        return str(self._body)
+
+
+class _Session:
+    def __init__(self, response):
+        self._response = response
+
+    def get(self, url, **kwargs):
+        return self._response
+
+
+class TestAuthorizePreflight:
+    """A rejected redirect_uri otherwise appears only as a 400 page inside the
+    browser, which the script cannot read."""
+
+    def test_rejects_and_reports_a_400(self, lr, capsys):
+        response = _Response(400, {"error": {
+            "message": "Invalid redirect_uri",
+            "details": ["redirect_uri is not registered"]}})
+        assert lr.authorize_url_is_accepted(_Session(response), "u", "http://localhost:8770/") is False
+        output = capsys.readouterr().out
+        assert "Invalid redirect_uri" in output
+        assert "redirect_uri is not registered" in output
+
+    def test_names_the_redirect_uri_that_was_sent(self, lr, capsys):
+        response = _Response(400, {"error": {"message": "bad"}})
+        lr.authorize_url_is_accepted(_Session(response), "u", "http://localhost:8770/")
+        assert "http://localhost:8770/" in capsys.readouterr().out
+
+    def test_accepts_a_sign_in_page(self, lr):
+        response = _Response(200, "<html>sign in</html>", is_json=False)
+        assert lr.authorize_url_is_accepted(_Session(response), "u", "r") is True
+
+    def test_rejects_an_error_payload_returned_with_200(self, lr, capsys):
+        response = _Response(200, {"error": {"message": "Invalid client_id"}})
+        assert lr.authorize_url_is_accepted(_Session(response), "u", "r") is False
+        assert "Invalid client_id" in capsys.readouterr().out
+
+    def test_accepts_clean_json(self, lr):
+        assert lr.authorize_url_is_accepted(_Session(_Response(200, {"ok": True})), "u", "r") is True
+
+    def test_unreachable_preflight_does_not_block_sign_in(self, lr):
+        import requests
+
+        class Unreachable:
+            def get(self, *args, **kwargs):
+                raise requests.RequestException("no route to host")
+
+        with redirect_stdout(io.StringIO()):
+            assert lr.authorize_url_is_accepted(Unreachable(), "u", "r") is True
+
+
+class TestRedirectUriIsConfigurable:
+    """The portal matches redirect_uri as a string, so host spelling and the
+    trailing slash have to be settable to match the app registration."""
+
+    def test_default_uses_localhost_with_trailing_slash(self):
+        assert config.LOOPBACK_REDIRECT_URI == f"http://localhost:{config.LOOPBACK_OAUTH_PORT}/"
+
+    def test_whole_uri_can_be_overridden(self, monkeypatch):
+        import importlib
+        monkeypatch.setenv("LEAKRELOCATION_LOOPBACK_REDIRECT_URI", "http://127.0.0.1:9999")
+        try:
+            reloaded = importlib.reload(config)
+            assert reloaded.LOOPBACK_REDIRECT_URI == "http://127.0.0.1:9999"
+        finally:
+            monkeypatch.delenv("LEAKRELOCATION_LOOPBACK_REDIRECT_URI")
+            importlib.reload(config)
+
+    def test_host_can_be_overridden(self, monkeypatch):
+        import importlib
+        monkeypatch.setenv("LEAKRELOCATION_LOOPBACK_HOST", "127.0.0.1")
+        try:
+            reloaded = importlib.reload(config)
+            assert reloaded.LOOPBACK_REDIRECT_URI.startswith("http://127.0.0.1:")
+        finally:
+            monkeypatch.delenv("LEAKRELOCATION_LOOPBACK_HOST")
+            importlib.reload(config)
+
+
 class TestCacheFreshness:
     """A recent cache is trusted without a server round trip. Checking costs a
     metadata request plus two count queries per layer and needs a token."""
