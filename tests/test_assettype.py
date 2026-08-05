@@ -5,6 +5,7 @@ module and a temporary cache, so no network or shared drive is involved.
 """
 import os
 import sys
+from typing import ClassVar
 
 import pytest
 
@@ -272,3 +273,75 @@ class TestEnrichLayer:
         assert len(df.columns) == len(set(df.columns))
         assert list(df["GradeMaterial"]) == ["Grade A", "Grade B", "Grade C"]
         assert len(df) == 3
+
+
+class TestPreflightDiagnosesWhyRawIsEmpty:
+    """PipeMaterialRaw can be blank for three different reasons, which look
+    identical in the viewer. The preflight has to tell them apart."""
+
+    @pytest.fixture
+    def preflight(self):
+        import preflight_assettype_cache_check
+        return preflight_assettype_cache_check
+
+    def write(self, cache_dir, **columns):
+        frame = pd.DataFrame(columns)
+        for name in ["distribution_pipes", "service_pipes"]:
+            frame.to_pickle(cache_dir / f"{name}.pkl.gz", compression="gzip")
+
+    @pytest.fixture
+    def cache_dir(self, tmp_path, monkeypatch):
+        from leakrelocation import config
+        directory = tmp_path / "layer_cache"
+        directory.mkdir()
+        monkeypatch.setattr(config, "LAYER_CACHE_DIR", directory)
+        return directory
+
+    ENRICHED: ClassVar[dict] = {
+        "OBJECTID": [1, 2, 3],
+        "ASSETGROUP": [1, 1, 1],
+        "ASSETTYPE": [2, 5, 9],
+        "ASSETGROUP_DECODED": ["Main"] * 3,
+        "ASSETTYPE_DECODED": ["Cast Iron", "Copper", "Plastic PE"],
+        "ASSETTYPE_DOMAIN": ["D"] * 3,
+        "PipeMaterialFamily": ["IRON", "COPPER", "PLASTIC"],
+        "PipeMaterialRaw": [2, 5, 9],
+        "GradeMaterial": ["G1", "G2", "G3"],
+        "material": ["Cast Iron", "Copper", "Plastic PE"],
+    }
+
+    def test_a_populated_cache_passes(self, preflight, cache_dir, capsys):
+        self.write(cache_dir, **self.ENRICHED)
+        assert preflight.main() == 0
+        assert "PASS" in capsys.readouterr().out
+
+    def test_missing_cache_is_reported(self, preflight, cache_dir, capsys):
+        assert preflight.main() == 1
+        assert "MISSING CACHE" in capsys.readouterr().out
+
+    def test_unenriched_cache_names_the_grade_risk(self, preflight, cache_dir, capsys):
+        # material still holds the DNV Grade field, so families would come from
+        # grade data - the thing the project's key rule forbids.
+        self.write(cache_dir, OBJECTID=[1, 2], material=["Grade A", "Grade B"])
+        assert preflight.main() == 1
+        output = capsys.readouterr().out
+        assert "NOT ENRICHED" in output
+        assert "Grade" in output
+
+    def test_enriched_but_all_null_is_distinguished(self, preflight, cache_dir, capsys):
+        columns = {key: ([None] * 3 if key not in ("OBJECTID", "GradeMaterial") else value)
+                   for key, value in self.ENRICHED.items()}
+        self.write(cache_dir, **columns)
+        assert preflight.main() == 1
+        output = capsys.readouterr().out
+        assert "ENRICHED BUT EMPTY" in output
+        assert "--force" in output
+
+    def test_single_family_across_a_layer_is_flagged(self, preflight, cache_dir, capsys):
+        columns = dict(self.ENRICHED)
+        columns["ASSETTYPE_DECODED"] = ["Steel Pipe"] * 3
+        columns["material"] = ["Steel Pipe"] * 3
+        columns["PipeMaterialFamily"] = ["PLASTIC"] * 3
+        self.write(cache_dir, **columns)
+        preflight.main()
+        assert "every row classifies as" in capsys.readouterr().out
