@@ -3,12 +3,14 @@ import importlib.util
 import json
 import pandas as pd
 
-ROOT = Path.home() / "Downloads" / "LeakRelocation-GeoPandas"
-CACHE = ROOT / "layer_cache"
+from _bootstrap import config
+
+ROOT = config.WORK_ROOT
+CACHE = config.LAYER_CACHE_DIR
 OUT = ROOT / "assettype_only_small_test"
 OUT.mkdir(parents=True, exist_ok=True)
 
-MAIN_SCRIPT = Path(r"\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation\Arcpy Code\leak reolcation - geopandas.py")
+MAIN_SCRIPT = config.NETWORK_MAIN_SCRIPT
 
 SAMPLE_SIZE = 10
 

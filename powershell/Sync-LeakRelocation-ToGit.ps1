@@ -122,11 +122,13 @@ try {
     $RepoPowershell = Join-Path $RepoDir "powershell"
     $RepoDocs = Join-Path $RepoDir "docs"
     $RepoViewer = Join-Path $RepoDir "viewer"
+    $RepoLegacyPatches = Join-Path $RepoScripts "legacy_patches"
     Ensure-Directory $RepoSrc
     Ensure-Directory $RepoScripts
     Ensure-Directory $RepoPowershell
     Ensure-Directory $RepoDocs
     Ensure-Directory $RepoViewer
+    Ensure-Directory $RepoLegacyPatches
 
     Write-Step "Write .gitignore"
     $GitIgnore = @'
@@ -191,13 +193,16 @@ Thumbs.db
         "small_test_*.py",
         "sample_*.py",
         "enrich_*.py",
-        "patch_*.py",
         "preflight_*.py",
         "inspect_*.py"
     )
     foreach ($pattern in $PythonKeepPatterns) {
         Copy-MatchingFiles $WorkRoot $pattern $RepoScripts
     }
+
+    # patch_*.py edit the deployed script in place and must not land back in
+    # scripts/ as runnable tools. See scripts/legacy_patches/README.md.
+    Copy-MatchingFiles $WorkRoot "patch_*.py" $RepoLegacyPatches
 
     Write-Step "Copy PowerShell helper scripts"
     $PowerShellPatterns = @(

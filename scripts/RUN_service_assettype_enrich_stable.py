@@ -7,11 +7,13 @@ import threading
 import pandas as pd
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-ROOT = Path.home() / "Downloads" / "LeakRelocation-GeoPandas"
-CACHE = ROOT / "layer_cache"
-OUT = ROOT / "assettype_cache_enrichment"
+
+from _bootstrap import config
+ROOT = config.WORK_ROOT
+CACHE = config.LAYER_CACHE_DIR
+OUT = config.ENRICHMENT_DIR
 OUT.mkdir(parents=True, exist_ok=True)
-MAIN_SCRIPT = Path(r"\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation\Arcpy Code\leak reolcation - geopandas.py")
+MAIN_SCRIPT = config.NETWORK_MAIN_SCRIPT
 PAGE_SIZE = int(os.environ.get("LR_ASSETTYPE_PAGE_SIZE", "2000"))
 MAX_RETRIES = int(os.environ.get("LR_ASSETTYPE_RETRIES", "5"))
 DEFAULT_WORKERS = max(1, int((os.cpu_count() or 1) * 0.75))

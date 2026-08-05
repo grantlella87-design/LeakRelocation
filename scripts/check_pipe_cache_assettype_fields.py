@@ -1,8 +1,10 @@
 ﻿from pathlib import Path
 import pandas as pd
 
-ROOT = Path.home() / "Downloads" / "LeakRelocation-GeoPandas"
-CACHE = ROOT / "layer_cache"
+from _bootstrap import config
+
+ROOT = config.WORK_ROOT
+CACHE = config.LAYER_CACHE_DIR
 
 for name in ["distribution_pipes", "service_pipes"]:
     path = CACHE / (name + ".pkl.gz")

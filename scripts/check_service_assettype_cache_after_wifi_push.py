@@ -1,8 +1,10 @@
 ﻿from pathlib import Path
 import pandas as pd
 
-ROOT = Path.home() / "Downloads" / "LeakRelocation-GeoPandas"
-CACHE = ROOT / "layer_cache"
+from _bootstrap import config
+
+ROOT = config.WORK_ROOT
+CACHE = config.LAYER_CACHE_DIR
 path = CACHE / "service_pipes.pkl.gz"
 
 df = pd.read_pickle(path, compression="gzip")

@@ -3,10 +3,12 @@ import shutil
 import pandas as pd
 import geopandas as gpd
 
-ROOT = Path.home() / "Downloads" / "LeakRelocation-GeoPandas"
-PROJECT = Path(r"\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation")
+from _bootstrap import config
+
+ROOT = config.WORK_ROOT
+PROJECT = config.PROJECT_DIR
 GPKG = PROJECT / "HistoricLeakRelocation.gpkg"
-OUT = ROOT / "production_moved_leak_outputs" / "local_leaflet_view"
+OUT = config.VIEWER_DIR
 OUT.mkdir(parents=True, exist_ok=True)
 VENDOR_SRC = ROOT / "leaflet_context" / "vendor" / "leaflet"
 VENDOR_DST = OUT / "leaflet"

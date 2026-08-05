@@ -8,14 +8,16 @@ import traceback
 import pandas as pd
 import requests
 
-ROOT = Path.home() / "Downloads" / "LeakRelocation-GeoPandas"
-CACHE = ROOT / "layer_cache"
-OUT = ROOT / "assettype_cache_enrichment"
+from _bootstrap import config
+
+ROOT = config.WORK_ROOT
+CACHE = config.LAYER_CACHE_DIR
+OUT = config.ENRICHMENT_DIR
 SHARD_DIR = OUT / "service_assettype_shards"
 OUT.mkdir(parents=True, exist_ok=True)
 SHARD_DIR.mkdir(parents=True, exist_ok=True)
 
-MAIN_SCRIPT = Path(r"\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation\Arcpy Code\leak reolcation - geopandas.py")
+MAIN_SCRIPT = config.NETWORK_MAIN_SCRIPT
 
 CACHE_NAME = "service_pipes.pkl.gz"
 URL_ATTR = "SERVICE_PIPE_URL"

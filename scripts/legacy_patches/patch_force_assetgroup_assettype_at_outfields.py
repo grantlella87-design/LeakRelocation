@@ -3,7 +3,9 @@ import datetime
 import py_compile
 import traceback
 
-script = Path(r"\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation\Arcpy Code\leak reolcation - geopandas.py")
+from _bootstrap import config
+
+script = config.NETWORK_MAIN_SCRIPT
 backup = script.with_name(script.name + "." + datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + ".before_force_assettype_outfields_patch.bak")
 backup.write_bytes(script.read_bytes())
 

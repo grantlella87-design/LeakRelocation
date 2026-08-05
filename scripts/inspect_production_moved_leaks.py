@@ -3,11 +3,13 @@ import pandas as pd
 import geopandas as gpd
 import sys
 
-ROOT = Path.home() / "Downloads" / "LeakRelocation-GeoPandas"
-OUT = ROOT / "production_moved_leak_outputs"
+from _bootstrap import config
+
+ROOT = config.WORK_ROOT
+OUT = config.OUTPUT_DIR
 OUT.mkdir(parents=True, exist_ok=True)
 
-GPKG = Path(r"\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation\HistoricLeakRelocation.gpkg")
+GPKG = config.OUTPUT_GPKG
 
 print("=== Production moved leak output inspection ===")
 print("GeoPackage:", GPKG)
