@@ -100,13 +100,23 @@ const AttributePane = (function () {
     return layers.find(function (item) { return item.key === key; });
   }
 
-  /* Collect the features Leaflet currently holds for a layer. */
+  /* Collect the features Leaflet currently holds for a layer.
+     Recurses, because a layer may be an L.layerGroup wrapping an L.geoJSON
+     rather than holding features directly. */
   function collect(entry) {
     const collected = [];
-    if (!entry || !entry.layer || !entry.layer.eachLayer) return collected;
-    entry.layer.eachLayer(function (child) {
-      if (child.feature) collected.push({ feature: child.feature, mapLayer: child });
-    });
+    if (!entry || !entry.layer) return collected;
+
+    function walk(layer) {
+      if (!layer) return;
+      if (layer.feature) {
+        collected.push({ feature: layer.feature, mapLayer: layer });
+        return;
+      }
+      if (layer.eachLayer) layer.eachLayer(walk);
+    }
+
+    walk(entry.layer);
     return collected;
   }
 
