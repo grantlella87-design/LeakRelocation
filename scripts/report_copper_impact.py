@@ -19,9 +19,8 @@ import argparse
 import sys
 
 import pandas as pd
-
 from _bootstrap import config
-from leakrelocation import matching
+
 from leakrelocation.assettype import ASSETTYPE_FAMILY_TERMS, UNCLASSIFIED_FAMILY
 
 CACHES = {
@@ -83,7 +82,7 @@ def report_caches(detail):
     for layer, filename in CACHES.items():
         path = config.LAYER_CACHE_DIR / filename
         log("")
-        log("{0}  ({1})".format(layer, path))
+        log(f"{layer}  ({path})")
         if not path.exists():
             log("  cache not found - skipped")
             continue
@@ -92,10 +91,10 @@ def report_caches(detail):
         df = pd.read_pickle(path, compression="gzip")
         column = first_present(df, MATERIAL_COLUMN_CANDIDATES)
         if column is None:
-            log("  no material column found; looked for {0}".format(MATERIAL_COLUMN_CANDIDATES))
+            log(f"  no material column found; looked for {MATERIAL_COLUMN_CANDIDATES}")
             continue
 
-        log("  rows: {0:,}   material column: {1}".format(len(df), column))
+        log(f"  rows: {len(df):,}   material column: {column}")
         changed = compare_series(df[column])
         if changed.empty:
             log("  no rows change family")
@@ -103,21 +102,20 @@ def report_caches(detail):
 
         affected = int(changed["rows"].sum())
         total_changed += affected
-        log("  rows changing family: {0:,} ({1:.2f}% of layer)".format(
-            affected, 100.0 * affected / max(len(df), 1)))
+        log(f"  rows changing family: {affected:,} ({100.0 * affected / max(len(df), 1):.2f}% of layer)")
         for _, row in changed.iterrows():
-            log("    {0:<28} {1:>9,}  {2} -> {3}".format(
-                row["value"][:28], row["rows"], row["family_before"], row["family_after"]))
+            log(f"    {row['value'][:28]:<28} {row['rows']:>9,}  "
+                f"{row['family_before']} -> {row['family_after']}")
 
         if detail:
             config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
             out = config.OUTPUT_DIR / (layer + "_family_changes.csv")
             changed.to_csv(out, index=False)
-            log("  detail: {0}".format(out))
+            log(f"  detail: {out}")
 
     if not any_found:
         log("")
-        log("No pipe caches found under {0}".format(config.LAYER_CACHE_DIR))
+        log(f"No pipe caches found under {config.LAYER_CACHE_DIR}")
     return total_changed
 
 
@@ -129,7 +127,7 @@ def report_relocations(detail):
 
     gpkg = config.OUTPUT_GPKG
     log("")
-    log("GeoPackage: {0}".format(gpkg))
+    log(f"GeoPackage: {gpkg}")
     if not gpkg.exists():
         log("  not found - skipped (is the share mounted?)")
         return 0
@@ -138,16 +136,16 @@ def report_relocations(detail):
         import geopandas as gpd
         relocated = gpd.read_file(gpkg, layer="relocated_leaks")
     except Exception as exc:  # noqa: BLE001 - reported, not fatal
-        log("  could not read layer 'relocated_leaks': {0}".format(exc))
+        log(f"  could not read layer 'relocated_leaks': {exc}")
         return 0
 
     df = pd.DataFrame(relocated.drop(columns="geometry", errors="ignore"))
     column = first_present(df, LEAK_MATERIAL_CANDIDATES)
     if column is None:
-        log("  no match-material column found; looked for {0}".format(LEAK_MATERIAL_CANDIDATES))
+        log(f"  no match-material column found; looked for {LEAK_MATERIAL_CANDIDATES}")
         return 0
 
-    log("  relocated leaks: {0:,}   material column: {1}".format(len(df), column))
+    log(f"  relocated leaks: {len(df):,}   material column: {column}")
 
     changed = compare_series(df[column])
     if changed.empty:
@@ -156,18 +154,17 @@ def report_relocations(detail):
 
     affected = int(changed["rows"].sum())
     log("")
-    log("  RELOCATIONS TO RE-CHECK: {0:,} ({1:.2f}% of output)".format(
-        affected, 100.0 * affected / max(len(df), 1)))
+    log(f"  RELOCATIONS TO RE-CHECK: {affected:,} ({100.0 * affected / max(len(df), 1):.2f}% of output)")
     for _, row in changed.iterrows():
-        log("    {0:<28} {1:>9,}  {2} -> {3}".format(
-            row["value"][:28], row["rows"], row["family_before"], row["family_after"]))
+        log(f"    {row['value'][:28]:<28} {row['rows']:>9,}  "
+            f"{row['family_before']} -> {row['family_after']}")
 
     if detail:
         config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         mask = df[column].astype(str).isin(set(changed["value"]))
         out = config.OUTPUT_DIR / "relocations_affected_by_family_fix.csv"
         df.loc[mask].to_csv(out, index=False)
-        log("  detail: {0}".format(out))
+        log(f"  detail: {out}")
 
     return affected
 
@@ -181,7 +178,7 @@ def main(argv=None):
 
     log("Material family fix - impact on local data")
     log("Reads only. No network access and no ArcGIS token required.")
-    log("cache dir: {0}".format(config.LAYER_CACHE_DIR))
+    log(f"cache dir: {config.LAYER_CACHE_DIR}")
 
     pipes = report_caches(args.detail)
     leaks = report_relocations(args.detail)
@@ -190,8 +187,8 @@ def main(argv=None):
     log("=" * 68)
     log("SUMMARY")
     log("=" * 68)
-    log("  cached pipe rows changing family: {0:,}".format(pipes))
-    log("  relocated leaks to re-check:      {0:,}".format(leaks))
+    log(f"  cached pipe rows changing family: {pipes:,}")
+    log(f"  relocated leaks to re-check:      {leaks:,}")
     log("")
     if leaks:
         log("  Those relocations were matched using a material whose family")

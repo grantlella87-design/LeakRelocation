@@ -27,8 +27,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
-
 from _bootstrap import config
+
 from leakrelocation.assettype import build_assettype_decoder, norm_code
 
 LAYERS = {
@@ -51,7 +51,7 @@ def load_workflow_module():
     helpers."""
     path = config.WORKFLOW_SCRIPT
     if not path.exists():
-        raise RuntimeError("Workflow module not found: {0}".format(path))
+        raise RuntimeError(f"Workflow module not found: {path}")
     spec = importlib.util.spec_from_file_location("leak_relocation_workflow", str(path))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -68,13 +68,13 @@ def request_with_retry(module, session, url, params, label):
             last_error = exc
         else:
             if "error" in data:
-                raise RuntimeError("ArcGIS error for {0}: {1}".format(label, data["error"]))
+                raise RuntimeError(f"ArcGIS error for {label}: {data['error']}")
             return data
         if attempt < len(RETRY_DELAYS):
             delay = RETRY_DELAYS[attempt]
-            log("  {0}: {1}; retrying in {2}s".format(label, last_error, delay))
+            log(f"  {label}: {last_error}; retrying in {delay}s")
             time.sleep(delay)
-    raise RuntimeError("{0} failed after retries: {1}".format(label, last_error))
+    raise RuntimeError(f"{label} failed after retries: {last_error}")
 
 
 def fetch_assettype_rows(module, session, layer_url, wanted_objectids, page_size, workers):
@@ -89,9 +89,9 @@ def fetch_assettype_rows(module, session, layer_url, wanted_objectids, page_size
     service_count = int(count_data.get("count") or 0)
     offsets = list(range(0, service_count, page_size))
 
-    log("  service count: {0:,}".format(service_count))
-    log("  cache OBJECTIDs to retain: {0:,}".format(len(wanted_set)))
-    log("  pages: {0:,} of {1:,} rows, workers: {2}".format(len(offsets), page_size, workers))
+    log(f"  service count: {service_count:,}")
+    log(f"  cache OBJECTIDs to retain: {len(wanted_set):,}")
+    log(f"  pages: {len(offsets):,} of {page_size:,} rows, workers: {workers}")
 
     def fetch_page(offset):
         data = request_with_retry(module, session, query_url, {
@@ -102,7 +102,7 @@ def fetch_assettype_rows(module, session, layer_url, wanted_objectids, page_size
             "orderByFields": "OBJECTID",
             "resultOffset": offset,
             "resultRecordCount": page_size,
-        }, "page offset={0}".format(offset))
+        }, f"page offset={offset}")
 
         rows = []
         for feature in data.get("features") or []:
@@ -126,7 +126,7 @@ def fetch_assettype_rows(module, session, layer_url, wanted_objectids, page_size
             all_rows.extend(fetch_page(offset))
             completed += 1
             if completed == 1 or completed % 10 == 0 or completed == len(offsets):
-                log("  pages {0:,}/{1:,}; rows matched {2:,}".format(completed, len(offsets), len(all_rows)))
+                log(f"  pages {completed:,}/{len(offsets):,}; rows matched {len(all_rows):,}")
     else:
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = [executor.submit(fetch_page, offset) for offset in offsets]
@@ -134,7 +134,7 @@ def fetch_assettype_rows(module, session, layer_url, wanted_objectids, page_size
                 all_rows.extend(future.result())
                 completed += 1
                 if completed == 1 or completed % 10 == 0 or completed == len(offsets):
-                    log("  pages {0:,}/{1:,}; rows matched {2:,}".format(completed, len(offsets), len(all_rows)))
+                    log(f"  pages {completed:,}/{len(offsets):,}; rows matched {len(all_rows):,}")
 
     wanted_df = pd.DataFrame({"OBJECTID": wanted})
     if not all_rows:
@@ -147,8 +147,8 @@ def fetch_assettype_rows(module, session, layer_url, wanted_objectids, page_size
     attr_df["OBJECTID"] = attr_df["OBJECTID"].astype("int64")
     attr_df = wanted_df.merge(attr_df, how="left", on="OBJECTID")
 
-    log("  joined rows: {0:,}; ASSETTYPE non-null: {1:,}".format(
-        len(attr_df), int(attr_df["ASSETTYPE"].notna().sum())))
+    non_null = int(attr_df["ASSETTYPE"].notna().sum())
+    log(f"  joined rows: {len(attr_df):,}; ASSETTYPE non-null: {non_null:,}")
     return attr_df
 
 
@@ -164,16 +164,16 @@ def enrich_layer(module, session, layer_key, args):
 
     log("")
     log("=" * 60)
-    log("ENRICHING: {0}".format(layer_key))
-    log("cache: {0}".format(cache_path))
-    log("url:   {0}".format(layer_url))
+    log(f"ENRICHING: {layer_key}")
+    log(f"cache: {cache_path}")
+    log(f"url:   {layer_url}")
 
     if not cache_path.exists():
         log("SKIP: cache not found.")
         return
 
     df = pd.read_pickle(cache_path, compression="gzip")
-    log("cache rows: {0:,}".format(len(df)))
+    log(f"cache rows: {len(df):,}")
 
     if already_enriched(df) and not args.force:
         log("SKIP: already decoded. Use --force to redo.")
@@ -181,13 +181,13 @@ def enrich_layer(module, session, layer_key, args):
         return
 
     if "OBJECTID" not in df.columns:
-        raise RuntimeError("OBJECTID missing from cache: {0}".format(cache_path))
+        raise RuntimeError(f"OBJECTID missing from cache: {cache_path}")
 
     layer_json = request_with_retry(module, session, layer_url, {"f": "json"}, "layer metadata")
     type_id_field, decoder = build_assettype_decoder(layer_json)
-    log("typeIdField: {0}; decoder entries: {1:,}".format(type_id_field, len(decoder)))
+    log(f"typeIdField: {type_id_field}; decoder entries: {len(decoder):,}")
     if not decoder:
-        raise RuntimeError("No ASSETTYPE subtype domains found for {0}".format(layer_key))
+        raise RuntimeError(f"No ASSETTYPE subtype domains found for {layer_key}")
 
     objectids = df["OBJECTID"].dropna().astype("int64").drop_duplicates().tolist()
     attr_df = fetch_assettype_rows(module, session, layer_url, objectids, args.page_size, args.workers)
@@ -230,10 +230,10 @@ def enrich_layer(module, session, layer_key, args):
     backup = cache_path.with_name(cache_path.name + ".before_assettype_as_material.bak")
     if not backup.exists():
         backup.write_bytes(cache_path.read_bytes())
-        log("backup written: {0}".format(backup))
+        log(f"backup written: {backup}")
 
     df.to_pickle(cache_path, compression="gzip")
-    log("cache updated: {0}".format(cache_path))
+    log(f"cache updated: {cache_path}")
 
     config.ENRICHMENT_DIR.mkdir(parents=True, exist_ok=True)
     counts_csv = config.ENRICHMENT_DIR / (layer_key + "_assettype_decode_counts.csv")
@@ -241,7 +241,7 @@ def enrich_layer(module, session, layer_key, args):
                 dropna=False)
        .size().reset_index(name="count").sort_values("count", ascending=False)
        .to_csv(counts_csv, index=False))
-    log("decode counts: {0}".format(counts_csv))
+    log(f"decode counts: {counts_csv}")
 
 
 def main(argv=None):
@@ -258,9 +258,9 @@ def main(argv=None):
     layer_keys = sorted(LAYERS) if args.layer == "both" else [args.layer]
 
     log("ASSETTYPE cache enrichment")
-    log("workflow module: {0}".format(config.WORKFLOW_SCRIPT))
-    log("cache dir:       {0}".format(config.LAYER_CACHE_DIR))
-    log("layers:          {0}".format(", ".join(layer_keys)))
+    log(f"workflow module: {config.WORKFLOW_SCRIPT}")
+    log(f"cache dir:       {config.LAYER_CACHE_DIR}")
+    log(f"layers:          {', '.join(layer_keys)}")
     log("This modifies local pipe caches only. It does not run relocation.")
 
     module = load_workflow_module()

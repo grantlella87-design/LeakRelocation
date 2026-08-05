@@ -18,6 +18,11 @@ if _SCRIPT_DIR not in sys.path:
 
 from leakrelocation import config
 
+# Shared with the relocation workflow. A local copy of this classification used
+# substring matching, where "PE" matched inside "PIPE" and "TYPE" and sent every
+# such label to PLASTIC.
+from leakrelocation.assettype import family_from_assettype as material_family
+
 HOST = "127.0.0.1"
 PORT = 8765
 ROOT = config.WORK_ROOT
@@ -167,19 +172,6 @@ def find_col(columns, candidates):
     return None
 
 
-def material_family(value):
-    text = "" if value is None else str(value).upper()
-    if any(t in text for t in ["PLASTIC", "POLY", "PE", "PVC", "ABS", "HDPE", "MDPE"]):
-        return "PLASTIC"
-    if any(t in text for t in ["CAST IRON", "DUCTILE", "WROUGHT", "IRON"]):
-        return "IRON"
-    if any(t in text for t in ["STEEL", "GALVANIZED", "BARE", "COATED"]):
-        return "STEEL"
-    if "COPPER" in text:
-        return "COPPER"
-    if any(t in text for t in ["UNKNOWN", "UNK", "COMPOSITE"]) or not text.strip():
-        return "UNKNOWN"
-    return "OTHER"
 
 
 def material_color(family):

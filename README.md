@@ -52,8 +52,49 @@ set to run as before.
 | `LEAKRELOCATION_WORK_ROOT` | `~/Downloads/LeakRelocation-GeoPandas` |
 | `LEAKRELOCATION_PROJECT_DIR` | the `\\ngusnasnwh001\...` share |
 | `LEAKRELOCATION_CACHE_DIR` | `<work root>/layer_cache` |
-| `LEAKRELOCATION_OUTPUT_GPKG` | `<project dir>/HistoricLeakRelocation.gpkg` |
+| `LEAKRELOCATION_OUTPUT_GPKG` | `<work root>/production_moved_leak_outputs/HistoricLeakRelocation.gpkg` |
+| `LEAKRELOCATION_SUPPLEMENTAL_CSV` | `<project dir>/HL_SupplementalData.csv` |
 | `LEAKRELOCATION_GIS_ROOT` | `https://gis.nationalgrid.com` |
+| `LEAKRELOCATION_VERBOSE` | `0` — set to `1` for field resolution and setup detail |
+| `LEAKRELOCATION_TIMINGS` | `0` — set to `1` for per-stage elapsed times |
+| `LEAKRELOCATION_CACHE_FRESH_SECONDS` | `3600` — trust a cache younger than this without asking the server; `0` always checks |
+| `LEAKRELOCATION_PARALLEL_LOAD` | `1` — load the three layers concurrently |
+| `LEAKRELOCATION_LOOPBACK_OAUTH` | `1` — sign in via a loopback redirect; `0` uses the out-of-band page |
+| `LEAKRELOCATION_LOOPBACK_PORT` | `8770` |
+
+### Output location
+
+The GeoPackage is written **locally**, under
+`<work root>/production_moved_leak_outputs/`. Writing straight to the share made
+every run depend on network write throughput, and a partial write left the
+shared copy broken. Publish it deliberately when a run looks good, or set
+`LEAKRELOCATION_OUTPUT_GPKG` to the share path to restore the old behaviour.
+
+### Signing in
+
+Authentication uses a loopback redirect: the browser lands on a page this
+process serves, which reports success and closes itself. Nothing displays the
+authorization code and no tab is left behind.
+
+This requires `http://localhost:8770/` to be listed as a redirect URI on the
+portal app registration. If it is not, the run warns and falls back to the
+out-of-band page — the one that shows `SUCCESS code=...` and cannot be closed
+programmatically, because that page belongs to the portal rather than to this
+process.
+
+A token is cached in Windows Credential Manager, and a cache younger than
+`LEAKRELOCATION_CACHE_FRESH_SECONDS` skips the server check entirely, so most
+repeat runs need no sign-in at all.
+
+### If a run is slow
+
+```bash
+LEAKRELOCATION_TIMINGS=1 python src/leak_relocation_geopandas.py
+```
+
+prints elapsed time per stage — supplemental CSV, layer loading, CRS
+normalisation, index building, matching, writing — so the slow stage is
+identified rather than guessed at.
 
 To see what the workflow has resolved:
 

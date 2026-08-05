@@ -43,9 +43,18 @@ ENRICHMENT_DIR = WORK_ROOT / "assettype_cache_enrichment"
 VIEWER_DIR = OUTPUT_DIR / "local_leaflet_view"
 VIEWER_WITH_PIPES_DIR = OUTPUT_DIR / "local_leaflet_view_with_pipes"
 
+# The GeoPackage is written locally. Writing it straight to the share made every
+# run depend on network write throughput, and a partial write left the shared
+# copy broken. Publish it deliberately when a run looks good, or point
+# LEAKRELOCATION_OUTPUT_GPKG at the share to restore the old behaviour.
 OUTPUT_GPKG = _path_from_env(
-    "LEAKRELOCATION_OUTPUT_GPKG", PROJECT_DIR / "HistoricLeakRelocation.gpkg")
-SUPPLEMENTAL_CSV = PROJECT_DIR / "HL_SupplementalData.csv"
+    "LEAKRELOCATION_OUTPUT_GPKG", OUTPUT_DIR / "HistoricLeakRelocation.gpkg")
+
+# Where the shared copy lives, for publishing and for tools that read it.
+PUBLISHED_OUTPUT_GPKG = PROJECT_DIR / "HistoricLeakRelocation.gpkg"
+
+SUPPLEMENTAL_CSV = _path_from_env(
+    "LEAKRELOCATION_SUPPLEMENTAL_CSV", PROJECT_DIR / "HL_SupplementalData.csv")
 
 # The workflow module in this repository. Scripts that reuse its session and
 # request helpers should load this, not the copy on the share - that one is
@@ -66,9 +75,9 @@ HISTORIC_LEAK_LAYER_ID = 206
 DISTRIBUTION_PIPE_LAYER_ID = 6
 SERVICE_PIPE_LAYER_ID = 7
 
-HIST_LEAK_URL = "{0}/{1}".format(_MAP_SERVER, HISTORIC_LEAK_LAYER_ID)
-DISTRIBUTION_PIPE_URL = "{0}/{1}".format(_MAP_SERVER, DISTRIBUTION_PIPE_LAYER_ID)
-SERVICE_PIPE_URL = "{0}/{1}".format(_MAP_SERVER, SERVICE_PIPE_LAYER_ID)
+HIST_LEAK_URL = f"{_MAP_SERVER}/{HISTORIC_LEAK_LAYER_ID}"
+DISTRIBUTION_PIPE_URL = f"{_MAP_SERVER}/{DISTRIBUTION_PIPE_LAYER_ID}"
+SERVICE_PIPE_URL = f"{_MAP_SERVER}/{SERVICE_PIPE_LAYER_ID}"
 
 PIPE_LAYER_IDS = (DISTRIBUTION_PIPE_LAYER_ID, SERVICE_PIPE_LAYER_ID)
 
@@ -117,6 +126,36 @@ VERIFY_SSL = _flag_from_env("LEAKRELOCATION_VERIFY_SSL", True)
 USE_LAYER_CACHE = _flag_from_env("USE_LAYER_CACHE", True)
 FORCE_LAYER_REFRESH = _flag_from_env("FORCE_LAYER_REFRESH", False)
 DELTA_REFRESH_SAFETY_SECONDS = 300
+
+# A cache younger than this is trusted without asking the server whether it has
+# changed. Each check costs a count query plus a delta query per layer, and
+# needs a valid token, so a short window makes repeat runs start immediately.
+# Set to 0 to check the server every run.
+CACHE_FRESH_SECONDS = _int_from_env("LEAKRELOCATION_CACHE_FRESH_SECONDS", 3600)
+
+# Load the three layers concurrently. They are independent reads.
+PARALLEL_LAYER_LOAD = _flag_from_env("LEAKRELOCATION_PARALLEL_LOAD", True)
+
+# --- Output verbosity -------------------------------------------------------
+
+# Field resolution, proxy/TLS setup and outFields lists are diagnostic detail.
+# They are hidden unless something needs debugging.
+VERBOSE = _flag_from_env("LEAKRELOCATION_VERBOSE", False)
+
+# Print per-stage elapsed times, to show where a slow run spends its time.
+TIMINGS = _flag_from_env("LEAKRELOCATION_TIMINGS", False)
+
+# --- Authentication UX -----------------------------------------------------
+
+# Capture the OAuth code on a loopback redirect instead of the out-of-band page.
+# The browser lands on a page this process serves, which reports success and
+# closes itself, so no code is shown and no tab is left behind.
+#
+# The portal app registration must list the redirect URI below. If it does not,
+# authentication fails and the out-of-band flow is used instead.
+USE_LOOPBACK_OAUTH = _flag_from_env("LEAKRELOCATION_LOOPBACK_OAUTH", True)
+LOOPBACK_OAUTH_PORT = _int_from_env("LEAKRELOCATION_LOOPBACK_PORT", 8770)
+LOOPBACK_REDIRECT_URI = f"http://localhost:{LOOPBACK_OAUTH_PORT}/"
 
 
 def describe():

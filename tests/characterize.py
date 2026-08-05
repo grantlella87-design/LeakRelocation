@@ -20,6 +20,27 @@ import sys
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+class _WithMatchingFallback:
+    """Looks up names on the workflow module, then on leakrelocation.matching.
+
+    The workflow module only re-exports what it calls, so helpers such as
+    material_family and upper are reachable through the package instead. Probing
+    both keeps the snapshot comparable to one taken before the split.
+    """
+
+    def __init__(self, module, fallback):
+        self._module = module
+        self._fallback = fallback
+
+    def __getattr__(self, name):
+        if hasattr(self._module, name):
+            return getattr(self._module, name)
+        return getattr(self._fallback, name)
+
+    def __hasattr__(self, name):  # pragma: no cover - explicitness for readers
+        return hasattr(self._module, name) or hasattr(self._fallback, name)
+
+
 def load_module():
     """Load the module under test. Set LR_MODULE_PATH to characterise a
     different copy (e.g. the pre-refactor file) with the same probes."""
@@ -28,14 +49,20 @@ def load_module():
     spec = importlib.util.spec_from_file_location("lr_under_test", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module
+
+    try:
+        sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+        from leakrelocation import matching
+    except ImportError:
+        return module
+    return _WithMatchingFallback(module, matching)
 
 
 def safe(fn, *args):
     """Call fn, recording either its result or the exception type/message."""
     try:
         value = fn(*args)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - recording the failure is the point
         return {"error": type(exc).__name__, "message": str(exc)}
     return {"value": to_jsonable(value)}
 
@@ -240,7 +267,7 @@ def collect_request_json_params(module):
         before = len(captured)
         try:
             module.request_json(session, url, params)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - recording the failure is the point
             captured.append({"url": url, "error": type(exc).__name__, "message": str(exc)})
         if len(captured) == before:
             captured.append({"url": url, "note": "no outbound request"})
@@ -271,7 +298,7 @@ def main():
         json.dump(payload, handle, indent=2, sort_keys=True)
         handle.write("\n")
 
-    sys.stderr.write("wrote {0}\n".format(sys.argv[1]))
+    sys.stderr.write(f"wrote {sys.argv[1]}\n")
     return 0
 
 
