@@ -1,4 +1,6 @@
 
+import os
+import sys
 from pathlib import Path
 import json
 import math
@@ -11,13 +13,19 @@ import pandas as pd
 import geopandas as gpd
 from pyproj import CRS
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from leakrelocation import config
+
 HOST = "127.0.0.1"
 PORT = 8765
-ROOT = Path.home() / "Downloads" / "LeakRelocation-GeoPandas"
-CACHE = ROOT / "layer_cache"
-PROJECT = Path(r"\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation")
-SUPPLEMENTAL_CSV = PROJECT / "HL_SupplementalData.csv"
-OUTPUT_GPKG = PROJECT / "HistoricLeakRelocation.gpkg"
+ROOT = config.WORK_ROOT
+CACHE = config.LAYER_CACHE_DIR
+PROJECT = config.PROJECT_DIR
+SUPPLEMENTAL_CSV = config.SUPPLEMENTAL_CSV
+OUTPUT_GPKG = config.OUTPUT_GPKG
 VENDOR = ROOT / "leaflet_context" / "vendor" / "leaflet"
 NATIVE_WKT = 'PROJCS["NG_Equidistant_Conic_USft",GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],PROJECTION["Equidistant_Conic"],PARAMETER["False_Easting",0.0],PARAMETER["False_Northing",0.0],PARAMETER["Central_Meridian",-74.0],PARAMETER["Standard_Parallel_1",42.0],PARAMETER["Standard_Parallel_2",44.0],PARAMETER["Latitude_Of_Origin",43.0],UNIT["Foot_US",0.3048006096012192]]'
 NATIVE_CRS = CRS.from_wkt(NATIVE_WKT)

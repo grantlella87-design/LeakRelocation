@@ -33,6 +33,31 @@ from shapely.geometry import LineString, MultiLineString, Point, shape
 from shapely.ops import nearest_points
 from shapely.strtree import STRtree
 
+# The `leakrelocation` package sits next to this file. Adding the script's own
+# directory to sys.path lets it import cleanly whether it is run from the repo
+# or copied to the shared drive - provided the package folder travels with it.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from leakrelocation import config
+from leakrelocation.matching import (
+    MATERIAL_FAMILY_TERMS,
+    SERVICE_ASSETTYPE_LABELS,
+    clean,
+    diameter_matches,
+    material_family,
+    material_label,
+    material_matches,
+    matched_radius_from_distance,
+    normalize_key,
+    parse_number,
+    pressure_matches,
+    resolve_field_name,
+    route_layers,
+    upper,
+)
+
 # === Native CRS patch: per-layer MapServer spatial reference ===
 # Each source layer must get its own native CRS from the actual MapServer layer being queried.
 # Do not force all layers to EPSG:2249 before matching.
@@ -116,46 +141,46 @@ def normalize_loaded_layers_to_analysis_crs(session, historic_leaks, distributio
     print("Analysis CRS for all spatial matching: {0}".format(analysis_crs.name), flush=True)
     return historic_leaks, distribution_pipes, service_pipes, analysis_crs
 # === End native CRS patch ===
-SUPPLEMENTAL_CSV = r"\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation\HL_SupplementalData.csv"
-OUTPUT_FOLDER = r"\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation"
-OUTPUT_GPKG = os.path.join(OUTPUT_FOLDER, "HistoricLeakRelocation.gpkg")
-HIST_LEAK_URL = "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/206"
-DISTRIBUTION_PIPE_URL = "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/6"
-SERVICE_PIPE_URL = "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/7"
+SUPPLEMENTAL_CSV = str(config.SUPPLEMENTAL_CSV)
+OUTPUT_FOLDER = str(config.PROJECT_DIR)
+OUTPUT_GPKG = str(config.OUTPUT_GPKG)
+HIST_LEAK_URL = config.HIST_LEAK_URL
+DISTRIBUTION_PIPE_URL = config.DISTRIBUTION_PIPE_URL
+SERVICE_PIPE_URL = config.SERVICE_PIPE_URL
 
-WHERE_MA = "jurisdiction = 'MA'"
+WHERE_MA = config.WHERE_MA
 TARGET_CRS = None  # Native CRS patch: do not force EPSG:2249 before matching
-INITIAL_RADIUS_FT = 100.0
-RADIUS_INCREMENT_FT = 100.0
-MAX_RADIUS_FT = 3000.0
-REQUIRE_PRESSURE_MATCH = False
-ALLOW_MATERIAL_FAMILY_FALLBACK = True
+INITIAL_RADIUS_FT = config.INITIAL_RADIUS_FT
+RADIUS_INCREMENT_FT = config.RADIUS_INCREMENT_FT
+MAX_RADIUS_FT = config.MAX_RADIUS_FT
+REQUIRE_PRESSURE_MATCH = config.REQUIRE_PRESSURE_MATCH
+ALLOW_MATERIAL_FAMILY_FALLBACK = config.ALLOW_MATERIAL_FAMILY_FALLBACK
 USE_MULTIPROCESSING = True
 WORKERS = max(1, min(8, (os.cpu_count() or 4) - 1))
-REQUEST_PAGE_SIZE = 2000
+REQUEST_PAGE_SIZE = config.REQUEST_PAGE_SIZE
 
 USE_OBJECTID_BATCH_DOWNLOAD = True
-OBJECTID_BATCH_SIZE = 2000
-OBJECTID_DOWNLOAD_WORKERS = 8
-REQUEST_TIMEOUT_SECONDS = 120
-VERIFY_SSL = True
+OBJECTID_BATCH_SIZE = config.OBJECTID_BATCH_SIZE
+OBJECTID_DOWNLOAD_WORKERS = config.OBJECTID_DOWNLOAD_WORKERS
+REQUEST_TIMEOUT_SECONDS = config.REQUEST_TIMEOUT_SECONDS
+VERIFY_SSL = config.VERIFY_SSL
 
-PORTAL_ROOT = "https://gis.nationalgrid.com/portal"
-PORTAL_AUTHORIZE_URL = PORTAL_ROOT + "/sharing/rest/oauth2/authorize"
-PORTAL_TOKEN_URL = PORTAL_ROOT + "/sharing/rest/oauth2/token"
-ARCGIS_CLIENT_ID = "48XCGWtLoUxA3klq"
-ARCGIS_REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob"
-KEYRING_SERVICE = "NG_GIS_LEAK_RELOCATION"
-KEYRING_ACCESS_TOKEN_USER = "arcgis_portal_access_token"
-KEYRING_ACCESS_TOKEN_EXPIRES_USER = "arcgis_portal_access_token_expires_epoch"
-TOKEN_EXPIRY_SAFETY_SECONDS = 300
+PORTAL_ROOT = config.PORTAL_ROOT
+PORTAL_AUTHORIZE_URL = config.PORTAL_AUTHORIZE_URL
+PORTAL_TOKEN_URL = config.PORTAL_TOKEN_URL
+ARCGIS_CLIENT_ID = config.ARCGIS_CLIENT_ID
+ARCGIS_REDIRECT_URI = config.ARCGIS_REDIRECT_URI
+KEYRING_SERVICE = config.KEYRING_SERVICE
+KEYRING_ACCESS_TOKEN_USER = config.KEYRING_ACCESS_TOKEN_USER
+KEYRING_ACCESS_TOKEN_EXPIRES_USER = config.KEYRING_ACCESS_TOKEN_EXPIRES_USER
+TOKEN_EXPIRY_SAFETY_SECONDS = config.TOKEN_EXPIRY_SAFETY_SECONDS
 MESSAGE_EVERY_N_LEAKS = 1000
 VERBOSE_PER_LEAK = False
 
-USE_LAYER_CACHE = True
-LAYER_CACHE_FOLDER = os.path.join(os.path.expanduser("~"), "Downloads", "LeakRelocation-GeoPandas", "layer_cache")
-FORCE_LAYER_REFRESH = os.environ.get("FORCE_LAYER_REFRESH", "").strip().lower() in ("1", "true", "yes")
-DELTA_REFRESH_SAFETY_SECONDS = 300
+USE_LAYER_CACHE = config.USE_LAYER_CACHE
+LAYER_CACHE_FOLDER = str(config.LAYER_CACHE_DIR)
+FORCE_LAYER_REFRESH = config.FORCE_LAYER_REFRESH
+DELTA_REFRESH_SAFETY_SECONDS = config.DELTA_REFRESH_SAFETY_SECONDS
 MODIFIED_FIELD_CANDIDATES = ["LASTUPDATE", "lastupdate", "LastUpdate", "last_edited_date", "EditDate", "UPDATEDATE", "MODIFIEDDATE"]
 LEAK_KEY_CANDIDATES = ["LMSLEAKNUMBER", "LMSLEAKSUMBER", "LEAKNUMBER", "LeakNumber", "Name", "name"]
 PIPE_DIAMETER_CANDIDATES = ["nominaldiameter", "NOMINALDIAMETER", "NominalDiameter", "diameter", "DIAMETER", "outsidediameter", "OUTSIDEDIAMETER"]
@@ -168,32 +193,6 @@ SUPP_PRESSURE_CANDIDATES = ["Pressure", "OperatingPressure", "MAOP", "MAOPDesign
 SUPP_FACILITY_CANDIDATES = ["FacilityType", "PipeType"]
 GLOBALID_CANDIDATES = ["GlobalID", "GLOBALID", "globalid"]
 OBJECTID_CANDIDATES = ["OBJECTID", "ObjectID", "objectid", "FID", "OID"]
-SERVICE_ASSETTYPE_LABELS = {
-    0: "Unknown",
-    1: "Bare Steel",
-    2: "Cast Iron",
-    3: "Coated Steel",
-    4: "Composite",
-    5: "Copper",
-    6: "Ductile Iron",
-    7: "Plastic ABS",
-    8: "Plastic Other",
-    9: "Plastic PE",
-    10: "Plastic PVC",
-    11: "Reconditioned Cast Iron",
-    12: "Wrought Iron",
-    13: "Polybutylene",
-    14: "Reconditioned Steel",
-    15: "Galvanized Steel",
-    999: "UNK"
-}
-MATERIAL_FAMILY_TERMS = {
-    "PLASTIC": ["PLASTIC", "POLY", "PE", "PVC", "ABS", "POLYBUTYLENE", "HD", "MD"],
-    "IRON": ["CAST IRON", "DUCTILE", "WROUGHT IRON", "RECONDITIONED CAST"],
-    "STEEL": ["STEEL", "BARE STEEL", "COATED STEEL", "GALVANIZED", "RECONDITIONED STEEL"],
-    "COPPER": ["COPPER"],
-    "UNKNOWN": ["UNKNOWN", "UNK", "COMPOSITE", "NULL", "NONE"]
-}
 WORKER_TREES = None
 
 def log(text):
@@ -212,95 +211,16 @@ def verbose(text):
     if VERBOSE_PER_LEAK:
         log(text)
 
-def clean(value):
-    if value is None:
-        return ""
-    text = str(value).strip()
-    if text.lower() in ("", "none", "null", "nan"):
-        return ""
-    return re.sub(r"\s+", " ", text)
-
-def upper(value):
-    return clean(value).upper().replace("\u2013", "-").replace("\u2014", "-")
-
-def normalize_key(value):
-    text = clean(value)
-    if text.endswith(".0") and text[:-2].isdigit():
-        text = text[:-2]
-    return text.strip("{} ").upper()
-
-def parse_number(value):
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return None if math.isnan(float(value)) else float(value)
-    text = clean(value)
-    if not text:
-        return None
-    found = re.search(r"[-+]?\d+(?:\.\d+)?", text)
-    return float(found.group(0)) if found else None
-
 def resolved_field(columns, candidates, required=False, label="field"):
     available = list(columns)
-    simplified = {re.sub(r"[^a-z0-9]", "", str(col).lower()): col for col in available}
-    for candidate in candidates:
-        token = re.sub(r"[^a-z0-9]", "", candidate.lower())
-        if token in simplified:
-            resolved = simplified[token]
-            log("Resolved {0}: {1}".format(label, resolved))
-            return resolved
+    resolved = resolve_field_name(available, candidates)
+    if resolved is not None:
+        log("Resolved {0}: {1}".format(label, resolved))
+        return resolved
     if required:
         fail("Could not resolve required {0}. Candidates={1}. Available={2}".format(label, candidates, available))
     warn("Could not resolve optional {0}. Candidates={1}".format(label, candidates))
     return None
-
-def material_label(value):
-    parsed = parse_number(value)
-    if parsed is not None and int(parsed) == parsed and int(parsed) in SERVICE_ASSETTYPE_LABELS:
-        return SERVICE_ASSETTYPE_LABELS[int(parsed)]
-    return clean(value)
-
-def material_family(value):
-    text = upper(material_label(value))
-    for family, terms in MATERIAL_FAMILY_TERMS.items():
-        if any(term in text for term in terms):
-            return family
-    return text
-
-def material_matches(leak_value, pipe_value):
-    leak_text = upper(material_label(leak_value))
-    pipe_text = upper(material_label(pipe_value))
-    if not leak_text or not pipe_text:
-        return False
-    if leak_text == pipe_text:
-        return True
-    return ALLOW_MATERIAL_FAMILY_FALLBACK and material_family(leak_text) == material_family(pipe_text)
-
-def diameter_matches(leak_diameter, pipe_diameter):
-    if leak_diameter is None or pipe_diameter is None:
-        return False
-    return float(leak_diameter) == float(pipe_diameter)
-
-def pressure_matches(leak_pressure, pipe_pressure):
-    if not REQUIRE_PRESSURE_MATCH:
-        return True
-    return bool(upper(leak_pressure) and upper(leak_pressure) == upper(pipe_pressure))
-
-def route_layers(facility):
-    text = upper(facility)
-    if "SERVICE" in text:
-        return ["service"]
-    if "MAIN" in text or "DISTRIBUTION" in text:
-        return ["distribution"]
-    return ["distribution", "service"]
-
-def matched_radius_from_distance(distance_ft):
-    if distance_ft is None:
-        return None
-    if distance_ft <= INITIAL_RADIUS_FT:
-        return INITIAL_RADIUS_FT
-    steps = math.ceil((distance_ft - INITIAL_RADIUS_FT) / RADIUS_INCREMENT_FT)
-    return INITIAL_RADIUS_FT + steps * RADIUS_INCREMENT_FT
 
 def ensure_output_folder():
     step("Checking output folder")
@@ -597,7 +517,53 @@ def get_arcgis_token(session=None):
     return interactive_access_token(active_session)
 
 
-def request_json(session, url, params):
+def apply_pipe_domain_out_fields(url, params):
+    """Ensure DNV pipe-layer queries also return ASSETGROUP and ASSETTYPE.
+
+    Pipe material classification comes from the decoded ASSETGROUP + ASSETTYPE
+    subtype domains. The DNV `material` field is Grade/characteristic data and
+    is not the material class used for relocation assessment, so any pipe query
+    that asks for attribute columns must carry the domain fields as well.
+
+    Returns `params` unchanged unless this is a pipe-layer query whose
+    outFields requests attributes but omits ASSETTYPE.
+    """
+    if not isinstance(params, dict):
+        return params
+
+    url_text = str(url).lower()
+    if "/mapserver/6" not in url_text and "/mapserver/7" not in url_text:
+        return params
+
+    out_field_key = None
+    for key in params:
+        if str(key).lower() == "outfields":
+            out_field_key = key
+            break
+    if out_field_key is None:
+        return params
+
+    out_fields = params.get(out_field_key)
+    if not isinstance(out_fields, str):
+        return params
+
+    lowered = out_fields.lower()
+    wants_attributes = (
+        "nominaldiameter" in lowered
+        or "material" in lowered
+        or "operatingpressure" in lowered
+    )
+    if not wants_attributes or "assettype" in lowered:
+        return params
+
+    updated = dict(params)
+    updated[out_field_key] = out_fields + ",ASSETGROUP,ASSETTYPE"
+    log("Appended DNV pipe domain fields to outFields: ASSETGROUP,ASSETTYPE")
+    return updated
+
+
+def request_json(session, url, params=None):
+    params = apply_pipe_domain_out_fields(url, params)
     request_params = dict(params or {})
 
     token = getattr(session, "_arcgis_access_token", None)
@@ -752,110 +718,6 @@ def esri_geometry_to_shape(geometry):
         return None
 
 
-def metadata_field_names(meta):
-    return [field.get("name") for field in meta.get("fields", []) if field.get("name")]
-
-def resolve_from_names(field_names, candidates):
-    simplified = {re.sub(r"[^a-z0-9]", "", str(name).lower()): name for name in field_names}
-    for candidate in candidates:
-        token = re.sub(r"[^a-z0-9]", "", candidate.lower())
-        if token in simplified:
-            return simplified[token]
-    return None
-
-def build_out_fields(meta, layer_name):
-    field_names = metadata_field_names(meta)
-    object_id_field = meta.get("object_id_field")
-    wanted = []
-
-    if object_id_field:
-        wanted.append(object_id_field)
-
-    if "historic" in layer_name.lower() or "leak" in layer_name.lower():
-        candidate_groups = [
-            LEAK_KEY_CANDIDATES,
-            GLOBALID_CANDIDATES,
-            ["jurisdiction", "Jurisdiction", "JURISDICTION"]
-        ]
-    else:
-        candidate_groups = [
-            PIPE_DIAMETER_CANDIDATES,
-            PIPE_MATERIAL_CANDIDATES,
-            PIPE_PRESSURE_CANDIDATES,
-            GLOBALID_CANDIDATES,
-            ["jurisdiction", "Jurisdiction", "JURISDICTION"]
-        ]
-
-    for group in candidate_groups:
-        resolved = resolve_from_names(field_names, group)
-        if resolved:
-            wanted.append(resolved)
-
-    deduped = []
-    for field in wanted:
-        if field and field not in deduped:
-            deduped.append(field)
-
-    if not deduped:
-        return "*"
-
-    out_fields = ",".join(deduped)
-    # LR_FORCE_ASSETGROUP_ASSETTYPE_OUTFIELDS
-    _lr_is_pipe_layer = False
-    for _lr_local_name, _lr_local_value in list(locals().items()):
-        try:
-            _lr_text = str(_lr_local_value).lower()
-        except Exception:
-            _lr_text = ''
-        if (
-            'distribution pipes' in _lr_text
-            or 'service pipes' in _lr_text
-            or 'distribution pipe' in _lr_text
-            or 'service pipe' in _lr_text
-            or '/mapserver/6' in _lr_text
-            or '/mapserver/7' in _lr_text
-        ):
-            _lr_is_pipe_layer = True
-            break
-    if _lr_is_pipe_layer:
-        for _lr_local_name, _lr_local_value in list(locals().items()):
-            if isinstance(_lr_local_value, list):
-                _lr_lower_values = [str(_v).lower() for _v in _lr_local_value]
-                if (
-                    'nominaldiameter' in _lr_lower_values
-                    or 'material' in _lr_lower_values
-                    or 'operatingpressure' in _lr_lower_values
-                ):
-                    for _lr_required_field in ['ASSETGROUP', 'ASSETTYPE']:
-                        if _lr_required_field not in _lr_local_value:
-                            _lr_local_value.append(_lr_required_field)
-                            print('Added required DNV pipe domain field to outFields: {0}'.format(_lr_required_field), flush=True)
-            elif isinstance(_lr_local_value, str):
-                _lr_lower_text = _lr_local_value.lower()
-                if (
-                    'nominaldiameter' in _lr_lower_text
-                    and 'material' in _lr_lower_text
-                    and 'assettype' not in _lr_lower_text
-                ):
-                    # Best effort for string-based outFields variables. In CPython, locals() assignment
-                    # is not always reliable for fast locals, so list-based modification above is preferred.
-                    locals()[_lr_local_name] = _lr_local_value + ',ASSETGROUP,ASSETTYPE'
-    log("{0}: using outFields={1}".format(layer_name, out_fields))
-    return out_fields
-
-def query_count(session, layer_url, where_clause, layer_name):
-    params = {
-        "f": "json",
-        "where": where_clause,
-        "returnCountOnly": "true"
-    }
-    data = request_json(session, layer_url + "/query", params)
-    count = data.get("count")
-    log("{0}: server-side count for where [{1}] = {2:,}".format(layer_name, where_clause, int(count) if count is not None else 0))
-    return count
-
-
-
 def safe_cache_name(layer_name):
     return re.sub(r"[^A-Za-z0-9_]+", "_", layer_name.strip().lower()).strip("_")
 
@@ -875,12 +737,7 @@ def metadata_field_names(meta):
     return [field.get("name") for field in meta.get("fields", []) if field.get("name")]
 
 def resolve_from_names(field_names, candidates):
-    simplified = {re.sub(r"[^a-z0-9]", "", str(name).lower()): name for name in field_names}
-    for candidate in candidates:
-        token = re.sub(r"[^a-z0-9]", "", candidate.lower())
-        if token in simplified:
-            return simplified[token]
-    return None
+    return resolve_field_name(field_names, candidates)
 
 def modified_field_from_meta(meta, layer_name):
     field_names = metadata_field_names(meta)
@@ -1658,41 +1515,6 @@ def main():
     step("Finished")
     for name in sorted(counters):
         log("{0}: {1:,}".format(name, counters[name]))
-
-
-# LR_REQUEST_JSON_APPEND_ASSETGROUP_ASSETTYPE
-_lr_original_request_json_for_assettype = request_json
-
-def request_json(session, url, params=None, *args, **kwargs):
-    try:
-        _lr_url_text = str(url).lower()
-        _lr_is_pipe_query = (
-            "/mapserver/6" in _lr_url_text
-            or "/mapserver/7" in _lr_url_text
-        )
-        if _lr_is_pipe_query and isinstance(params, dict):
-            _lr_outfield_key = None
-            for _lr_key in list(params.keys()):
-                if str(_lr_key).lower() == "outfields":
-                    _lr_outfield_key = _lr_key
-                    break
-            if _lr_outfield_key is not None:
-                _lr_outfields = params.get(_lr_outfield_key)
-                if isinstance(_lr_outfields, str):
-                    _lr_lower = _lr_outfields.lower()
-                    if (
-                        ("nominaldiameter" in _lr_lower or "material" in _lr_lower or "operatingpressure" in _lr_lower)
-                        and "assettype" not in _lr_lower
-                    ):
-                        params = dict(params)
-                        params[_lr_outfield_key] = _lr_outfields + ",ASSETGROUP,ASSETTYPE"
-                        print("Request wrapper appended DNV pipe domain fields to outFields: ASSETGROUP,ASSETTYPE", flush=True)
-    except Exception as _lr_ex:
-        try:
-            print("WARNING: request_json ASSETTYPE wrapper skipped due to: {0}".format(_lr_ex), flush=True)
-        except Exception:
-            pass
-    return _lr_original_request_json_for_assettype(session, url, params, *args, **kwargs)
 
 
 if __name__ == "__main__":

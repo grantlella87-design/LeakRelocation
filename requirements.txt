@@ -1,0 +1,13 @@
+# Runtime dependencies for the leak relocation workflow.
+# Install into the project venv:
+#   .venv\Scripts\python.exe -m pip install -r requirements.txt
+geopandas>=0.14
+pandas>=2.0
+shapely>=2.0
+pyproj>=3.5
+requests>=2.31
+keyring>=24.0
+
+# Tests (pure logic only - no network, no shared drive):
+#   .venv\Scripts\python.exe -m pytest
+pytest>=7.4

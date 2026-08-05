@@ -2,8 +2,10 @@
 import pandas as pd
 import sys
 
-ROOT = Path.home() / "Downloads" / "LeakRelocation-GeoPandas"
-CACHE = ROOT / "layer_cache"
+from _bootstrap import config
+
+ROOT = config.WORK_ROOT
+CACHE = config.LAYER_CACHE_DIR
 
 required = [
     "ASSETGROUP",

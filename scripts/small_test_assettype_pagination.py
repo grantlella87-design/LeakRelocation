@@ -2,8 +2,10 @@
 import importlib.util
 import json
 
-ROOT = Path.home() / "Downloads" / "LeakRelocation-GeoPandas"
-MAIN_SCRIPT = Path(r"\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation\Arcpy Code\leak reolcation - geopandas.py")
+from _bootstrap import config
+
+ROOT = config.WORK_ROOT
+MAIN_SCRIPT = config.NETWORK_MAIN_SCRIPT
 
 def load_main():
     spec = importlib.util.spec_from_file_location("leak_relocation_geopandas", str(MAIN_SCRIPT))

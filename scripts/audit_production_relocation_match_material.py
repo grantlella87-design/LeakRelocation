@@ -1,11 +1,13 @@
 ﻿from pathlib import Path
 import pandas as pd
 import geopandas as gpd
-ROOT = Path.home() / "Downloads" / "LeakRelocation-GeoPandas"
-CACHE = ROOT / "layer_cache"
-OUT = ROOT / "production_moved_leak_outputs"
+
+from _bootstrap import config
+ROOT = config.WORK_ROOT
+CACHE = config.LAYER_CACHE_DIR
+OUT = config.OUTPUT_DIR
 OUT.mkdir(parents=True, exist_ok=True)
-GPKG = Path(r"\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation\HistoricLeakRelocation.gpkg")
+GPKG = config.OUTPUT_GPKG
 print("=== Audit relocated MatchMaterial against corrected pipe caches ===", flush=True)
 print("GeoPackage:", GPKG, flush=True)
 relocated = gpd.read_file(GPKG, layer="relocated_leaks")
