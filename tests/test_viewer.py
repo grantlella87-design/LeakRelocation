@@ -156,3 +156,65 @@ class TestAttributePane:
         assert css is viewer_pane.PANE_CSS
         assert html is viewer_pane.PANE_HTML
         assert js is viewer_pane.PANE_JS
+
+
+class TestBboxServerMaterialColumns:
+    """Pipe material comes from ASSETTYPE. The raw subtype code and its domain
+    value are different things and must not be conflated: classifying the code
+    would compare a number against material names."""
+
+    @pytest.fixture
+    def server(self):
+        pytest.importorskip("geopandas")
+        sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+        import leaflet_bbox_server
+        return leaflet_bbox_server
+
+    def frame(self, **columns):
+        import geopandas as gpd
+        from shapely.geometry import LineString
+        rows = len(next(iter(columns.values())))
+        columns["geometry"] = [
+            LineString([(-71 - i * 0.01, 42), (-71.01 - i * 0.01, 42.01)]) for i in range(rows)
+        ]
+        return gpd.GeoDataFrame(columns, crs="EPSG:4326")
+
+    def test_raw_is_the_code_and_domain_is_the_name(self, server):
+        gdf = self.frame(
+            OBJECTID=[1, 2, 3],
+            ASSETTYPE=[2, 5, 9],
+            ASSETTYPE_DECODED=["Cast Iron", "Copper", "Plastic PE"],
+            material=["Cast Iron", "Copper", "Plastic PE"],
+        )
+        out = server.add_pipe_material_fields(gdf)
+        assert list(out["PipeMaterialRaw"]) == [2, 5, 9]
+        assert list(out["PipeMaterialDomain"]) == ["Cast Iron", "Copper", "Plastic PE"]
+        assert list(out["PipeMaterialFamily"]) == ["IRON", "COPPER", "PLASTIC"]
+
+    def test_falls_back_to_material_when_decoded_is_absent(self, server):
+        gdf = self.frame(
+            OBJECTID=[1, 2],
+            ASSETTYPE=[2, 5],
+            material=["Cast Iron Pipe", "Copper Pipe"],
+        )
+        out = server.add_pipe_material_fields(gdf)
+        assert list(out["PipeMaterialDomain"]) == ["Cast Iron Pipe", "Copper Pipe"]
+        assert list(out["PipeMaterialFamily"]) == ["IRON", "COPPER"]
+
+    def test_colour_follows_the_family(self, server):
+        gdf = self.frame(
+            OBJECTID=[1, 2],
+            ASSETTYPE=[5, 9],
+            ASSETTYPE_DECODED=["Copper", "Plastic PE"],
+        )
+        out = server.add_pipe_material_fields(gdf)
+        assert out["PipeMaterialColor"].tolist() == [
+            server.MATERIAL_COLORS["COPPER"], server.MATERIAL_COLORS["PLASTIC"]
+        ]
+
+    def test_popup_lists_the_domain_value(self, server, monkeypatch):
+        monkeypatch.setattr(server, "BOUNDS", {
+            "west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
+            "center_lat": 42.5, "center_lon": -71.5,
+        })
+        assert "PipeMaterialDomain" in server.html_page()

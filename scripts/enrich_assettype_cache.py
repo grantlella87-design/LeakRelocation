@@ -215,7 +215,14 @@ def enrich_layer(module, session, layer_key, args):
     for col in DECODED_COLUMNS:
         df[col] = decoded[col] if col in decoded.columns else None
 
-    df["PipeMaterialRaw"] = df["ASSETTYPE_DECODED"]
+    # Pipe material comes from ASSETTYPE:
+    #   PipeMaterialRaw  the raw ASSETTYPE as the service returns it (a subtype
+    #                    code), kept so a decode can always be traced back
+    #   material         its domain value, which is what the relocation logic
+    #                    and the viewers read
+    # Both were previously set to the decoded value, so nothing recorded the
+    # raw code despite the column name saying otherwise.
+    df["PipeMaterialRaw"] = df["ASSETTYPE"]
     df["material"] = df["ASSETTYPE_DECODED"]
 
     log("")

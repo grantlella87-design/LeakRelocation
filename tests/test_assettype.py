@@ -197,6 +197,32 @@ class TestEnrichLayer:
         df = pd.read_pickle(cache_dir / "distribution_pipes.pkl.gz", compression="gzip")
         assert list(df["material"]) == ["Cast Iron", "Copper", "Plastic PE"]
 
+    def test_pipe_material_raw_holds_the_raw_assettype(self, enrich_env):
+        """Pipe material comes from ASSETTYPE: PipeMaterialRaw is the subtype
+        code as the service returns it, and "material" is its domain value.
+        Both used to be set to the decoded value, so nothing kept the code."""
+        runner, module, cache_dir = enrich_env
+        run_enrich(runner, module)
+        df = pd.read_pickle(cache_dir / "distribution_pipes.pkl.gz", compression="gzip")
+        by_oid = df.set_index("OBJECTID")
+        assert list(by_oid.loc[[1, 2, 3], "PipeMaterialRaw"]) == [2, 5, 9]
+        assert list(by_oid.loc[[1, 2, 3], "ASSETTYPE"]) == [2, 5, 9]
+
+    def test_raw_and_domain_are_different_columns(self, enrich_env):
+        runner, module, cache_dir = enrich_env
+        run_enrich(runner, module)
+        df = pd.read_pickle(cache_dir / "distribution_pipes.pkl.gz", compression="gzip")
+        assert list(df["PipeMaterialRaw"]) != list(df["material"])
+
+    def test_family_is_derived_from_the_domain_value(self, enrich_env):
+        """Classifying the raw code would compare a number against material
+        names and land everything in UNKNOWN."""
+        runner, module, cache_dir = enrich_env
+        run_enrich(runner, module)
+        df = pd.read_pickle(cache_dir / "distribution_pipes.pkl.gz", compression="gzip")
+        by_oid = df.set_index("OBJECTID")
+        assert list(by_oid.loc[[1, 2, 3], "PipeMaterialFamily"]) == ["IRON", "COPPER", "PLASTIC"]
+
     def test_original_material_preserved_as_grade(self, enrich_env):
         runner, module, cache_dir = enrich_env
         run_enrich(runner, module)
