@@ -24,7 +24,7 @@ assessment.
 | `src/leakrelocation/matching.py` | Pure material/diameter matching logic. |
 | `scripts/` | Diagnostic and enrichment scripts. |
 | `scripts/legacy_patches/` | Historical in-place patchers — **do not run**. |
-| `powershell/` | Helper scripts for running the workflow on Windows. |
+| `viewer/` | Local map viewer and its server. |
 | `tests/` | Tests that need no network and no shared drive. |
 
 ## Configuration
@@ -53,6 +53,27 @@ python -c "import sys; sys.path.insert(0,'src'); from leakrelocation import conf
 ```bash
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+## Running
+
+Everything runs through Python directly.
+
+```bash
+# the relocation workflow
+python src/leak_relocation_geopandas.py
+
+# enrichment and diagnostics
+python scripts/preflight_assettype_cache_check.py
+python scripts/RUN_service_assettype_enrich_stable.py
+python scripts/audit_production_relocation_match_material.py
+
+# build the viewers
+python scripts/build_local_relocation_viewer.py
+python scripts/build_leaflet_context.py
+
+# serve the checked-in viewer
+python viewer/serve_viewer.py
 ```
 
 ## Tests
@@ -88,9 +109,15 @@ folder must be copied alongside it.
 
 ## Local workflow
 
-Working files are synchronised from:
+Working data lives in:
 
-- `C:\Users\lellag\Downloads\LeakRelocation-GeoPandas`
-- `\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation`
+- `~/Downloads/LeakRelocation-GeoPandas` (caches and generated output)
+- `\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation` (shared inputs and the production GeoPackage)
 
-Run PowerShell helper scripts from the `powershell/` folder.
+Both are overridable via `LEAKRELOCATION_WORK_ROOT` and
+`LEAKRELOCATION_PROJECT_DIR`.
+
+Changes reach the repository through git directly. The previous
+`Sync-LeakRelocation-ToGit.ps1` copy-and-commit step has been removed: it
+rewrote tracked files from the local working folder on every run, which is how
+edits made here were repeatedly overwritten.

@@ -128,15 +128,23 @@ function updateInfo(pointCount,lineCount){document.getElementById('info').innerH
 html = html.replace('__CSS_REF__', css_ref).replace('__JS_REF__', js_ref).replace('__SOUTH__', str(south)).replace('__WEST__', str(west)).replace('__NORTH__', str(north)).replace('__EAST__', str(east))
 html_path = OUT / "index.html"
 html_path.write_text(html, encoding="utf-8")
-server_ps1 = OUT / "Start-LocalRelocationViewer.ps1"
-server_ps1.write_text(r'''$ErrorActionPreference = "Stop"
-$Here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Py = Join-Path $env:USERPROFILE "Downloads\LeakRelocation-GeoPandas\.venv\Scripts\python.exe"
-if (!(Test-Path $Py)) { throw "Python venv not found: $Py" }
-Set-Location $Here
-Start-Process "http://127.0.0.1:8777/index.html"
-& $Py -m http.server 8777 --bind 127.0.0.1
+server_py = OUT / "serve_viewer.py"
+server_py.write_text('''"""Serve the generated viewer on http://127.0.0.1:8777 and open a browser."""
+import functools
+import http.server
+import pathlib
+import webbrowser
+
+PORT = 8777
+HERE = pathlib.Path(__file__).resolve().parent
+
+handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(HERE))
+with http.server.ThreadingHTTPServer(("127.0.0.1", PORT), handler) as server:
+    url = "http://127.0.0.1:{0}/index.html".format(PORT)
+    print("Serving {0} at {1}".format(HERE, url), flush=True)
+    webbrowser.open(url)
+    server.serve_forever()
 ''', encoding="utf-8")
 print("HTML viewer:", html_path, flush=True)
-print("Start server PS1:", server_ps1, flush=True)
-print("Run:", f'powershell -NoProfile -ExecutionPolicy Bypass -File "{server_ps1}"', flush=True)
+print("Viewer server:", server_py, flush=True)
+print("Run:", f'python "{server_py}"', flush=True)

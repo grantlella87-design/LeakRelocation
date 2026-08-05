@@ -1,13 +1,9 @@
-﻿
-$ErrorActionPreference = "Stop"
-$Root = Join-Path $env:USERPROFILE "Downloads\LeakRelocation-GeoPandas"
-$Py = Join-Path $Root ".venv\Scripts\python.exe"
-$OutFolder = Join-Path $Root "leaflet_context"
-$BuildPy = Join-Path $OutFolder "build_leaflet_context.py"
-$RunLog = Join-Path $OutFolder "build_leaflet_context.log"
-if (!(Test-Path $Py)) { throw "Python venv not found: $Py" }
-if (!(Test-Path $OutFolder)) { New-Item -ItemType Directory -Path $OutFolder | Out-Null }
-$PythonCode = @'
+"""Build the standalone Leaflet context map from the local layer caches.
+
+Extracted verbatim from powershell/Build-LeakRelocation-LeafletContext.ps1,
+which held this program as an embedded here-string and rewrote it on every
+run. Paths now come from leakrelocation.config instead of being hard-coded.
+"""
 from pathlib import Path
 import json
 import math
@@ -26,8 +22,10 @@ try:
     truststore.inject_into_ssl()
 except Exception:
     pass
-ROOT = Path.home() / "Downloads" / "LeakRelocation-GeoPandas"
-CACHE = ROOT / "layer_cache"
+from _bootstrap import config
+
+ROOT = config.WORK_ROOT
+CACHE = config.LAYER_CACHE_DIR
 OUT = ROOT / "leaflet_context"
 OUT.mkdir(parents=True, exist_ok=True)
 VENDOR = OUT / "vendor" / "leaflet"
@@ -280,25 +278,3 @@ def main():
     print("\n".join(summary), flush=True)
 if __name__ == "__main__":
     main()
-'@
-Set-Content -Path $BuildPy -Value $PythonCode -Encoding UTF8
-cmd /c ""$Py" "$BuildPy" > "$RunLog" 2>&1"
-$ExitCode = $LASTEXITCODE
-$HtmlPath = Join-Path $OutFolder "LeakRelocation_DNV_Leaflet_Context.html"
-$SummaryPath = Join-Path $OutFolder "LeakRelocation_DNV_Leaflet_Context_summary.txt"
-$Text = Get-Content $RunLog -Raw
-$Clip = @(
-    "=== LeakRelocation Leaflet Context Builder ===",
-    "ExitCode: $ExitCode",
-    "RunLog: $RunLog",
-    "HTML: $HtmlPath",
-    "Summary: $SummaryPath",
-    "",
-    "--- OUTPUT ---",
-    $Text
-) -join "`r`n"
-$Clip | Set-Clipboard
-$Clip
-if (Test-Path $HtmlPath) { Invoke-Item $HtmlPath }
-
-

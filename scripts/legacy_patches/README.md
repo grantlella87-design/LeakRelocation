@@ -18,7 +18,10 @@ twice, where Python silently kept only the last definition of each.
 | `patch_request_json_append_assettype.py` | `request_json` wrapper adding `ASSETGROUP,ASSETTYPE` to pipe-layer `outFields` | `apply_pipe_domain_out_fields()` |
 | `patch_include_assetgroup_assettype.py` | domain fields in `build_out_fields` | `build_out_fields()` |
 | `patch_force_assetgroup_assettype_at_outfields.py` | same, via a `locals()` rewrite that never worked | superseded |
-| `Patch-LeakRelocation-NativeCRS.ps1` | per-layer native CRS handling | the native CRS block at the top of the module |
+
+A `Patch-LeakRelocation-NativeCRS.ps1` did the same for per-layer native CRS
+handling; that code is now the native CRS block at the top of the module, and
+the script has been deleted along with the rest of the PowerShell.
 
 Re-running any of them would append those definitions a second time and
 re-create the duplication.
