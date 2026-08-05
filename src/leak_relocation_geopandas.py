@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Fast non-ArcPy historic leak relocation workflow.
 Uses ArcGIS REST + GeoPandas/Shapely instead of ArcPy geoprocessing.
@@ -15,7 +14,6 @@ import os
 import re 
 import sys 
 import traceback 
-import datetime as _datetime 
 import glob 
 import shutil as _shutil 
 import tempfile 
@@ -25,7 +23,6 @@ import webbrowser
 import urllib .parse 
 import time 
 from collections import defaultdict 
-from http .server import BaseHTTPRequestHandler ,HTTPServer 
 import geopandas as gpd 
 import pandas as pd 
 import requests 
@@ -42,11 +39,8 @@ if _SCRIPT_DIR not in sys .path :
 
 from leakrelocation import config 
 from leakrelocation .matching import (
-MATERIAL_FAMILY_TERMS ,
-SERVICE_ASSETTYPE_LABELS ,
 clean ,
 diameter_matches ,
-material_family ,
 material_label ,
 material_matches ,
 matched_radius_from_distance ,
@@ -55,7 +49,6 @@ parse_number ,
 pressure_matches ,
 resolve_field_name ,
 route_layers ,
-upper ,
 )
 
 # === Native CRS patch: per-layer MapServer spatial reference ===
