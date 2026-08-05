@@ -241,12 +241,6 @@ def make_session ():
     session .headers .update ({"User-Agent":"HistoricLeakRelocationGeoPandas/1.0"})
     return session 
 
-
-
-
-
-
-
 def keyring_get (name ):
     try :
         return keyring .get_password (KEYRING_SERVICE ,name )
@@ -281,18 +275,9 @@ def cached_access_token ():
     log ("Cached ArcGIS Portal access token is expired or inside safety window.")
     return ""
 
-
-
 def clear_cached_access_token ():
     keyring_set (KEYRING_ACCESS_TOKEN_USER ,"")
     keyring_set (KEYRING_ACCESS_TOKEN_EXPIRES_USER ,"0")
-
-
-
-
-
-
-
 
 def extract_oauth_code (value ):
     value =clean (value )
@@ -318,10 +303,8 @@ def extract_oauth_code (value ):
 
     return value 
 
-
 def chrome_time_from_epoch (epoch_seconds ):
     return int ((float (epoch_seconds )+11644473600 )*1000000 )
-
 
 def browser_history_paths ():
     local =os .environ .get ("LOCALAPPDATA","")
@@ -345,7 +328,6 @@ def browser_history_paths ():
             deduped .append (path )
 
     return deduped 
-
 
 def try_extract_oob_code_from_browser_history_since (start_epoch_seconds ):
     min_chrome_time =chrome_time_from_epoch (start_epoch_seconds )
@@ -385,7 +367,6 @@ def try_extract_oob_code_from_browser_history_since (start_epoch_seconds ):
 
     return ""
 
-
 def wait_for_fresh_oob_code_from_history (start_epoch_seconds ,seconds_to_wait =180 ):
     for _ in range (seconds_to_wait ):
         code =try_extract_oob_code_from_browser_history_since (start_epoch_seconds )
@@ -397,7 +378,6 @@ def wait_for_fresh_oob_code_from_history (start_epoch_seconds ,seconds_to_wait =
 
     return ""
 
-
 def get_clipboard_text ():
     try :
         import tkinter 
@@ -408,7 +388,6 @@ def get_clipboard_text ():
         return clean (value )
     except Exception :
         return ""
-
 
 def get_oob_authorization_code (start_epoch_seconds ):
 # Primary path: silently capture a new OOB approval URL from Edge/Chrome history.
@@ -430,7 +409,6 @@ def get_oob_authorization_code (start_epoch_seconds ):
         return code 
 
     return extract_oauth_code (input ("Paste ArcGIS authorization code or approval URL: ").strip ())
-
 
 def interactive_access_token (session ):
     cached =cached_access_token ()
@@ -503,12 +481,9 @@ def interactive_access_token (session ):
     log ("Saved ArcGIS Portal access token to Windows Credential Manager.")
     return token 
 
-
-
 def get_arcgis_token (session =None ):
     active_session =session if session is not None else requests .Session ()
     return interactive_access_token (active_session )
-
 
 def apply_pipe_domain_out_fields (url ,params ):
     """Ensure DNV pipe-layer queries also return ASSETGROUP and ASSETTYPE.
@@ -553,7 +528,6 @@ def apply_pipe_domain_out_fields (url ,params ):
     updated [out_field_key ]=out_fields +",ASSETGROUP,ASSETTYPE"
     log ("Appended DNV pipe domain fields to outFields: ASSETGROUP,ASSETTYPE")
     return updated 
-
 
 def request_json (session ,url ,params =None ):
     params =apply_pipe_domain_out_fields (url ,params )
@@ -606,8 +580,6 @@ def request_json (session ,url ,params =None ):
             fail (f'ArcGIS REST error from {url }: {json .dumps (error ,indent =2 )}')
 
     return data 
-
-
 
 def request_json_post (session ,url ,params ):
     request_params =dict (params or {})
@@ -666,7 +638,6 @@ def request_json_post (session ,url ,params ):
 
     return data 
 
-
 def layer_metadata (session ,layer_url ):
     data =request_json (session ,layer_url ,{"f":"json"})
     fields =data .get ("fields",[])
@@ -709,7 +680,6 @@ def esri_geometry_to_shape (geometry ):
         return shape (geometry )
     except Exception :
         return None 
-
 
 def safe_cache_name (layer_name ):
     return re .sub (r"[^A-Za-z0-9_]+","_",layer_name .strip ().lower ()).strip ("_")
@@ -891,8 +861,6 @@ def epoch_ms_to_sql_timestamp (epoch_ms ):
         return safe_default 
     return f'timestamp \'{when .strftime ("%Y-%m-%d %H:%M:%S")}\''
 
-
-
 def build_delta_where (base_where ,modified_field ,last_epoch_ms ):
     return f'({base_where }) AND {modified_field } > {epoch_ms_to_sql_timestamp (last_epoch_ms )}'
 
@@ -943,7 +911,6 @@ def write_layer_cache (layer_name ,layer_url ,where_clause ,server_count ,modifi
     except Exception as ex :
         warn (f'{layer_name }: failed to write cache. Error={ex }')
 
-
 def chunk_list (values ,chunk_size ):
     for index in range (0 ,len (values ),chunk_size ):
         yield values [index :index +chunk_size ]
@@ -990,8 +957,6 @@ def fetch_objectid_batch (layer_url ,object_id_batch ,layer_name ,meta ,out_fiel
     batch =data .get ("features",[])
     log (f'{layer_name }: objectId batch {batch_number :,}/{batch_total :,} returned {len (batch ):,} features')
     return batch 
-
-
 
 def query_feature_set (session ,layer_url ,where_clause ,layer_name ,meta ,out_fields ):
     source_crs =f'EPSG:{meta ["wkid"]}'if meta ["wkid"]else None 
@@ -1096,8 +1061,6 @@ def query_feature_set (session ,layer_url ,where_clause ,layer_name ,meta ,out_f
     log (f'{layer_name }: usable geometries = {len (gdf ):,}')
     return gdf 
 
-
-
 def upsert_cached_layer (cached_gdf ,delta_gdf ,object_id_field ):
     if delta_gdf is None or len (delta_gdf )==0 :
         return cached_gdf 
@@ -1108,7 +1071,6 @@ def upsert_cached_layer (cached_gdf ,delta_gdf ,object_id_field ):
     keep_cached =cached_gdf [~cached_gdf [object_id_field ].astype (str ).isin (delta_ids )].copy ()
     merged =pd .concat ([keep_cached ,delta_gdf ],ignore_index =True )
     return gpd .GeoDataFrame (merged ,geometry ="geometry",crs =cached_gdf .crs or delta_gdf .crs )
-
 
 def query_arcgis_layer (session ,layer_url ,where_clause ,layer_name ):
     step (f'Querying ArcGIS REST layer: {layer_name }')
@@ -1152,8 +1114,6 @@ def query_arcgis_layer (session ,layer_url ,where_clause ,layer_name ):
     gdf =query_feature_set (session ,layer_url ,where_clause ,layer_name ,meta ,out_fields )
     write_layer_cache (layer_name ,layer_url ,where_clause ,server_count ,modified_field ,gdf )
     return gdf 
-
-
 
 def load_supplemental ():
     step ("Loading supplemental CSV")
