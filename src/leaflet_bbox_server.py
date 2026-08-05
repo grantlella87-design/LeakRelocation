@@ -1,4 +1,3 @@
-# ruff: noqa: BLE001, S110
 import json
 import os
 import sys
@@ -59,11 +58,11 @@ KEEP_TOKENS = [
     "pressure",
 ]
 MATERIAL_COLORS = {
-    "PLASTIC": "#00b050",
-    "STEEL": "#404040",
+    "PLASTIC": "#f7e708f0",
+    "STEEL": "#061FFAF6",
     "IRON": "#8b4513",
     "COPPER": "#b87333",
-    "UNKNOWN": "#999999",
+    "UNKNOWN": "#D30FFAEB",
     "OTHER": "#7b68ee",
 }
 LAYERS = {
