@@ -237,33 +237,54 @@ def enrich_historic_leaks(gdf):
     return merged
 
 
-def add_pipe_material_fields(gdf):
+def add_pipe_material_fields(gdf, layer_name="pipes"):
     if len(gdf) == 0:
         return gdf
     gdf = gdf.copy()
     # Pipe material comes from ASSETTYPE. PipeMaterialRaw is the raw subtype
-    # code; the domain value lives in "material" and is what gets classified.
-    # Classifying the raw code instead would compare a number against material
-    # names and land everything in UNKNOWN.
+    # code; the domain value lives in ASSETTYPE_DECODED (published as
+    # "material") and is what gets classified. Classifying the raw code instead
+    # would compare a number against material names and land everything in
+    # UNKNOWN.
     raw_col = find_col(gdf.columns, ["ASSETTYPE", "PipeMaterialRaw"])
-    domain_col = find_col(
+    decoded_col = find_col(gdf.columns, ["ASSETTYPE_DECODED"])
+    domain_col = decoded_col or find_col(
         gdf.columns,
-        [
-            "ASSETTYPE_DECODED",
-            "material",
-            "MatchedPipeMaterial",
-            "assettype_material",
-            "Material",
-        ],
+        ["material", "MatchedPipeMaterial", "assettype_material", "Material"],
     )
     dia_col = find_col(
         gdf.columns,
         ["nominaldiameter", "diameter", "MatchedPipeDiameter", "outsidediameter"],
     )
 
+    # An unenriched cache has no ASSETTYPE at all, which leaves PipeMaterialRaw
+    # empty and - worse - leaves "material" holding the DNV Grade field, so the
+    # families and colours below would be derived from grade data. Say so rather
+    # than presenting a blank column and plausible-looking colours.
+    if not raw_col:
+        log(
+            f"WARNING {layer_name}: no ASSETTYPE column in this cache, so "
+            f"PipeMaterialRaw will be empty. Run: python scripts/enrich_assettype_cache.py"
+        )
+    if not decoded_col:
+        log(
+            f"WARNING {layer_name}: no ASSETTYPE_DECODED column, so material family is "
+            f"derived from {domain_col!r}. If that is the DNV Grade field this contradicts "
+            f"the project's key rule. Run: python scripts/enrich_assettype_cache.py"
+        )
+
     gdf["PipeMaterialRaw"] = gdf[raw_col].map(clean_value) if raw_col else None
     gdf["PipeMaterialDomain"] = gdf[domain_col].map(clean_value) if domain_col else None
     gdf["PipeMaterialFamily"] = gdf["PipeMaterialDomain"].map(material_family)
+
+    # The column can also exist and be entirely null, when an enrichment run
+    # matched no OBJECTIDs. That looks identical in the viewer, so report it.
+    if raw_col and gdf["PipeMaterialRaw"].isna().all():
+        log(
+            f"WARNING {layer_name}: {raw_col} is present but empty for every row, so "
+            f"PipeMaterialRaw is blank. The last enrichment matched no OBJECTIDs. "
+            f"Run: python scripts/enrich_assettype_cache.py --force"
+        )
     gdf["PipeMaterialColor"] = gdf["PipeMaterialFamily"].map(material_color)
     if dia_col:
         gdf["PipeDiameter"] = gdf[dia_col].map(clean_value)
@@ -319,7 +340,7 @@ def read_cache(key):
     if key == "historic_leaks":
         gdf = enrich_historic_leaks(gdf)
     if key in ["distribution_pipes", "service_pipes"]:
-        gdf = add_pipe_material_fields(gdf)
+        gdf = add_pipe_material_fields(gdf, key)
     return limit_columns(gdf)
 
 
