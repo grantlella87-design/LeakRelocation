@@ -155,7 +155,16 @@ TIMINGS = _flag_from_env("LEAKRELOCATION_TIMINGS", False)
 # authentication fails and the out-of-band flow is used instead.
 USE_LOOPBACK_OAUTH = _flag_from_env("LEAKRELOCATION_LOOPBACK_OAUTH", True)
 LOOPBACK_OAUTH_PORT = _int_from_env("LEAKRELOCATION_LOOPBACK_PORT", 8770)
-LOOPBACK_REDIRECT_URI = f"http://localhost:{LOOPBACK_OAUTH_PORT}/"
+
+# The portal compares redirect_uri against the app registration as a string, so
+# host spelling and the trailing slash both matter: "localhost" and "127.0.0.1"
+# are different values, and ".../" differs from "...". Set the whole URI to
+# match the registration exactly when the defaults do not.
+LOOPBACK_OAUTH_HOST = os.environ.get("LEAKRELOCATION_LOOPBACK_HOST", "localhost").strip()
+LOOPBACK_REDIRECT_URI = (
+    os.environ.get("LEAKRELOCATION_LOOPBACK_REDIRECT_URI", "").strip()
+    or f"http://{LOOPBACK_OAUTH_HOST}:{LOOPBACK_OAUTH_PORT}/"
+)
 
 
 def describe():

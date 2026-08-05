@@ -606,6 +606,74 @@ setTimeout(function(){document.getElementById('msg').textContent =
 </body></html>"""
 
 
+def build_authorize_url(redirect_uri):
+    """Build the portal authorize URL.
+
+    ":" and "/" are left unescaped. They are legal in a query value under
+    RFC 3986, the redirect_uri stays readable in the address bar, and it removes
+    percent-encoding as a variable when the portal rejects a redirect.
+    """
+    query = urllib.parse.urlencode(
+        {
+            "client_id": ARCGIS_CLIENT_ID,
+            "response_type": "code",
+            "redirect_uri": redirect_uri,
+            "expiration": "20160",
+        },
+        safe=":/",
+    )
+    return PORTAL_AUTHORIZE_URL + "?" + query
+
+
+def authorize_url_is_accepted(session, authorize_url, redirect_uri):
+    """Check whether the portal accepts this redirect_uri before opening a browser.
+
+    A rejected redirect_uri otherwise surfaces only as a 400 page inside the
+    browser, which the script cannot read, leaving no indication of the cause.
+    Returns True when the request is worth handing to a browser.
+    """
+    probe_url = authorize_url + "&f=json"
+    try:
+        response = session.get(
+            probe_url,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+            verify=VERIFY_SSL,
+            allow_redirects=False,
+        )
+    except requests.RequestException as ex:
+        detail(f"Could not pre-check the authorize URL ({ex}); continuing.")
+        return True
+
+    message = ""
+    try:
+        payload = response.json()
+        error = payload.get("error") or {}
+        message = "; ".join(
+            str(part) for part in [error.get("message"), *(error.get("details") or [])] if part
+        )
+    except ValueError:
+        # A sign-in page rather than JSON, which means the request was accepted.
+        if response.status_code < 400:
+            return True
+        message = response.text.strip()[:300]
+
+    if response.status_code < 400 and not message:
+        return True
+
+    warn(f"The portal rejected this sign-in request (HTTP {response.status_code}).")
+    if message:
+        warn(f"Portal said: {message}")
+    warn(f"redirect_uri sent: {redirect_uri}")
+    warn(
+        "Add that exact value to the app registration's redirect URIs "
+        f"(client id {ARCGIS_CLIENT_ID}). The string must match including the "
+        "scheme, host spelling and trailing slash. Override with "
+        "LEAKRELOCATION_LOOPBACK_REDIRECT_URI, or set "
+        "LEAKRELOCATION_LOOPBACK_OAUTH=0 to skip the loopback flow."
+    )
+    return False
+
+
 def capture_loopback_authorization_code(timeout_seconds=180):
     """Serve the OAuth redirect on loopback and return the authorization code.
 
@@ -685,36 +753,29 @@ def interactive_access_token(session):
     if not ARCGIS_CLIENT_ID:
         fail("ARCGIS_CLIENT_ID is not set.")
 
-    def authorize_url_for(redirect_uri):
-        return PORTAL_AUTHORIZE_URL + "?" + urllib.parse.urlencode({
-            "client_id": ARCGIS_CLIENT_ID,
-            "response_type": "code",
-            "redirect_uri": redirect_uri,
-            "expiration": "20160",
-        })
-
     auth_code = None
     redirect_uri = ARCGIS_REDIRECT_URI
 
     if config.USE_LOOPBACK_OAUTH:
-        log("Opening browser to sign in to ArcGIS.")
-        detail(f"Redirect URI: {config.LOOPBACK_REDIRECT_URI}")
-        webbrowser.open(authorize_url_for(config.LOOPBACK_REDIRECT_URI), new=1, autoraise=True)
-        auth_code = capture_loopback_authorization_code()
-        if auth_code:
-            redirect_uri = config.LOOPBACK_REDIRECT_URI
-        else:
-            warn(
-                "Loopback sign-in did not complete. If the portal app registration "
-                f"does not list {config.LOOPBACK_REDIRECT_URI} as a redirect URI, add it, "
-                "or set LEAKRELOCATION_LOOPBACK_OAUTH=0 to use the out-of-band page."
-            )
+        loopback_url = build_authorize_url(config.LOOPBACK_REDIRECT_URI)
+        # Ask the portal before handing the URL to a browser. Otherwise a
+        # rejected redirect_uri shows up only as a 400 page the script cannot
+        # read, and the reason stays invisible.
+        if authorize_url_is_accepted(session, loopback_url, config.LOOPBACK_REDIRECT_URI):
+            log("Opening browser to sign in to ArcGIS.")
+            detail(f"Redirect URI: {config.LOOPBACK_REDIRECT_URI}")
+            webbrowser.open(loopback_url, new=1, autoraise=True)
+            auth_code = capture_loopback_authorization_code()
+            if auth_code:
+                redirect_uri = config.LOOPBACK_REDIRECT_URI
+            else:
+                warn("Loopback sign-in did not complete; falling back.")
 
     if not auth_code:
         log("Opening browser for ArcGIS user authentication (out-of-band).")
         detail(f"Redirect URI: {ARCGIS_REDIRECT_URI}")
         auth_start_epoch = time.time()
-        webbrowser.open(authorize_url_for(ARCGIS_REDIRECT_URI), new=1, autoraise=True)
+        webbrowser.open(build_authorize_url(ARCGIS_REDIRECT_URI), new=1, autoraise=True)
         auth_code = get_oob_authorization_code(auth_start_epoch)
         redirect_uri = ARCGIS_REDIRECT_URI
 
