@@ -23,6 +23,8 @@ assessment.
 | `src/leakrelocation/config.py` | Every path, URL and tuning knob. |
 | `src/leakrelocation/matching.py` | Pure material/diameter matching logic. |
 | `src/leakrelocation/assettype.py` | ASSETGROUP/ASSETTYPE subtype decoding. |
+| `src/leakrelocation/viewer_pane.py` | Attribute table pane shared by the viewers. |
+| `src/leakrelocation/viewer_html.py` | Relocation viewer HTML template. |
 | `scripts/` | Enrichment, audit and viewer-building tools. |
 | `viewer/` | Local map viewer and its server. |
 | `tests/` | Tests that need no network and no shared drive. |
@@ -88,6 +90,26 @@ python scripts/build_leaflet_context.py
 # serve the checked-in viewer
 python viewer/serve_viewer.py
 ```
+
+### Attribute pane
+
+The relocation viewer docks an attribute table under the map, one tab per
+layer:
+
+- Click a row to zoom to that feature and open its popup.
+- Click a feature on the map to select and scroll to its row.
+- Click a column header to sort; numeric columns sort numerically.
+- Filter rows with the search box (matches any attribute value).
+- **Hide** collapses the pane and gives the space back to the map.
+
+Rendering is capped at 500 rows per view — a production layer holds tens of
+thousands of features and an uncapped table would lock the browser. The row
+count shows `showing N of M` when the cap applies; narrow the set with the
+filter.
+
+`viewer/index_basic.html` is a committed snapshot of the generated viewer.
+`tests/test_viewer.py` re-renders the template and asserts the snapshot still
+matches, so the two cannot drift.
 
 ## Tests
 
