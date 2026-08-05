@@ -22,10 +22,21 @@ assessment.
 | `src/leaflet_bbox_server.py` | Local map viewer backend. |
 | `src/leakrelocation/config.py` | Every path, URL and tuning knob. |
 | `src/leakrelocation/matching.py` | Pure material/diameter matching logic. |
-| `scripts/` | Diagnostic and enrichment scripts. |
-| `scripts/legacy_patches/` | Historical in-place patchers — **do not run**. |
-| `powershell/` | Helper scripts for running the workflow on Windows. |
+| `src/leakrelocation/assettype.py` | ASSETGROUP/ASSETTYPE subtype decoding. |
+| `scripts/` | Enrichment, audit and viewer-building tools. |
+| `viewer/` | Local map viewer and its server. |
 | `tests/` | Tests that need no network and no shared drive. |
+
+### Scripts
+
+| Script | Purpose |
+| --- | --- |
+| `enrich_assettype_cache.py` | Decode ASSETGROUP/ASSETTYPE into the local pipe caches. |
+| `preflight_assettype_cache_check.py` | Confirm the caches are present and enriched. |
+| `audit_production_relocation_match_material.py` | Check relocated output against the pipe caches. |
+| `inspect_production_moved_leaks.py` | Summarise the relocated leaks in the GeoPackage. |
+| `build_local_relocation_viewer.py` | Build the local map of relocated leaks. |
+| `build_leaflet_context.py` | Build the standalone Leaflet context map. |
 
 ## Configuration
 
@@ -55,6 +66,29 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
+## Running
+
+Everything runs through Python directly.
+
+```bash
+# the relocation workflow
+python src/leak_relocation_geopandas.py
+
+# enrichment and diagnostics
+python scripts/preflight_assettype_cache_check.py
+python scripts/enrich_assettype_cache.py                 # both pipe layers
+python scripts/enrich_assettype_cache.py --workers 1     # unreliable connection
+python scripts/enrich_assettype_cache.py --dry-run       # report, write nothing
+python scripts/audit_production_relocation_match_material.py
+
+# build the viewers
+python scripts/build_local_relocation_viewer.py
+python scripts/build_leaflet_context.py
+
+# serve the checked-in viewer
+python viewer/serve_viewer.py
+```
+
 ## Tests
 
 The matching logic is tested without network access, an ArcGIS token or the
@@ -78,9 +112,9 @@ diff before.json after.json
 ## Making changes
 
 Edit the source in this repository, run the tests, then deploy. Do **not** edit
-the deployed copy on the shared drive, and do not run the scripts in
-`scripts/legacy_patches/` — they append code to the deployed file, which is how
-the workflow ended up with five functions defined twice.
+the deployed copy on the shared drive — patching it in place is how the
+workflow ended up with five functions defined twice. See the history section in
+`docs/PROJECT_STATE.md`.
 
 `src/leak_relocation_geopandas.py` imports the `leakrelocation` package from its
 own directory, so when it is copied to the share the `src/leakrelocation/`
@@ -88,9 +122,15 @@ folder must be copied alongside it.
 
 ## Local workflow
 
-Working files are synchronised from:
+Working data lives in:
 
-- `C:\Users\lellag\Downloads\LeakRelocation-GeoPandas`
-- `\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation`
+- `~/Downloads/LeakRelocation-GeoPandas` (caches and generated output)
+- `\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation` (shared inputs and the production GeoPackage)
 
-Run PowerShell helper scripts from the `powershell/` folder.
+Both are overridable via `LEAKRELOCATION_WORK_ROOT` and
+`LEAKRELOCATION_PROJECT_DIR`.
+
+Changes reach the repository through git directly. The previous
+`Sync-LeakRelocation-ToGit.ps1` copy-and-commit step has been removed: it
+rewrote tracked files from the local working folder on every run, which is how
+edits made here were repeatedly overwritten.
