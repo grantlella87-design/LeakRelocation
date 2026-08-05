@@ -60,6 +60,61 @@ class TestSnapshotMatchesTemplate:
         assert snapshot == expected
 
 
+class TestEveryViewerHasThePane:
+    """Three separate generators build viewers here. The pane was only wired
+    into one of them, so opening either of the others showed no table."""
+
+    def test_relocation_viewer(self, rendered):
+        assert 'id="attrPane"' in rendered
+        assert "const AttributePane" in rendered
+
+    def test_bbox_server_page(self, monkeypatch):
+        pytest.importorskip("geopandas")
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+        import leaflet_bbox_server as server
+
+        monkeypatch.setattr(server, "BOUNDS", {
+            "west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
+            "center_lat": 42.5, "center_lon": -71.5,
+        })
+        page = server.html_page()
+        assert 'id="attrPane"' in page
+        assert "const AttributePane" in page
+        # One tab per configured layer.
+        assert page.count("AttributePane.register") >= 1
+        # Layers reload on pan and zoom, so the table must re-read them.
+        assert "AttributePane.build()" in page
+        assert "AttributePane.selectFromMap" in page
+
+    def test_context_map_builder_wires_the_pane(self):
+        path = os.path.join(REPO_ROOT, "scripts", "build_leaflet_context.py")
+        with open(path, encoding="utf-8") as handle:
+            source = handle.read()
+        for token in ["__PANE_CSS__", "__PANE_HTML__", "__PANE_JS__", "__PANE_REGISTER__"]:
+            assert token in source, token
+        assert "AttributePane.register" in source
+        assert "AttributePane.build()" in source
+        assert "AttributePane.selectFromMap" in source
+
+    def test_full_height_map_rule_removed_where_the_pane_docks(self):
+        """The pane makes body a flex column. A leftover "#map{height:100%}"
+        makes the map fill the page and hides the table."""
+        for name in ["src/leaflet_bbox_server.py", "scripts/build_leaflet_context.py"]:
+            with open(os.path.join(REPO_ROOT, name), encoding="utf-8") as handle:
+                source = handle.read()
+            assert "#map{height:100%;width:100%}" not in source, name
+            assert "#map { height: 100%; width: 100%; }" not in source, name
+
+
+class TestPaneReadsNestedLayers:
+    def test_collect_recurses(self):
+        """A layer may be an L.layerGroup wrapping an L.geoJSON, as in the bbox
+        server, so reading one level deep finds no features."""
+        assert "function walk(layer)" in viewer_pane.PANE_JS
+        assert "if (layer.eachLayer) layer.eachLayer(walk);" in viewer_pane.PANE_JS
+
+
 class TestAttributePane:
     def test_pane_markup_present(self, snapshot):
         for element in ['id="attrPane"', 'id="attrPaneTabs"', 'id="attrPaneBody"',

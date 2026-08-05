@@ -21,6 +21,7 @@ from leakrelocation import config
 # substring matching, where "PE" matched inside "PIPE" and "TYPE" and sent every
 # such label to PLASTIC.
 from leakrelocation.assettype import family_from_assettype as material_family
+from leakrelocation.viewer_pane import PANE_CSS, PANE_HTML, PANE_JS
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -401,10 +402,10 @@ def html_page():
     parts.append("<title>LeakRelocation DNV Material Leaflet Context</title>")
     parts.append('<link rel="stylesheet" href="/leaflet/leaflet.css"/>')
     parts.append(
-        "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}#map{height:100%;width:100%}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}</style>"
+        "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}" + PANE_CSS + "</style>"
     )
     parts.append(
-        '</head><body><div id="map"></div><script src="/leaflet/leaflet.js"></script><script>'
+        '</head><body><div id="map"></div>' + PANE_HTML + '<script src="/leaflet/leaflet.js"></script><script>' + PANE_JS
     )
     parts.append("const LAYER_CONFIG = " + cfg_json + ";")
     parts.append("const DATA_BOUNDS = " + bounds_json + ";")
@@ -429,7 +430,7 @@ def html_page():
         "function esc(v){if(v===null||v===undefined)return '';return String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}"
     )
     parts.append(
-        "function bindPopup(feature,layer){const props=feature.properties||{};const ordered=['LMSLEAKNUMBER','LeakNumber','SuppLeakMaterialType','SuppDiameter','SuppFacilityType','SuppPipeCondition','SuppMaterialFamily','PipeMaterialRaw','PipeMaterialFamily','PipeDiameter','OBJECTID','GlobalID','GLOBALID','DistanceToPipe','ConfidenceLevel','LinkedLayer','NearestPipeID','NearestPipeGlobalID'];let keys=[];for(const k of ordered){if(Object.prototype.hasOwnProperty.call(props,k))keys.push(k)}for(const k of Object.keys(props)){if(!keys.includes(k)&&keys.length<18)keys.push(k)}let rows='';for(const k of keys)rows+='<tr><th>'+esc(k)+'</th><td>'+esc(props[k])+'</td></tr>';if(!rows)rows='<tr><td>No attributes</td></tr>';layer.bindPopup('<table>'+rows+'</table>')}"
+        "function bindPopup(feature,layer){const props=feature.properties||{};const ordered=['LMSLEAKNUMBER','LeakNumber','SuppLeakMaterialType','SuppDiameter','SuppFacilityType','SuppPipeCondition','SuppMaterialFamily','PipeMaterialRaw','PipeMaterialFamily','PipeDiameter','OBJECTID','GlobalID','GLOBALID','DistanceToPipe','ConfidenceLevel','LinkedLayer','NearestPipeID','NearestPipeGlobalID'];let keys=[];for(const k of ordered){if(Object.prototype.hasOwnProperty.call(props,k))keys.push(k)}for(const k of Object.keys(props)){if(!keys.includes(k)&&keys.length<18)keys.push(k)}let rows='';for(const k of keys)rows+='<tr><th>'+esc(k)+'</th><td>'+esc(props[k])+'</td></tr>';if(!rows)rows='<tr><td>No attributes</td></tr>';layer.bindPopup('<table>'+rows+'</table>');layer.on('click',function(){AttributePane.selectFromMap(layer)})}"
     )
     parts.append(
         "function styleFor(k,feature){const c=LAYER_CONFIG[k];const p=(feature&&feature.properties)||{};if(c.kind==='pipe_line'){const fam=p.PipeMaterialFamily||'OTHER';return {color:MATERIAL_COLORS[fam]||MATERIAL_COLORS.OTHER,weight:c.weight||2,opacity:.82}}return {color:c.color,weight:c.weight||1,opacity:.75}}"
@@ -438,7 +439,7 @@ def html_page():
         "function pointToLayerFor(k){const c=LAYER_CONFIG[k];return function(feature,latlng){return L.circleMarker(latlng,{radius:c.radius||3,color:c.color,fillColor:c.color,fillOpacity:.72,weight:1})}}"
     )
     parts.append(
-        "for(const key of Object.keys(LAYER_CONFIG)){groups[key]=L.layerGroup();if(LAYER_CONFIG[key].default){groups[key].addTo(map);active.add(key)}}"
+        "for(const key of Object.keys(LAYER_CONFIG)){groups[key]=L.layerGroup();if(LAYER_CONFIG[key].default){groups[key].addTo(map);active.add(key)}AttributePane.register(key,LAYER_CONFIG[key].label,groups[key])}"
     )
     parts.append(
         "const extentBox=L.rectangle([[DATA_BOUNDS.south,DATA_BOUNDS.west],[DATA_BOUNDS.north,DATA_BOUNDS.east]],{color:'#d40000',weight:2,fill:false,dashArray:'8,6'}).addTo(map); const centerMarker=L.marker([DATA_BOUNDS.center_lat,DATA_BOUNDS.center_lon]).addTo(map);"
@@ -450,10 +451,10 @@ def html_page():
         "map.fitBounds([[DATA_BOUNDS.south,DATA_BOUNDS.west],[DATA_BOUNDS.north,DATA_BOUNDS.east]],{padding:[24,24]});"
     )
     parts.append(
-        "async function refreshLayer(key){if(!active.has(key))return; const b=map.getBounds(); const url='/api/layer?name='+encodeURIComponent(key)+'&west='+b.getWest()+'&south='+b.getSouth()+'&east='+b.getEast()+'&north='+b.getNorth()+'&simplify='+SIMPLIFY+'&max='+MAX_FEATURES; const r=await fetch(url); const payload=await r.json(); groups[key].clearLayers(); L.geoJSON(payload.geojson,{pointToLayer:pointToLayerFor(key),style:function(f){return styleFor(key,f)},onEachFeature:bindPopup}).addTo(groups[key]); status[key]=payload; updateInfo();}"
+        "async function refreshLayer(key){if(!active.has(key))return; const b=map.getBounds(); const url='/api/layer?name='+encodeURIComponent(key)+'&west='+b.getWest()+'&south='+b.getSouth()+'&east='+b.getEast()+'&north='+b.getNorth()+'&simplify='+SIMPLIFY+'&max='+MAX_FEATURES; const r=await fetch(url); const payload=await r.json(); groups[key].clearLayers(); L.geoJSON(payload.geojson,{pointToLayer:pointToLayerFor(key),style:function(f){return styleFor(key,f)},onEachFeature:bindPopup}).addTo(groups[key]); status[key]=payload; updateInfo(); AttributePane.build();}"
     )
     parts.append(
-        "function refreshActive(){for(const key of Array.from(active))refreshLayer(key)} map.on('overlayadd',function(e){for(const key of Object.keys(groups)){if(groups[key]===e.layer){active.add(key);refreshLayer(key)}}}); map.on('overlayremove',function(e){for(const key of Object.keys(groups)){if(groups[key]===e.layer){active.delete(key);groups[key].clearLayers();delete status[key];updateInfo()}}}); map.on('moveend zoomend',refreshActive);"
+        "function refreshActive(){for(const key of Array.from(active))refreshLayer(key)} map.on('overlayadd',function(e){for(const key of Object.keys(groups)){if(groups[key]===e.layer){active.add(key);refreshLayer(key)}}}); map.on('overlayremove',function(e){for(const key of Object.keys(groups)){if(groups[key]===e.layer){active.delete(key);groups[key].clearLayers();delete status[key];updateInfo();AttributePane.build()}}}); map.on('moveend zoomend',refreshActive);"
     )
     parts.append(
         "const info=L.control({position:'bottomleft'}); info.onAdd=function(){const div=L.DomUtil.create('div','info');div.id='infoBox';return div}; info.addTo(map);"
