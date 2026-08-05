@@ -24,6 +24,8 @@ except Exception:
     pass
 from _bootstrap import config
 
+from leakrelocation.viewer_pane import PANE_CSS, PANE_HTML, PANE_JS
+
 ROOT = config.WORK_ROOT
 CACHE = config.LAYER_CACHE_DIR
 OUT = ROOT / "leaflet_context"
@@ -127,6 +129,7 @@ def build_html(loaded, bounds, asset_modes):
     data_js = []
     layer_js = []
     overlay_parts = []
+    pane_register_parts = []
     for cfg, full_gdf, sample_gdf_obj, geojson in loaded:
         data_var = cfg["key"] + "Data"
         layer_var = cfg["key"] + "Layer"
@@ -160,6 +163,10 @@ const {layer_var} = L.geoJSON({data_var}, {{
 }}).addTo(map);
 """.format(layer_var=layer_var,data_var=data_var,color=cfg["color"],weight=cfg["weight"]))
         overlay_parts.append('"{0}": {1}'.format(cfg["label"], layer_var))
+        pane_register_parts.append(
+            '  AttributePane.register("{0}", "{1}", {2});'.format(
+                cfg["key"], cfg["label"], layer_var))
+    pane_register_js = "\n".join(pane_register_parts) + "\n  AttributePane.build();"
     center_url = "https://www.openstreetmap.org/?mlat={0:.8f}&mlon={1:.8f}#map=12/{0:.8f}/{1:.8f}".format(bounds["center_lat"], bounds["center_lon"])
     html = """<!doctype html>
 <html>
@@ -169,7 +176,6 @@ const {layer_var} = L.geoJSON({data_var}, {{
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css"/>
   <style>
     html, body { height: 100%; width: 100%; margin: 0; padding: 0; font-family: Arial, sans-serif; }
-    #map { height: 100%; width: 100%; }
     .info { background: white; padding: 10px 12px; border: 1px solid #777; border-radius: 4px; font-size: 13px; box-shadow: 0 1px 5px rgba(0,0,0,0.35); max-width: 520px; }
     .leaflet-popup-content table { border-collapse: collapse; }
     .leaflet-popup-content th { text-align: left; padding-right: 8px; vertical-align: top; }
@@ -177,11 +183,13 @@ const {layer_var} = L.geoJSON({data_var}, {{
     .swatch { display: inline-block; width: 22px; height: 4px; margin-right: 6px; vertical-align: middle; }
     .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
     #load-warning { display:none; position:absolute; z-index:9999; left:12px; top:12px; background:#fff3cd; border:1px solid #d6b656; padding:12px; max-width:620px; }
+__PANE_CSS__
   </style>
 </head>
 <body>
 <div id="load-warning"><b>Leaflet did not load.</b><br/>This HTML expects local files under <code>vendor/leaflet</code>. Re-run the builder if the vendor files are missing.</div>
 <div id="map"></div>
+__PANE_HTML__
 <script src="vendor/leaflet/leaflet.js"></script>
 <script>
 if (typeof L === "undefined") {
@@ -203,8 +211,10 @@ if (typeof L === "undefined") {
     for (const k of keys) rows += "<tr><th>" + htmlEscape(k) + "</th><td>" + htmlEscape(props[k]) + "</td></tr>";
     if (!rows) rows = "<tr><td>No attributes in sample</td></tr>";
     layer.bindPopup("<table>" + rows + "</table>");
+    layer.on("click", function() { AttributePane.selectFromMap(layer); });
   }
   __DATA_JS__
+  __PANE_JS__
   __LAYER_JS__
   const dataBounds = [[__SOUTH__, __WEST__], [__NORTH__, __EAST__]];
   map.fitBounds(dataBounds, { padding: [24, 24] });
@@ -215,6 +225,7 @@ if (typeof L === "undefined") {
   const overlays = { __OVERLAYS__, "Red data extent box": extentBox, "Extent center marker": centerMarker };
   L.control.layers(baseMaps, overlays, { collapsed: false }).addTo(map);
   L.control.scale({ imperial: true, metric: true }).addTo(map);
+__PANE_REGISTER__
   const info = L.control({ position: "bottomleft" });
   info.onAdd = function() {
     const div = L.DomUtil.create("div", "info");
@@ -238,6 +249,10 @@ if (typeof L === "undefined") {
     replaces = {
         "__DATA_JS__":"\n  ".join(data_js),
         "__LAYER_JS__":"\n  ".join(layer_js),
+        "__PANE_CSS__": PANE_CSS,
+        "__PANE_HTML__": PANE_HTML,
+        "__PANE_JS__": PANE_JS,
+        "__PANE_REGISTER__": pane_register_js,
         "__OVERLAYS__":", ".join(overlay_parts),
         "__WEST__":"{0:.8f}".format(bounds["west"]),
         "__SOUTH__":"{0:.8f}".format(bounds["south"]),
