@@ -17,12 +17,14 @@ import shutil as _shutil
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import urllib.parse
 import webbrowser
 from collections import defaultdict
 from concurrent import futures
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import geopandas as gpd
 import keyring
@@ -291,27 +293,66 @@ def verbose(text):
         log(text)
 
 
+def detail(text):
+    """Diagnostic output. Hidden unless LEAKRELOCATION_VERBOSE is set.
+
+    Field resolution, TLS/proxy setup and outFields lists are useful when
+    something is wrong and noise the rest of the time.
+    """
+    if config.VERBOSE:
+        log(text)
+
+
+_TIMINGS = []
+
+
+def timed(label):
+    """Context manager recording elapsed time for a stage."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _timer():
+        started = time.time()
+        try:
+            yield
+        finally:
+            _TIMINGS.append((label, time.time() - started))
+
+    return _timer()
+
+
+def report_timings():
+    if not config.TIMINGS or not _TIMINGS:
+        return
+    step("Stage timings")
+    width = max(len(label) for label, _ in _TIMINGS)
+    for label, seconds in _TIMINGS:
+        log(f"  {label:<{width}}  {seconds:8.1f}s")
+    log(f"  {'total':<{width}}  {sum(s for _, s in _TIMINGS):8.1f}s")
+
+
 def resolved_field(columns, candidates, required=False, label="field"):
     available = list(columns)
     resolved = resolve_field_name(available, candidates)
     if resolved is not None:
-        log(f"Resolved {label}: {resolved}")
+        detail(f"Resolved {label}: {resolved}")
         return resolved
     if required:
         fail(
             f"Could not resolve required {label}. Candidates={candidates}. Available={available}"
         )
-    warn(f"Could not resolve optional {label}. Candidates={candidates}")
+    # The caller reports what the missing field means for the run; listing every
+    # candidate here only repeats it.
+    detail(f"Could not resolve optional {label}. Candidates={candidates}")
     return None
 
 
 def ensure_output_folder():
-    step("Checking output folder")
     if not os.path.isdir(OUTPUT_FOLDER):
         os.makedirs(OUTPUT_FOLDER)
         log(f"Created output folder: {OUTPUT_FOLDER}")
     else:
-        log(f"Output folder exists: {OUTPUT_FOLDER}")
+        detail(f"Output folder exists: {OUTPUT_FOLDER}")
 
 
 def make_session():
@@ -319,13 +360,13 @@ def make_session():
         import truststore
 
         truststore.inject_into_ssl()
-        log("Injected Windows certificate store through truststore.")
+        detail("Injected Windows certificate store through truststore.")
     except Exception as ex:
         warn(f"truststore injection failed: {ex}")
     for proxy_var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
         if proxy_var in os.environ:
             os.environ.pop(proxy_var, None)
-            log(f"Removed runtime proxy environment variable: {proxy_var}")
+            detail(f"Removed runtime proxy environment variable: {proxy_var}")
     os.environ["NO_PROXY"] = (
         "gis.nationalgrid.com,.nationalgrid.com,localhost,127.0.0.1"
     )
@@ -550,6 +591,80 @@ def get_oob_authorization_code(start_epoch_seconds):
     )
 
 
+LOOPBACK_SUCCESS_PAGE = b"""<!doctype html>
+<html><head><meta charset="utf-8"/><title>Signed in</title></head>
+<body style="font-family:Arial,sans-serif;padding:2em">
+<p id="msg">Signed in. Closing...</p>
+<script>
+// Opened by the sign-in redirect, so this window may close itself.
+window.close();
+// If the browser refuses (some block close() on tabs it did not script-open),
+// leave a short instruction rather than the raw authorization code.
+setTimeout(function(){document.getElementById('msg').textContent =
+  'Signed in. You can close this tab.';}, 400);
+</script>
+</body></html>"""
+
+
+def capture_loopback_authorization_code(timeout_seconds=180):
+    """Serve the OAuth redirect on loopback and return the authorization code.
+
+    Replaces reading the code off the out-of-band page, which left a tab showing
+    "SUCCESS code=..." that could not be closed programmatically because the
+    page belonged to the portal. Here the redirect lands on a page this process
+    serves, so it can close itself and never displays the code.
+
+    Returns None if the redirect never arrives, so the caller can fall back.
+    """
+    captured = {}
+    ready = threading.Event()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            code = (query.get("code") or [None])[0]
+            error = (query.get("error_description") or query.get("error") or [None])[0]
+            if code:
+                captured["code"] = code
+            elif error:
+                captured["error"] = error
+            else:
+                # Favicon and similar noise; not the redirect.
+                self.send_response(204)
+                self.end_headers()
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(LOOPBACK_SUCCESS_PAGE)))
+            self.end_headers()
+            self.wfile.write(LOOPBACK_SUCCESS_PAGE)
+            ready.set()
+
+        def log_message(self, *args):
+            """Silence the default per-request logging to stderr."""
+
+    try:
+        server = HTTPServer(("127.0.0.1", config.LOOPBACK_OAUTH_PORT), Handler)
+    except OSError as exc:
+        warn(f"Could not listen on {config.LOOPBACK_REDIRECT_URI}: {exc}")
+        return None
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        if not ready.wait(timeout_seconds):
+            warn("Sign-in did not complete within the timeout.")
+            return None
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    if captured.get("error"):
+        fail(f"ArcGIS sign-in failed: {captured['error']}")
+    return captured.get("code")
+
+
 def interactive_access_token(session):
     cached = cached_access_token()
 
@@ -570,28 +685,38 @@ def interactive_access_token(session):
     if not ARCGIS_CLIENT_ID:
         fail("ARCGIS_CLIENT_ID is not set.")
 
-    authorize_params = {
-        "client_id": ARCGIS_CLIENT_ID,
-        "response_type": "code",
-        "redirect_uri": ARCGIS_REDIRECT_URI,
-        "expiration": "20160",
-    }
+    def authorize_url_for(redirect_uri):
+        return PORTAL_AUTHORIZE_URL + "?" + urllib.parse.urlencode({
+            "client_id": ARCGIS_CLIENT_ID,
+            "response_type": "code",
+            "redirect_uri": redirect_uri,
+            "expiration": "20160",
+        })
 
-    authorize_url = (
-        PORTAL_AUTHORIZE_URL + "?" + urllib.parse.urlencode(authorize_params)
-    )
+    auth_code = None
+    redirect_uri = ARCGIS_REDIRECT_URI
 
-    log("Opening browser for ArcGIS user authentication.")
-    log(
-        "Using OOB redirect. The script will silently capture the fresh approval code from browser history when possible."
-    )
-    log(f"Redirect URI: {ARCGIS_REDIRECT_URI}")
+    if config.USE_LOOPBACK_OAUTH:
+        log("Opening browser to sign in to ArcGIS.")
+        detail(f"Redirect URI: {config.LOOPBACK_REDIRECT_URI}")
+        webbrowser.open(authorize_url_for(config.LOOPBACK_REDIRECT_URI), new=1, autoraise=True)
+        auth_code = capture_loopback_authorization_code()
+        if auth_code:
+            redirect_uri = config.LOOPBACK_REDIRECT_URI
+        else:
+            warn(
+                "Loopback sign-in did not complete. If the portal app registration "
+                f"does not list {config.LOOPBACK_REDIRECT_URI} as a redirect URI, add it, "
+                "or set LEAKRELOCATION_LOOPBACK_OAUTH=0 to use the out-of-band page."
+            )
 
-    auth_start_epoch = time.time()
-
-    webbrowser.open(authorize_url, new=1, autoraise=True)
-
-    auth_code = get_oob_authorization_code(auth_start_epoch)
+    if not auth_code:
+        log("Opening browser for ArcGIS user authentication (out-of-band).")
+        detail(f"Redirect URI: {ARCGIS_REDIRECT_URI}")
+        auth_start_epoch = time.time()
+        webbrowser.open(authorize_url_for(ARCGIS_REDIRECT_URI), new=1, autoraise=True)
+        auth_code = get_oob_authorization_code(auth_start_epoch)
+        redirect_uri = ARCGIS_REDIRECT_URI
 
     if not auth_code:
         fail("No authorization code was captured.")
@@ -601,7 +726,7 @@ def interactive_access_token(session):
         "client_id": ARCGIS_CLIENT_ID,
         "grant_type": "authorization_code",
         "code": auth_code,
-        "redirect_uri": ARCGIS_REDIRECT_URI,
+        "redirect_uri": redirect_uri,
     }
 
     response = session.post(
@@ -894,7 +1019,7 @@ def modified_field_from_meta(meta, layer_name):
     field_names = metadata_field_names(meta)
     field_name = resolve_from_names(field_names, MODIFIED_FIELD_CANDIDATES)
     if field_name:
-        log(f"{layer_name}: using delta modified field: {field_name}")
+        detail(f"{layer_name}: using delta modified field: {field_name}")
     else:
         warn(
             f"{layer_name}: no modified field found. Delta cache unavailable; full refresh will be used."
@@ -934,53 +1059,10 @@ def build_out_fields(meta, layer_name):
         if field and field not in deduped:
             deduped.append(field)
     if not deduped:
-        log(f"{layer_name}: could not narrow outFields; using *")
+        warn(f"{layer_name}: could not narrow outFields; requesting all fields")
         return "*"
     out_fields = ",".join(deduped)
-    # LR_FORCE_ASSETGROUP_ASSETTYPE_OUTFIELDS
-    _lr_is_pipe_layer = False
-    for _lr_local_name, _lr_local_value in list(locals().items()):
-        try:
-            _lr_text = str(_lr_local_value).lower()
-        except Exception:
-            _lr_text = ""
-        if (
-            "distribution pipes" in _lr_text
-            or "service pipes" in _lr_text
-            or "distribution pipe" in _lr_text
-            or "service pipe" in _lr_text
-            or "/mapserver/6" in _lr_text
-            or "/mapserver/7" in _lr_text
-        ):
-            _lr_is_pipe_layer = True
-            break
-    if _lr_is_pipe_layer:
-        for _lr_local_name, _lr_local_value in list(locals().items()):
-            if isinstance(_lr_local_value, list):
-                _lr_lower_values = [str(_v).lower() for _v in _lr_local_value]
-                if (
-                    "nominaldiameter" in _lr_lower_values
-                    or "material" in _lr_lower_values
-                    or "operatingpressure" in _lr_lower_values
-                ):
-                    for _lr_required_field in ["ASSETGROUP", "ASSETTYPE"]:
-                        if _lr_required_field not in _lr_local_value:
-                            _lr_local_value.append(_lr_required_field)
-                            print(
-                                f"Added required DNV pipe domain field to outFields: {_lr_required_field}",
-                                flush=True,
-                            )
-            elif isinstance(_lr_local_value, str):
-                _lr_lower_text = _lr_local_value.lower()
-                if (
-                    "nominaldiameter" in _lr_lower_text
-                    and "material" in _lr_lower_text
-                    and "assettype" not in _lr_lower_text
-                ):
-                    # Best effort for string-based outFields variables. In CPython, locals() assignment
-                    # is not always reliable for fast locals, so list-based modification above is preferred.
-                    locals()[_lr_local_name] = _lr_local_value + ",ASSETGROUP,ASSETTYPE"
-    log(f"{layer_name}: using outFields={out_fields}")
+    detail(f"{layer_name}: using outFields={out_fields}")
     return out_fields
 
 
@@ -1326,8 +1408,45 @@ def upsert_cached_layer(cached_gdf, delta_gdf, object_id_field):
     )
 
 
+def cache_age_seconds(layer_name, layer_url, where_clause):
+    """Age of a usable cache in seconds, or None if there is not one."""
+    if not USE_LAYER_CACHE or FORCE_LAYER_REFRESH:
+        return None
+    data_path, meta_path = layer_cache_paths(layer_name)
+    if not os.path.isfile(data_path) or not os.path.isfile(meta_path):
+        return None
+    try:
+        with open(meta_path, encoding="utf-8") as handle:
+            meta = json.load(handle)
+        if meta.get("layer_url") != layer_url or meta.get("where_clause") != where_clause:
+            return None
+        cached_utc = meta.get("cached_utc")
+        if not cached_utc:
+            return None
+        stamp = dt.datetime.fromisoformat(cached_utc.replace("Z", "+00:00"))
+        return max(0.0, (dt.datetime.now(dt.UTC) - stamp).total_seconds())
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as ex:
+        # A cache we cannot read the age of is simply treated as absent.
+        detail(f"{layer_name}: could not read cache age ({ex})")
+        return None
+
+
 def query_arcgis_layer(session, layer_url, where_clause, layer_name):
     step(f"Querying ArcGIS REST layer: {layer_name}")
+
+    # A recent cache is trusted without contacting the server. Checking costs a
+    # metadata request plus two count queries per layer and needs a valid token,
+    # which dominates start-up when the data has not changed.
+    age = cache_age_seconds(layer_name, layer_url, where_clause)
+    if age is not None and config.CACHE_FRESH_SECONDS > 0 and age < config.CACHE_FRESH_SECONDS:
+        cached_gdf, _ = read_layer_cache(layer_name, layer_url, where_clause)
+        if cached_gdf is not None:
+            log(
+                f"{layer_name}: cache is {age / 60:.0f} min old; skipping server check. "
+                f"Set FORCE_LAYER_REFRESH=1 to refresh."
+            )
+            return cached_gdf
+
     meta = layer_metadata(session, layer_url)
     if not meta["object_id_field"]:
         fail(f"Could not determine object id field for {layer_name}")
@@ -1440,14 +1559,16 @@ def load_supplemental():
             "facility": clean(row.get(facility_field)) if facility_field else "",
         }
     log(f"Supplemental records keyed: {len(records):,}")
-    log(f"Supplemental rows skipped missing key: {skipped_no_key:,}")
+    if skipped_no_key:
+        warn(f"Supplemental rows skipped, missing key: {skipped_no_key:,}")
     if REQUIRE_PRESSURE_MATCH and not pressure_field:
         fail(
             "REQUIRE_PRESSURE_MATCH is True but no supplemental pressure field was resolved."
         )
     if not pressure_field:
-        warn(
-            "No supplemental pressure field was resolved. Pressure matching is currently not enforced."
+        # Not actionable while pressure matching is off, which is the default.
+        detail(
+            "No supplemental pressure field was resolved. Pressure matching is not enforced."
         )
     return records
 
@@ -1799,40 +1920,73 @@ def main():
     step("Starting non-ArcPy GeoPandas leak relocation")
     log(f"Supplemental CSV: {SUPPLEMENTAL_CSV}")
     log(f"Output GeoPackage: {OUTPUT_GPKG}")
-    log(f"Target CRS: {TARGET_CRS}")
+    log("Analysis CRS: native per-layer (no reprojection before matching)")
     log(f"MA layer filter: {WHERE_MA}")
     log(f"Max radius ft: {MAX_RADIUS_FT}")
     log(f"Require pressure match: {REQUIRE_PRESSURE_MATCH}")
     log(f"Material family fallback: {ALLOW_MATERIAL_FAMILY_FALLBACK}")
     ensure_output_folder()
-    supplemental = load_supplemental()
+
+    with timed("supplemental CSV"):
+        supplemental = load_supplemental()
+
     session = make_session()
-    leaks = query_arcgis_layer(session, HIST_LEAK_URL, WHERE_MA, "historic leaks")
-    distribution = query_arcgis_layer(
-        session, DISTRIBUTION_PIPE_URL, WHERE_MA, "distribution pipes"
-    )
-    service = query_arcgis_layer(session, SERVICE_PIPE_URL, WHERE_MA, "service pipes")
-    leaks, distribution, service, ANALYSIS_CRS = (
-        normalize_loaded_layers_to_analysis_crs(session, leaks, distribution, service)
-    )
+
+    layer_specs = [
+        ("historic leaks", HIST_LEAK_URL),
+        ("distribution pipes", DISTRIBUTION_PIPE_URL),
+        ("service pipes", SERVICE_PIPE_URL),
+    ]
+
+    with timed("load layers"):
+        if config.PARALLEL_LAYER_LOAD:
+            # Independent reads. Fetch the token once up front so the workers do
+            # not race into three interactive sign-ins.
+            get_arcgis_token(session)
+            with futures.ThreadPoolExecutor(max_workers=len(layer_specs)) as pool:
+                submitted = {
+                    name: pool.submit(query_arcgis_layer, session, url, WHERE_MA, name)
+                    for name, url in layer_specs
+                }
+                loaded = {name: future.result() for name, future in submitted.items()}
+        else:
+            loaded = {
+                name: query_arcgis_layer(session, url, WHERE_MA, name)
+                for name, url in layer_specs
+            }
+
+    leaks = loaded["historic leaks"]
+    distribution = loaded["distribution pipes"]
+    service = loaded["service pipes"]
+
+    with timed("normalize CRS"):
+        leaks, distribution, service, ANALYSIS_CRS = (
+            normalize_loaded_layers_to_analysis_crs(session, leaks, distribution, service)
+        )
     globals()["TARGET_CRS"] = ANALYSIS_CRS
-    print("CRS sanity check after normalization:", flush=True)
-    print(f"historic leaks CRS = {leaks.crs}", flush=True)
-    print(f"distribution pipes CRS = {distribution.crs}", flush=True)
-    print(f"service pipes CRS = {service.crs}", flush=True)
-    print(f"historic leaks bounds = {list(leaks.total_bounds)}", flush=True)
-    print(f"distribution pipes bounds = {list(distribution.total_bounds)}", flush=True)
-    print(f"service pipes bounds = {list(service.total_bounds)}", flush=True)
-    leak_tasks, initial_counters = prepare_leaks(leaks, supplemental)
-    pipe_sources = {
-        "distribution": prepare_pipes(distribution, "distribution"),
-        "service": prepare_pipes(service, "service"),
-    }
-    match_results = run_matching(leak_tasks, pipe_sources)
-    counters = write_outputs(leak_tasks, match_results, pipe_sources, initial_counters)
+
+    detail("CRS sanity check after normalization:")
+    for label, gdf in [("historic leaks", leaks), ("distribution pipes", distribution),
+                       ("service pipes", service)]:
+        detail(f"  {label}: CRS={gdf.crs} bounds={list(gdf.total_bounds)}")
+
+    with timed("prepare leaks"):
+        leak_tasks, initial_counters = prepare_leaks(leaks, supplemental)
+    with timed("build pipe indexes"):
+        pipe_sources = {
+            "distribution": prepare_pipes(distribution, "distribution"),
+            "service": prepare_pipes(service, "service"),
+        }
+    with timed("match leaks to pipes"):
+        match_results = run_matching(leak_tasks, pipe_sources)
+    with timed("write outputs"):
+        counters = write_outputs(leak_tasks, match_results, pipe_sources, initial_counters)
+
     step("Finished")
     for name in sorted(counters):
         log(f"{name}: {counters[name]:,}")
+    log(f"GeoPackage: {OUTPUT_GPKG}")
+    report_timings()
 
 
 if __name__ == "__main__":

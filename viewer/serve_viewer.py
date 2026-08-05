@@ -22,13 +22,13 @@ def main():
 
     if not (HERE / args.page).exists():
         available = sorted(p.name for p in HERE.glob("*.html"))
-        parser.error("{0} not found in {1}. Available: {2}".format(
-            args.page, HERE, ", ".join(available) or "none"))
+        listing = ", ".join(available) or "none"
+        parser.error(f"{args.page} not found in {HERE}. Available: {listing}")
 
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(HERE))
     with http.server.ThreadingHTTPServer(("127.0.0.1", args.port), handler) as server:
-        url = "http://127.0.0.1:{0}/{1}".format(args.port, args.page)
-        print("Serving {0} at {1}".format(HERE, url), flush=True)
+        url = f"http://127.0.0.1:{args.port}/{args.page}"
+        print(f"Serving {HERE} at {url}", flush=True)
         print("Press Ctrl+C to stop.", flush=True)
         if not args.no_browser:
             webbrowser.open(url)

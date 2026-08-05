@@ -30,7 +30,16 @@ Family terms are matched against the *tokens* of a decoded material label, not
 as raw substrings. Terms shorter than four characters must equal a whole token;
 longer ones may match a token prefix, so `POLY` still catches `POLYETHYLENE`.
 
-This replaced substring matching, which had two consequences:
+There is now one implementation, in `leakrelocation.assettype`, shared by the
+workflow, the enrichment script, the bbox viewer server and the viewer's
+JavaScript. Four separate copies had drifted.
+
+This replaced substring matching, which had three consequences:
+
+- **Any label containing "PIPE" or "TYPE" classified as PLASTIC**, because `PE`
+  is a substring of both. With DNV labels such as `Steel Pipe` and
+  `Cast Iron Pipe`, that collapsed almost everything into PLASTIC and left only
+  PLASTIC and UNKNOWN visible.
 
 - `"COPPER"` contains `"PE"` and `PLASTIC` was tested first, so every copper
   pipe classified as `PLASTIC`, the `COPPER` family was unreachable, and copper

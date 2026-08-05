@@ -147,8 +147,9 @@ class StubWorkflowModule:
 @pytest.fixture
 def enrich_env(tmp_path, monkeypatch):
     """Point config at a temp cache and provide a stub service."""
-    from leakrelocation import config
     import enrich_assettype_cache as runner
+
+    from leakrelocation import config
 
     cache_dir = tmp_path / "layer_cache"
     cache_dir.mkdir()
@@ -216,7 +217,7 @@ class TestEnrichLayer:
         df = pd.read_pickle(cache_dir / "distribution_pipes.pkl.gz", compression="gzip")
         assert df["ASSETTYPE_DECODED"].notna().all()
 
-    def test_threaded_matches_serial(self, enrich_env, tmp_path):
+    def test_threaded_matches_serial(self, enrich_env):
         runner, module, cache_dir = enrich_env
         run_enrich(runner, module, workers=4, page_size=1)
         df = pd.read_pickle(cache_dir / "distribution_pipes.pkl.gz", compression="gzip")
@@ -231,7 +232,7 @@ class TestEnrichLayer:
         assert list(df["material"]) == ["Grade A", "Grade B", "Grade C"]
 
     def test_second_run_skips_unless_forced(self, enrich_env, capsys):
-        runner, module, cache_dir = enrich_env
+        runner, module, _cache_dir = enrich_env
         run_enrich(runner, module)
         capsys.readouterr()
         run_enrich(runner, module)
