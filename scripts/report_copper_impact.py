@@ -28,7 +28,9 @@ CACHES = {
     "service_pipes": "service_pipes.pkl.gz",
 }
 
-MATERIAL_COLUMN_CANDIDATES = ["ASSETTYPE_DECODED", "PipeMaterialRaw", "material"]
+# The domain value, not PipeMaterialRaw - that column holds the raw
+# ASSETTYPE subtype code, which carries no material name to classify.
+MATERIAL_COLUMN_CANDIDATES = ["ASSETTYPE_DECODED", "material"]
 LEAK_MATERIAL_CANDIDATES = ["MatchMaterial", "SuppLeakMaterialType", "material"]
 
 

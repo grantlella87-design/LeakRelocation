@@ -241,13 +241,18 @@ def add_pipe_material_fields(gdf):
     if len(gdf) == 0:
         return gdf
     gdf = gdf.copy()
-    mat_col = find_col(
+    # Pipe material comes from ASSETTYPE. PipeMaterialRaw is the raw subtype
+    # code; the domain value lives in "material" and is what gets classified.
+    # Classifying the raw code instead would compare a number against material
+    # names and land everything in UNKNOWN.
+    raw_col = find_col(gdf.columns, ["ASSETTYPE", "PipeMaterialRaw"])
+    domain_col = find_col(
         gdf.columns,
         [
+            "ASSETTYPE_DECODED",
             "material",
             "MatchedPipeMaterial",
             "assettype_material",
-            "ASSETTYPE",
             "Material",
         ],
     )
@@ -255,11 +260,10 @@ def add_pipe_material_fields(gdf):
         gdf.columns,
         ["nominaldiameter", "diameter", "MatchedPipeDiameter", "outsidediameter"],
     )
-    if mat_col:
-        gdf["PipeMaterialRaw"] = gdf[mat_col].map(clean_value)
-    else:
-        gdf["PipeMaterialRaw"] = None
-    gdf["PipeMaterialFamily"] = gdf["PipeMaterialRaw"].map(material_family)
+
+    gdf["PipeMaterialRaw"] = gdf[raw_col].map(clean_value) if raw_col else None
+    gdf["PipeMaterialDomain"] = gdf[domain_col].map(clean_value) if domain_col else None
+    gdf["PipeMaterialFamily"] = gdf["PipeMaterialDomain"].map(material_family)
     gdf["PipeMaterialColor"] = gdf["PipeMaterialFamily"].map(material_color)
     if dia_col:
         gdf["PipeDiameter"] = gdf[dia_col].map(clean_value)
@@ -430,7 +434,7 @@ def html_page():
         "function esc(v){if(v===null||v===undefined)return '';return String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}"
     )
     parts.append(
-        "function bindPopup(feature,layer){const props=feature.properties||{};const ordered=['LMSLEAKNUMBER','LeakNumber','SuppLeakMaterialType','SuppDiameter','SuppFacilityType','SuppPipeCondition','SuppMaterialFamily','PipeMaterialRaw','PipeMaterialFamily','PipeDiameter','OBJECTID','GlobalID','GLOBALID','DistanceToPipe','ConfidenceLevel','LinkedLayer','NearestPipeID','NearestPipeGlobalID'];let keys=[];for(const k of ordered){if(Object.prototype.hasOwnProperty.call(props,k))keys.push(k)}for(const k of Object.keys(props)){if(!keys.includes(k)&&keys.length<18)keys.push(k)}let rows='';for(const k of keys)rows+='<tr><th>'+esc(k)+'</th><td>'+esc(props[k])+'</td></tr>';if(!rows)rows='<tr><td>No attributes</td></tr>';layer.bindPopup('<table>'+rows+'</table>');layer.on('click',function(){AttributePane.selectFromMap(layer)})}"
+        "function bindPopup(feature,layer){const props=feature.properties||{};const ordered=['LMSLEAKNUMBER','LeakNumber','SuppLeakMaterialType','SuppDiameter','SuppFacilityType','SuppPipeCondition','SuppMaterialFamily','PipeMaterialDomain','PipeMaterialRaw','PipeMaterialFamily','PipeDiameter','OBJECTID','GlobalID','GLOBALID','DistanceToPipe','ConfidenceLevel','LinkedLayer','NearestPipeID','NearestPipeGlobalID'];let keys=[];for(const k of ordered){if(Object.prototype.hasOwnProperty.call(props,k))keys.push(k)}for(const k of Object.keys(props)){if(!keys.includes(k)&&keys.length<18)keys.push(k)}let rows='';for(const k of keys)rows+='<tr><th>'+esc(k)+'</th><td>'+esc(props[k])+'</td></tr>';if(!rows)rows='<tr><td>No attributes</td></tr>';layer.bindPopup('<table>'+rows+'</table>');layer.on('click',function(){AttributePane.selectFromMap(layer)})}"
     )
     parts.append(
         "function styleFor(k,feature){const c=LAYER_CONFIG[k];const p=(feature&&feature.properties)||{};if(c.kind==='pipe_line'){const fam=p.PipeMaterialFamily||'OTHER';return {color:MATERIAL_COLORS[fam]||MATERIAL_COLORS.OTHER,weight:c.weight||2,opacity:.82}}return {color:c.color,weight:c.weight||1,opacity:.75}}"
