@@ -47,8 +47,12 @@ OUTPUT_GPKG = _path_from_env(
     "LEAKRELOCATION_OUTPUT_GPKG", PROJECT_DIR / "HistoricLeakRelocation.gpkg")
 SUPPLEMENTAL_CSV = PROJECT_DIR / "HL_SupplementalData.csv"
 
-# The ArcPy-era script still executed from the share. Several diagnostic
-# scripts import it by path to reuse its request helpers.
+# The workflow module in this repository. Scripts that reuse its session and
+# request helpers should load this, not the copy on the share - that one is
+# whatever was last deployed or patched.
+WORKFLOW_SCRIPT = Path(__file__).resolve().parent.parent / "leak_relocation_geopandas.py"
+
+# The ArcPy-era copy that still runs from the share, kept for reference.
 NETWORK_MAIN_SCRIPT = PROJECT_DIR / "Arcpy Code" / "leak reolcation - geopandas.py"
 
 # --- Services ----------------------------------------------------------------

@@ -47,6 +47,26 @@ and `"PE"` inside them.
 Existing GeoPackage output produced before this change was made will not agree
 with a fresh run for copper leaks.
 
+## History: how the source drifted
+
+The workflow used to be edited by running scripts that rewrote the deployed
+copy on the share. Each one took a backup and then appended or replaced code,
+so running them repeatedly left the script with five functions defined twice —
+Python keeps only the last definition of each.
+
+The changes they applied are now part of the source and the scripts have been
+deleted (recoverable from git history):
+
+| Script | What it injected | Where it lives now |
+| --- | --- | --- |
+| `patch_request_json_append_assettype.py` | `request_json` wrapper adding `ASSETGROUP,ASSETTYPE` to pipe `outFields` | `apply_pipe_domain_out_fields()` |
+| `patch_include_assetgroup_assettype.py` | domain fields in `build_out_fields` | `build_out_fields()` |
+| `patch_force_assetgroup_assettype_at_outfields.py` | same, via a `locals()` rewrite that never worked | superseded |
+| `Patch-LeakRelocation-NativeCRS.ps1` | per-layer native CRS handling | the native CRS block at the top of the module |
+
+Edit `src/leak_relocation_geopandas.py`, run the tests, then deploy. Do not
+patch the deployed copy.
+
 ## Important generated outputs not committed by default
 
 Large/generated data files are intentionally ignored by `.gitignore`,
