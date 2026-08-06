@@ -16,23 +16,13 @@ import sys
 import pandas as pd
 from _bootstrap import config
 
+from leakrelocation import schema
+
 CACHES = ["distribution_pipes", "service_pipes"]
 
-REQUIRED = [
-    "ASSETGROUP",
-    "ASSETTYPE",
-    "ASSETGROUP_DECODED",
-    "ASSETTYPE_DECODED",
-    "ASSETTYPE_DOMAIN",
-    "PipeMaterialFamily",
-    "PipeMaterialRaw",
-    "GradeMaterial",
-    "material",
-]
-
-# Blank values in these make the workflow and the viewers wrong rather than
-# merely incomplete.
-MUST_BE_POPULATED = ["ASSETTYPE", "ASSETTYPE_DECODED", "PipeMaterialRaw", "material"]
+# Declared in leakrelocation.schema, because this project writes them.
+REQUIRED = list(schema.PIPE_CACHE_COLUMNS)
+MUST_BE_POPULATED = list(schema.PIPE_CACHE_MUST_BE_POPULATED)
 
 
 def log(message=""):
@@ -85,15 +75,15 @@ def check_cache(name):
         return False
 
     log("")
-    log("ASSETTYPE_DECODED values:")
-    log(df["ASSETTYPE_DECODED"].value_counts(dropna=False).head(20).to_string())
+    log(f"{schema.ASSETTYPE_DECODED} values:")
+    log(df[schema.ASSETTYPE_DECODED].value_counts(dropna=False).head(20).to_string())
     log("")
-    log("PipeMaterialFamily values:")
-    log(df["PipeMaterialFamily"].value_counts(dropna=False).head(20).to_string())
+    log(f"{schema.PIPE_MATERIAL_FAMILY} values:")
+    log(df[schema.PIPE_MATERIAL_FAMILY].value_counts(dropna=False).head(20).to_string())
 
     # A single family across the whole layer is the signature of a
     # classification that is collapsing rather than discriminating.
-    families = df["PipeMaterialFamily"].dropna().unique()
+    families = df[schema.PIPE_MATERIAL_FAMILY].dropna().unique()
     if len(families) == 1 and len(df) > 1:
         log("")
         log(f"WARNING every row classifies as {families[0]!r}. That is what a")

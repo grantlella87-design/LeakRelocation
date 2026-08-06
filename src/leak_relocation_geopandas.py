@@ -37,7 +37,7 @@ if _SCRIPT_DIR not in sys.path:
 # Do not force all layers to EPSG:2249 before matching.
 from pyproj import CRS
 
-from leakrelocation import config
+from leakrelocation import config, schema
 from leakrelocation.matching import (
     clean,
     diameter_matches,
@@ -221,15 +221,6 @@ PIPE_DIAMETER_CANDIDATES = [
     "DIAMETER",
     "outsidediameter",
     "OUTSIDEDIAMETER",
-]
-PIPE_MATERIAL_CANDIDATES = [
-    "assettype_material",
-    "ASSETTYPE_MATERIAL",
-    "AssetType_Material",
-    "material",
-    "MATERIAL",
-    "ASSETTYPE",
-    "assettype",
 ]
 PIPE_PRESSURE_CANDIDATES = [
     "operatingpressure",
@@ -1199,9 +1190,18 @@ def prepare_pipes(pipe_gdf, layer_name):
     pipe_oid_field = resolved_field(
         pipe_gdf.columns, OBJECTID_CANDIDATES, True, layer_name + " OBJECTID"
     )
-    material_field = resolved_field(
-        pipe_gdf.columns, PIPE_MATERIAL_CANDIDATES, True, layer_name + " material"
-    )
+    # Read by name, not resolved. scripts/enrich_assettype_cache.py publishes the
+    # decoded ASSETTYPE as this column specifically for this consumer. Resolving
+    # it by candidate list meant that on a cache without it, the search fell
+    # through to ASSETTYPE itself and matched on the numeric subtype code - every
+    # pipe collapsing into one material family, with nothing reporting it.
+    material_field = schema.MATERIAL
+    if material_field not in pipe_gdf.columns:
+        fail(
+            f"{layer_name}: {material_field} is missing, so this cache is not "
+            f"ASSETTYPE-enriched. Run: python scripts/enrich_assettype_cache.py. "
+            f"Present: {sorted(pipe_gdf.columns)}"
+        )
     diameter_field = resolved_field(
         pipe_gdf.columns, PIPE_DIAMETER_CANDIDATES, True, layer_name + " diameter"
     )

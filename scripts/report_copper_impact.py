@@ -21,6 +21,7 @@ import sys
 import pandas as pd
 from _bootstrap import config
 
+from leakrelocation import schema
 from leakrelocation.assettype import ASSETTYPE_FAMILY_TERMS, UNCLASSIFIED_FAMILY
 
 CACHES = {
@@ -28,10 +29,11 @@ CACHES = {
     "service_pipes": "service_pipes.pkl.gz",
 }
 
-# The domain value, not PipeMaterialRaw - that column holds the raw
-# ASSETTYPE subtype code, which carries no material name to classify.
-MATERIAL_COLUMN_CANDIDATES = ["ASSETTYPE_DECODED", "material"]
-LEAK_MATERIAL_CANDIDATES = ["MatchMaterial", "SuppLeakMaterialType", "material"]
+# Both column names are written by this project, so they are read by name.
+# ASSETTYPE_DECODED holds the domain value; PipeMaterialRaw holds the subtype
+# code and carries no material name to classify.
+PIPE_MATERIAL_COLUMN = schema.ASSETTYPE_DECODED
+LEAK_MATERIAL_COLUMN = schema.MATCH_MATERIAL
 
 
 def log(message=""):
@@ -52,13 +54,6 @@ def old_family(value):
 def new_family(value):
     from leakrelocation.assettype import family_from_assettype
     return family_from_assettype(value)
-
-
-def first_present(df, candidates):
-    for name in candidates:
-        if name in df.columns:
-            return name
-    return None
 
 
 def compare_series(values):
@@ -91,11 +86,12 @@ def report_caches(detail):
         any_found = True
 
         df = pd.read_pickle(path, compression="gzip")
-        column = first_present(df, MATERIAL_COLUMN_CANDIDATES)
-        if column is None:
-            log(f"  no material column found; looked for {MATERIAL_COLUMN_CANDIDATES}")
+        if PIPE_MATERIAL_COLUMN not in df.columns:
+            log(f"  {PIPE_MATERIAL_COLUMN} is absent, so this cache is not enriched.")
+            log("  Run: python scripts/enrich_assettype_cache.py")
             continue
 
+        column = PIPE_MATERIAL_COLUMN
         log(f"  rows: {len(df):,}   material column: {column}")
         changed = compare_series(df[column])
         if changed.empty:
@@ -136,17 +132,18 @@ def report_relocations(detail):
 
     try:
         import geopandas as gpd
-        relocated = gpd.read_file(gpkg, layer="relocated_leaks")
+        relocated = gpd.read_file(gpkg, layer=schema.RELOCATED_LEAKS_LAYER)
     except Exception as exc:  # noqa: BLE001 - reported, not fatal
-        log(f"  could not read layer 'relocated_leaks': {exc}")
+        log(f"  could not read layer {schema.RELOCATED_LEAKS_LAYER!r}: {exc}")
         return 0
 
     df = pd.DataFrame(relocated.drop(columns="geometry", errors="ignore"))
-    column = first_present(df, LEAK_MATERIAL_CANDIDATES)
-    if column is None:
-        log(f"  no match-material column found; looked for {LEAK_MATERIAL_CANDIDATES}")
+    if LEAK_MATERIAL_COLUMN not in df.columns:
+        log(f"  {LEAK_MATERIAL_COLUMN} is absent from {schema.RELOCATED_LEAKS_LAYER}.")
+        log(f"  Present: {sorted(df.columns)}")
         return 0
 
+    column = LEAK_MATERIAL_COLUMN
     log(f"  relocated leaks: {len(df):,}   material column: {column}")
 
     changed = compare_series(df[column])

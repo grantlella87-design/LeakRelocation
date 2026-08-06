@@ -29,6 +29,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from _bootstrap import config
 
+from leakrelocation import schema
 from leakrelocation.assettype import build_assettype_decoder, norm_code
 
 LAYERS = {
@@ -36,8 +37,10 @@ LAYERS = {
     "service": {"cache_name": "service_pipes.pkl.gz", "url_attr": "SERVICE_PIPE_URL"},
 }
 
-DECODED_COLUMNS = ["ASSETGROUP_DECODED", "ASSETTYPE_DECODED", "ASSETTYPE_DOMAIN", "PipeMaterialFamily"]
-MANAGED_COLUMNS = ["ASSETGROUP", "ASSETTYPE"] + DECODED_COLUMNS + ["PipeMaterialRaw", "GradeMaterial"]
+DECODED_COLUMNS = [schema.ASSETGROUP_DECODED, schema.ASSETTYPE_DECODED,
+                   schema.ASSETTYPE_DOMAIN, schema.PIPE_MATERIAL_FAMILY]
+MANAGED_COLUMNS = ([schema.ASSETGROUP, schema.ASSETTYPE] + DECODED_COLUMNS
+                   + [schema.PIPE_MATERIAL_RAW, schema.GRADE_MATERIAL])
 
 RETRY_DELAYS = [2, 5, 15]
 
@@ -222,8 +225,8 @@ def enrich_layer(module, session, layer_key, args):
     #                    and the viewers read
     # Both were previously set to the decoded value, so nothing recorded the
     # raw code despite the column name saying otherwise.
-    df["PipeMaterialRaw"] = df["ASSETTYPE"]
-    df["material"] = df["ASSETTYPE_DECODED"]
+    df[schema.PIPE_MATERIAL_RAW] = df[schema.ASSETTYPE]
+    df[schema.MATERIAL] = df[schema.ASSETTYPE_DECODED]
 
     log("")
     log("PipeMaterialFamily counts:")
