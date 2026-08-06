@@ -5,9 +5,11 @@ tests keep it consistent with the template that produces it, so the snapshot
 cannot silently drift from the generator the way earlier copies in this
 repository did.
 """
+import io
 import os
 import re
 import sys
+from contextlib import redirect_stdout
 
 import pytest
 
@@ -191,15 +193,25 @@ class TestBboxServerMaterialColumns:
         assert list(out["PipeMaterialDomain"]) == ["Cast Iron", "Copper", "Plastic PE"]
         assert list(out["PipeMaterialFamily"]) == ["IRON", "COPPER", "PLASTIC"]
 
-    def test_falls_back_to_material_when_decoded_is_absent(self, server):
+    def test_no_silent_fallback_to_the_material_column(self, server, capsys):
+        """Without ASSETTYPE_DECODED the family is left blank, not derived from
+        "material". On an unenriched cache that column holds the DNV Grade field,
+        and falling back to it produced confident, wrong colours."""
         gdf = self.frame(
             OBJECTID=[1, 2],
             ASSETTYPE=[2, 5],
-            material=["Cast Iron Pipe", "Copper Pipe"],
+            material=["Grade A", "Grade B"],
         )
-        out = server.add_pipe_material_fields(gdf)
-        assert list(out["PipeMaterialDomain"]) == ["Cast Iron Pipe", "Copper Pipe"]
-        assert list(out["PipeMaterialFamily"]) == ["IRON", "COPPER"]
+        out = server.add_pipe_material_fields(gdf, "distribution_pipes")
+        assert out["PipeMaterialDomain"].isna().all()
+        assert "Grade A" not in out["PipeMaterialDomain"].tolist()
+        assert "ASSETTYPE_DECODED" in capsys.readouterr().out
+
+    def test_raw_still_populated_without_the_decoded_column(self, server):
+        gdf = self.frame(OBJECTID=[1, 2], ASSETTYPE=[2, 5])
+        with redirect_stdout(io.StringIO()):
+            out = server.add_pipe_material_fields(gdf, "distribution_pipes")
+        assert list(out["PipeMaterialRaw"]) == [2, 5]
 
     def test_colour_follows_the_family(self, server):
         gdf = self.frame(
