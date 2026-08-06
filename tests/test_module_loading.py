@@ -55,10 +55,24 @@ def test_loads_by_file_path(module_name):
 
 @pytest.mark.parametrize("module_name", MODULES)
 def test_runs_directly(module_name):
+    """--help so auth.py, which has a runnable main, prints usage and exits
+    instead of attempting a real sign-in. Modules without argparse ignore it.
+    The point is that the imports resolve when __package__ is unset."""
     path = os.path.join(PACKAGE, module_name + ".py")
-    result = subprocess.run([sys.executable, path], capture_output=True,
+    result = subprocess.run([sys.executable, path, "--help"], capture_output=True,
                             text=True, timeout=120, check=False)
     assert result.returncode == 0, result.stderr[-400:]
+    assert "attempted relative import" not in result.stderr
+
+
+def test_auth_is_runnable_as_a_script():
+    """python src/leakrelocation/auth.py runs a sign-in session."""
+    path = os.path.join(PACKAGE, "auth.py")
+    result = subprocess.run([sys.executable, path, "--help"], capture_output=True,
+                            text=True, timeout=120, check=False)
+    assert result.returncode == 0, result.stderr[-400:]
+    assert "--force" in result.stdout
+    assert "--no-verify" in result.stdout
 
 
 def test_no_relative_imports_remain():

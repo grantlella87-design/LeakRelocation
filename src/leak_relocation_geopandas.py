@@ -222,6 +222,22 @@ PIPE_DIAMETER_CANDIDATES = [
     "outsidediameter",
     "OUTSIDEDIAMETER",
 ]
+# Which field to ask the DNV service for, so the material arrives in the
+# download. That is a service field name, so it is resolved rather than known.
+#
+# Not to be confused with which cache column the matching reads - that is
+# schema.MATERIAL, published by the enrichment, and read by name in
+# prepare_pipes. Removing this list because prepare_pipes no longer used it
+# broke build_out_fields, which still does.
+PIPE_MATERIAL_CANDIDATES = [
+    "assettype_material",
+    "ASSETTYPE_MATERIAL",
+    "AssetType_Material",
+    "material",
+    "MATERIAL",
+    "ASSETTYPE",
+    "assettype",
+]
 PIPE_PRESSURE_CANDIDATES = [
     "operatingpressure",
     "OPERATINGPRESSURE",
