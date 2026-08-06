@@ -541,3 +541,72 @@ def authenticated_count(session, layer_url):
     if "error" in data:
         raise RuntimeError(json.dumps(data["error"]))
     return int(data.get("count") or 0)
+
+
+def main(argv=None):
+    """Run a sign-in session directly: python src/leakrelocation/auth.py
+
+    Reports the resolved configuration and the cached token, signs in when one
+    is needed, then proves the token works with an authenticated count. Running
+    this module is the quickest way to see why sign-in is failing without
+    starting the relocation workflow.
+
+    scripts/arcgis_signin.py wraps the same steps with --status, --check,
+    --force, --clear and --test-query.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="auth.py",
+        description="Sign in to ArcGIS Portal and verify the token.",
+    )
+    parser.add_argument("--force", action="store_true",
+                        help="Ignore the cached token and sign in again.")
+    parser.add_argument("--no-verify", action="store_true",
+                        help="Skip the authenticated count that proves the token works.")
+    args = parser.parse_args(argv)
+
+    log("--- Configuration ---")
+    log(f"  portal:       {config.PORTAL_ROOT}")
+    log(f"  client id:    {config.ARCGIS_CLIENT_ID}")
+    log(f"  loopback:     {'on' if config.USE_LOOPBACK_OAUTH else 'off'}")
+    if config.USE_LOOPBACK_OAUTH:
+        log(f"  redirect uri: {config.LOOPBACK_REDIRECT_URI}")
+        log("                must be registered on the portal app, exactly")
+    log(f"  fallback uri: {config.ARCGIS_REDIRECT_URI}  (out-of-band)")
+
+    if args.force:
+        log("\n--- Clearing cached token (--force) ---")
+        clear_cached_access_token()
+
+    session = make_session()
+
+    log("\n--- Signing in ---")
+    try:
+        token = get_arcgis_token(session)
+    except Exception as exc:
+        log(f"  FAILED: {exc}")
+        return 1
+    if not token:
+        log("  FAILED: no token returned")
+        return 1
+    # Length only. The token itself is never printed.
+    log(f"  signed in, token is {len(token)} characters")
+
+    if args.no_verify:
+        return 0
+
+    log("\n--- Verifying against a layer ---")
+    log(f"  {config.DISTRIBUTION_PIPE_URL}")
+    try:
+        count = authenticated_count(session, config.DISTRIBUTION_PIPE_URL)
+    except Exception as exc:
+        log(f"  FAILED: {exc}")
+        log("  A token can be cached and still be rejected by the service.")
+        return 1
+    log(f"  count returned: {count:,} - the token works")
+    return 0
+
+
+if __name__ == "__main__":
+    _sys.exit(main())
