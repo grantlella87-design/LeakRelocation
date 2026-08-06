@@ -469,8 +469,6 @@ def capture_loopback_authorization_code(authorize_url, timeout_seconds=180):
             warn("Sign-in did not complete within the timeout.")
             return None
     finally:
-        if captured.get("code"):
-            close_loopback_callback_tab()
         server.shutdown()
         server.server_close()
     if captured.get("error"):
@@ -538,8 +536,8 @@ def interactive_access_token(session):
     keyring_set(config.KEYRING_ACCESS_TOKEN_USER, token)
     keyring_set(config.KEYRING_ACCESS_TOKEN_EXPIRES_USER, expires_epoch)
     log("Saved ArcGIS Portal access token to Windows Credential Manager.")
+    close_loopback_callback_tab()
     return token
-
 
 def get_arcgis_token(session=None):
     active_session = session if session is not None else requests.Session()
