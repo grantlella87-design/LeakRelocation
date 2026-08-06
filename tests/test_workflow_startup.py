@@ -55,85 +55,121 @@ class TestOutputIsLocal:
 class TestLoopbackSignIn:
     """The out-of-band page left a tab showing SUCCESS code=... that could not be
     closed programmatically. The redirect now lands on a page this process
-    serves."""
+    serves, and the browser is opened only once that server is listening, so a
+    fast redirect cannot arrive before the socket is bound.
+
+    webbrowser.open is replaced with the callback request itself, which is what
+    the browser would do, so these exercise that ordering.
+    """
+
+    AUTHORIZE_URL = "https://portal.example/oauth2/authorize?client_id=x"
 
     @staticmethod
-    def _request_later(url, delay=0.5):
-        result = {}
+    def _browser_that_calls_back(query, threads, delay=0.3, sink=None):
+        """Stand in for the browser: fetch the loopback callback.
 
-        def run():
-            time.sleep(delay)
-            try:
-                with urllib.request.urlopen(url, timeout=5) as response:
-                    result["status"] = response.status
-                    result["body"] = response.read().decode()
-            except Exception as exc:  # noqa: BLE001 - surfaced via result
-                result["error"] = str(exc)
+        The thread is handed back through `threads` so the test can wait for it.
+        Capture returns the moment the server has the code, which is before this
+        side has necessarily finished reading the response body, so asserting on
+        `sink` without joining first is a race - one that only lost under the
+        load of the full suite.
+        """
+        def opener(url, *args, **kwargs):
+            def run():
+                time.sleep(delay)
+                target = f"http://127.0.0.1:{config.LOOPBACK_OAUTH_PORT}/{query}"
+                try:
+                    with urllib.request.urlopen(target, timeout=5) as response:
+                        if sink is not None:
+                            sink["status"] = response.status
+                            sink["body"] = response.read().decode()
+                except Exception as exc:  # noqa: BLE001 - surfaced via sink
+                    if sink is not None:
+                        sink["error"] = str(exc)
 
-        thread = threading.Thread(target=run)
-        thread.start()
-        return thread, result
+            thread = threading.Thread(target=run, daemon=True)
+            threads.append(thread)
+            thread.start()
+            return True
 
-    def test_captures_the_code(self, lr):
-        port = config.LOOPBACK_OAUTH_PORT
-        thread, _ = self._request_later(f"http://127.0.0.1:{port}/?code=ABC123&state=x")
+        return opener
+
+    def capture(self, monkeypatch, query, sink=None, timeout=15):
+        threads = []
+        monkeypatch.setattr(lr_auth.webbrowser, "open",
+                            self._browser_that_calls_back(query, threads, sink=sink))
         with redirect_stdout(io.StringIO()):
-            code = lr_auth.capture_loopback_authorization_code(timeout_seconds=15)
-        thread.join()
-        assert code == "ABC123"
+            code = lr_auth.capture_loopback_authorization_code(
+                self.AUTHORIZE_URL, timeout_seconds=timeout)
+        for thread in threads:
+            thread.join(timeout=5)
+        return code
 
-    def test_page_never_shows_the_code(self, lr):
-        port = config.LOOPBACK_OAUTH_PORT
-        thread, result = self._request_later(f"http://127.0.0.1:{port}/?code=SECRETCODE")
-        with redirect_stdout(io.StringIO()):
-            lr_auth.capture_loopback_authorization_code(timeout_seconds=15)
-        thread.join()
-        assert result["status"] == 200
-        assert "SECRETCODE" not in result["body"]
+    def test_captures_the_code(self, monkeypatch):
+        assert self.capture(monkeypatch, "?code=ABC123&state=x") == "ABC123"
 
-    def test_page_closes_itself(self, lr):
-        port = config.LOOPBACK_OAUTH_PORT
-        thread, result = self._request_later(f"http://127.0.0.1:{port}/?code=X")
-        with redirect_stdout(io.StringIO()):
-            lr_auth.capture_loopback_authorization_code(timeout_seconds=15)
-        thread.join()
-        assert "window.close()" in result["body"]
+    def test_page_never_shows_the_code(self, monkeypatch):
+        sink = {}
+        self.capture(monkeypatch, "?code=SECRETCODE", sink=sink)
+        assert sink["status"] == 200
+        assert "SECRETCODE" not in sink["body"]
 
-    def test_releases_the_port_for_the_next_run(self, lr):
-        port = config.LOOPBACK_OAUTH_PORT
+    def test_page_closes_itself(self, monkeypatch):
+        sink = {}
+        self.capture(monkeypatch, "?code=X", sink=sink)
+        assert "window.close()" in sink["body"]
+
+    def test_releases_the_port_for_the_next_run(self, monkeypatch):
         for expected in ["FIRST", "SECOND"]:
-            thread, _ = self._request_later(f"http://127.0.0.1:{port}/?code={expected}")
-            with redirect_stdout(io.StringIO()):
-                code = lr_auth.capture_loopback_authorization_code(timeout_seconds=15)
-            thread.join()
-            assert code == expected
+            assert self.capture(monkeypatch, f"?code={expected}") == expected
 
-    def test_ignores_requests_that_are_not_the_redirect(self, lr):
-        port = config.LOOPBACK_OAUTH_PORT
+    def test_the_browser_is_opened_with_the_authorize_url(self, monkeypatch):
+        opened = []
 
-        def noise_then_redirect():
-            time.sleep(0.3)
-            try:
-                urllib.request.urlopen(f"http://127.0.0.1:{port}/favicon.ico", timeout=5)
-            except Exception:  # noqa: BLE001,S110 - a 204 with no body is fine
-                pass
-            time.sleep(0.3)
-            try:
-                urllib.request.urlopen(f"http://127.0.0.1:{port}/?code=LATER", timeout=5)
-            except Exception:  # noqa: BLE001,S110
-                pass
+        def opener(url, *args, **kwargs):
+            opened.append(url)
+            threading.Thread(target=lambda: (
+                time.sleep(0.3),
+                urllib.request.urlopen(
+                    f"http://127.0.0.1:{config.LOOPBACK_OAUTH_PORT}/?code=Z", timeout=5),
+            ), daemon=True).start()
+            return True
 
-        thread = threading.Thread(target=noise_then_redirect)
-        thread.start()
+        monkeypatch.setattr(lr_auth.webbrowser, "open", opener)
         with redirect_stdout(io.StringIO()):
-            code = lr_auth.capture_loopback_authorization_code(timeout_seconds=15)
-        thread.join()
+            lr_auth.capture_loopback_authorization_code(self.AUTHORIZE_URL, timeout_seconds=15)
+        assert opened == [self.AUTHORIZE_URL]
+
+    def test_ignores_requests_that_are_not_the_redirect(self, monkeypatch):
+        def opener(url, *args, **kwargs):
+            def run():
+                port = config.LOOPBACK_OAUTH_PORT
+                time.sleep(0.3)
+                try:
+                    urllib.request.urlopen(f"http://127.0.0.1:{port}/favicon.ico", timeout=5)
+                except Exception:  # noqa: BLE001,S110 - a 204 with no body is fine
+                    pass
+                time.sleep(0.3)
+                try:
+                    urllib.request.urlopen(f"http://127.0.0.1:{port}/?code=LATER", timeout=5)
+                except Exception:  # noqa: BLE001,S110
+                    pass
+
+            threading.Thread(target=run, daemon=True).start()
+            return True
+
+        monkeypatch.setattr(lr_auth.webbrowser, "open", opener)
+        with redirect_stdout(io.StringIO()):
+            code = lr_auth.capture_loopback_authorization_code(
+                self.AUTHORIZE_URL, timeout_seconds=15)
         assert code == "LATER"
 
-    def test_timeout_returns_none_so_the_caller_can_fall_back(self, lr):
+    def test_timeout_returns_none_so_the_caller_can_fall_back(self, monkeypatch):
+        monkeypatch.setattr(lr_auth.webbrowser, "open", lambda *a, **k: True)
         started = time.time()
         with redirect_stdout(io.StringIO()):
-            code = lr_auth.capture_loopback_authorization_code(timeout_seconds=2)
+            code = lr_auth.capture_loopback_authorization_code(
+                self.AUTHORIZE_URL, timeout_seconds=2)
         assert code is None
         assert time.time() - started < 10
 
