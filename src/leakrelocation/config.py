@@ -154,7 +154,7 @@ TIMINGS = _flag_from_env("LEAKRELOCATION_TIMINGS", False)
 # The portal app registration must list the redirect URI below. If it does not,
 # authentication fails and the out-of-band flow is used instead.
 USE_LOOPBACK_OAUTH = _flag_from_env("LEAKRELOCATION_LOOPBACK_OAUTH", True)
-LOOPBACK_OAUTH_PORT = _int_from_env("LEAKRELOCATION_LOOPBACK_PORT", 8770)
+LOOPBACK_OAUTH_PORT = _int_from_env("LEAKRELOCATION_LOOPBACK_PORT", 8080)
 
 # The portal compares redirect_uri against the app registration as a string, so
 # host spelling and the trailing slash both matter: "localhost" and "127.0.0.1"
