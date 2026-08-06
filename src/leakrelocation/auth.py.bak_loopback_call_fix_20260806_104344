@@ -23,7 +23,6 @@ no browser at all.
 import glob
 import json
 import os
-import subprocess
 
 # Absolute imports with this path setup, rather than relative imports, so the
 # module also works when loaded by file path or run directly - not only when
@@ -291,23 +290,18 @@ def get_oob_authorization_code(start_epoch_seconds):
 
 
 LOOPBACK_SUCCESS_PAGE = b"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8"/>
-<title>ArcGIS Loopback Sign-in Complete</title>
-</head>
+<html><head><meta charset="utf-8"/><title>Signed in</title></head>
 <body style="font-family:Arial,sans-serif;padding:2em">
-<p id="msg">Signed in. Closing this tab...</p>
+<p id="msg">Signed in. Closing...</p>
 <script>
-document.title = "ArcGIS Loopback Sign-in Complete";
-window.open("", "_self");
+// Opened by the sign-in redirect, so this window may close itself.
 window.close();
-setTimeout(function(){
-  document.getElementById("msg").textContent = "Signed in. This tab can be closed.";
-}, 700);
+// If the browser refuses (some block close() on tabs it did not script-open),
+// leave a short instruction rather than the raw authorization code.
+setTimeout(function(){document.getElementById('msg').textContent =
+  'Signed in. You can close this tab.';}, 400);
 </script>
-</body>
-</html>"""
+</body></html>"""
 
 
 def build_authorize_url(redirect_uri):
@@ -378,53 +372,8 @@ def authorize_url_is_accepted(session, authorize_url, redirect_uri):
     return False
 
 
-def close_loopback_callback_tab():
-    """Best-effort close of the browser tab that displayed the loopback success page."""
-    ps_script = r'''
-$title = 'ArcGIS Loopback Sign-in Complete'
-$shell = New-Object -ComObject WScript.Shell
-Start-Sleep -Milliseconds 500
-$activated = $false
-for ($i = 0; $i -lt 20; $i++) {
-    if ($shell.AppActivate($title)) {
-        $activated = $true
-        break
-    }
-    Start-Sleep -Milliseconds 200
-}
-if ($activated) {
-    Start-Sleep -Milliseconds 200
-    $shell.SendKeys('^w')
-}
-'''
-    try:
-        subprocess.Popen(
-            [
-                "powershell.exe",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                ps_script,
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except Exception as ex:
-        detail(f"Could not auto-close loopback browser tab: {ex}")
-
-
 def capture_loopback_authorization_code(authorize_url, timeout_seconds=180):
-    """Serve the OAuth redirect on loopback and return the authorization code.
-
-    Replaces reading the code off the out-of-band page, which left a tab showing
-    "SUCCESS code=..." that could not be closed programmatically because the
-    page belonged to the portal. Here the redirect lands on a page this process
-    serves, so it can close itself and never displays the code.
-
-    Returns None if the redirect never arrives, so the caller can fall back.
-    """
+    """Serve the OAuth redirect on loopback and return the authorization code."""
     captured = {}
     ready = threading.Event()
 
@@ -450,7 +399,6 @@ def capture_loopback_authorization_code(authorize_url, timeout_seconds=180):
             ready.set()
 
         def log_message(self, *args):
-            """Silence the default per-request logging to stderr."""
             return
 
     try:
@@ -478,29 +426,42 @@ def capture_loopback_authorization_code(authorize_url, timeout_seconds=180):
 
 def interactive_access_token(session):
     cached = cached_access_token()
+
     if cached:
         return cached
+
     env_token = (
         os.environ.get("GIS_AccessToken")
         or os.environ.get("GIS_ACCESS_TOKEN")
         or os.environ.get("ARCGIS_ACCESS_TOKEN")
         or os.environ.get("ARCGIS_TOKEN")
     )
+
     if env_token and env_token.strip():
         log("Using ArcGIS access token from environment variable.")
         return env_token.strip()
+
     if not config.ARCGIS_CLIENT_ID:
         fail("config.ARCGIS_CLIENT_ID is not set.")
+
     auth_code = None
     redirect_uri = config.ARCGIS_REDIRECT_URI
+
     if config.USE_LOOPBACK_OAUTH:
         loopback_url = build_authorize_url(config.LOOPBACK_REDIRECT_URI)
+        # Ask the portal before handing the URL to a browser. Otherwise a
+        # rejected redirect_uri shows up only as a 400 page the script cannot
+        # read, and the reason stays invisible.
         if authorize_url_is_accepted(session, loopback_url, config.LOOPBACK_REDIRECT_URI):
-            auth_code = capture_loopback_authorization_code(loopback_url)
+            log("Opening browser to sign in to ArcGIS.")
+            detail(f"Redirect URI: {config.LOOPBACK_REDIRECT_URI}")
+            webbrowser.open(loopback_url, new=1, autoraise=True)
+            auth_code = capture_loopback_authorization_code()
             if auth_code:
                 redirect_uri = config.LOOPBACK_REDIRECT_URI
             else:
                 warn("Loopback sign-in did not complete; falling back.")
+
     if not auth_code:
         log("Opening browser for ArcGIS user authentication (out-of-band).")
         detail(f"Redirect URI: {config.ARCGIS_REDIRECT_URI}")
@@ -508,8 +469,10 @@ def interactive_access_token(session):
         webbrowser.open(build_authorize_url(config.ARCGIS_REDIRECT_URI), new=1, autoraise=True)
         auth_code = get_oob_authorization_code(auth_start_epoch)
         redirect_uri = config.ARCGIS_REDIRECT_URI
+
     if not auth_code:
         fail("No authorization code was captured.")
+
     token_payload = {
         "f": "json",
         "client_id": config.ARCGIS_CLIENT_ID,
@@ -517,27 +480,35 @@ def interactive_access_token(session):
         "code": auth_code,
         "redirect_uri": redirect_uri,
     }
+
     response = session.post(
         config.PORTAL_TOKEN_URL,
         data=token_payload,
         timeout=config.REQUEST_TIMEOUT_SECONDS,
         verify=config.VERIFY_SSL,
     )
+
     response.raise_for_status()
     data = response.json()
+
     if "error" in data:
         fail(
             f"ArcGIS OAuth token request failed: {json.dumps(data['error'], indent=2)}"
         )
+
     token = data.get("access_token") or data.get("token")
+
     if not token:
         fail("ArcGIS OAuth response did not include access_token/token.")
+
     expires_epoch = time.time() + float(data.get("expires_in") or 3600)
+
     keyring_set(config.KEYRING_ACCESS_TOKEN_USER, token)
     keyring_set(config.KEYRING_ACCESS_TOKEN_EXPIRES_USER, expires_epoch)
+
     log("Saved ArcGIS Portal access token to Windows Credential Manager.")
-    close_loopback_callback_tab()
     return token
+
 
 def get_arcgis_token(session=None):
     active_session = session if session is not None else requests.Session()
@@ -632,3 +603,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     _sys.exit(main())
+
