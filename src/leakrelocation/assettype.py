@@ -8,8 +8,22 @@ The family taxonomy here is deliberately not the one in `matching.py`. This one
 labels cached pipe rows (`PipeMaterialFamily`) and has an explicit OTHER
 bucket; `matching.py` decides whether a leak and a pipe are compatible.
 """
-from . import config  # noqa: F401  (kept so callers can reach config via this module)
-from .matching import match_term, material_tokens
+# Absolute imports with this path setup, rather than relative imports, so the
+# module also works when loaded by file path or run directly - not only when
+# imported as a package member. spec_from_file_location gives a module no parent
+# package, and a relative import then fails with "attempted relative import with
+# no known parent package".
+import os as _os
+import sys as _sys
+
+_PACKAGE_PARENT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+if _PACKAGE_PARENT not in _sys.path:
+    _sys.path.insert(0, _PACKAGE_PARENT)
+
+from leakrelocation import (
+    config,  # noqa: F401  (kept so callers can reach config via this module)
+)
+from leakrelocation.matching import match_term, material_tokens
 
 # Checked in order; the first family with a matching term wins.
 ASSETTYPE_FAMILY_TERMS = {
