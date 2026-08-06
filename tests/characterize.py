@@ -20,25 +20,24 @@ import sys
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-class _WithMatchingFallback:
-    """Looks up names on the workflow module, then on leakrelocation.matching.
+class _WithFallbacks:
+    """Looks up names on the workflow module, then on the package modules.
 
-    The workflow module only re-exports what it calls, so helpers such as
-    material_family and upper are reachable through the package instead. Probing
-    both keeps the snapshot comparable to one taken before the split.
+    The workflow imports only what it calls, so helpers now living in
+    leakrelocation.matching or leakrelocation.auth are reachable through the
+    package instead. Probing all of them keeps the snapshot comparable to one
+    taken before the modules were split out.
     """
 
-    def __init__(self, module, fallback):
+    def __init__(self, module, *fallbacks):
         self._module = module
-        self._fallback = fallback
+        self._fallbacks = fallbacks
 
     def __getattr__(self, name):
-        if hasattr(self._module, name):
-            return getattr(self._module, name)
-        return getattr(self._fallback, name)
-
-    def __hasattr__(self, name):  # pragma: no cover - explicitness for readers
-        return hasattr(self._module, name) or hasattr(self._fallback, name)
+        for source in (self._module, *self._fallbacks):
+            if hasattr(source, name):
+                return getattr(source, name)
+        raise AttributeError(name)
 
 
 def load_module():
@@ -52,10 +51,10 @@ def load_module():
 
     try:
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        from leakrelocation import matching
+        from leakrelocation import auth, matching
     except ImportError:
         return module
-    return _WithMatchingFallback(module, matching)
+    return _WithFallbacks(module, matching, auth)
 
 
 def safe(fn, *args):

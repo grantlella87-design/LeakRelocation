@@ -14,6 +14,7 @@ import pytest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
 
+from leakrelocation import auth as lr_auth
 from leakrelocation import config
 
 pytest.importorskip("geopandas")
@@ -77,7 +78,7 @@ class TestLoopbackSignIn:
         port = config.LOOPBACK_OAUTH_PORT
         thread, _ = self._request_later(f"http://127.0.0.1:{port}/?code=ABC123&state=x")
         with redirect_stdout(io.StringIO()):
-            code = lr.capture_loopback_authorization_code(timeout_seconds=15)
+            code = lr_auth.capture_loopback_authorization_code(timeout_seconds=15)
         thread.join()
         assert code == "ABC123"
 
@@ -85,7 +86,7 @@ class TestLoopbackSignIn:
         port = config.LOOPBACK_OAUTH_PORT
         thread, result = self._request_later(f"http://127.0.0.1:{port}/?code=SECRETCODE")
         with redirect_stdout(io.StringIO()):
-            lr.capture_loopback_authorization_code(timeout_seconds=15)
+            lr_auth.capture_loopback_authorization_code(timeout_seconds=15)
         thread.join()
         assert result["status"] == 200
         assert "SECRETCODE" not in result["body"]
@@ -94,7 +95,7 @@ class TestLoopbackSignIn:
         port = config.LOOPBACK_OAUTH_PORT
         thread, result = self._request_later(f"http://127.0.0.1:{port}/?code=X")
         with redirect_stdout(io.StringIO()):
-            lr.capture_loopback_authorization_code(timeout_seconds=15)
+            lr_auth.capture_loopback_authorization_code(timeout_seconds=15)
         thread.join()
         assert "window.close()" in result["body"]
 
@@ -103,7 +104,7 @@ class TestLoopbackSignIn:
         for expected in ["FIRST", "SECOND"]:
             thread, _ = self._request_later(f"http://127.0.0.1:{port}/?code={expected}")
             with redirect_stdout(io.StringIO()):
-                code = lr.capture_loopback_authorization_code(timeout_seconds=15)
+                code = lr_auth.capture_loopback_authorization_code(timeout_seconds=15)
             thread.join()
             assert code == expected
 
@@ -125,14 +126,14 @@ class TestLoopbackSignIn:
         thread = threading.Thread(target=noise_then_redirect)
         thread.start()
         with redirect_stdout(io.StringIO()):
-            code = lr.capture_loopback_authorization_code(timeout_seconds=15)
+            code = lr_auth.capture_loopback_authorization_code(timeout_seconds=15)
         thread.join()
         assert code == "LATER"
 
     def test_timeout_returns_none_so_the_caller_can_fall_back(self, lr):
         started = time.time()
         with redirect_stdout(io.StringIO()):
-            code = lr.capture_loopback_authorization_code(timeout_seconds=2)
+            code = lr_auth.capture_loopback_authorization_code(timeout_seconds=2)
         assert code is None
         assert time.time() - started < 10
 
@@ -143,7 +144,7 @@ class TestAuthorizeUrl:
     percent-encoding as a variable when the portal rejects a redirect."""
 
     def test_loopback_redirect_is_not_over_encoded(self, lr):
-        url = lr.build_authorize_url("http://localhost:8770/")
+        url = lr_auth.build_authorize_url("http://localhost:8770/")
         assert "redirect_uri=http://localhost:8770/" in url
         assert "%3A%2F%2F" not in url
 
@@ -151,16 +152,16 @@ class TestAuthorizeUrl:
         import urllib.parse
         for redirect in ["http://localhost:8770/", "http://127.0.0.1:9000",
                          "urn:ietf:wg:oauth:2.0:oob"]:
-            url = lr.build_authorize_url(redirect)
+            url = lr_auth.build_authorize_url(redirect)
             query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
             assert query["redirect_uri"][0] == redirect
 
     def test_required_oauth_parameters_present(self, lr):
         import urllib.parse
-        url = lr.build_authorize_url("http://localhost:8770/")
+        url = lr_auth.build_authorize_url("http://localhost:8770/")
         query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
         assert query["response_type"] == ["code"]
-        assert query["client_id"] == [lr.ARCGIS_CLIENT_ID]
+        assert query["client_id"] == [config.ARCGIS_CLIENT_ID]
         assert "expiration" in query
 
 
@@ -196,27 +197,27 @@ class TestAuthorizePreflight:
         response = _Response(400, {"error": {
             "message": "Invalid redirect_uri",
             "details": ["redirect_uri is not registered"]}})
-        assert lr.authorize_url_is_accepted(_Session(response), "u", "http://localhost:8770/") is False
+        assert lr_auth.authorize_url_is_accepted(_Session(response), "u", "http://localhost:8770/") is False
         output = capsys.readouterr().out
         assert "Invalid redirect_uri" in output
         assert "redirect_uri is not registered" in output
 
     def test_names_the_redirect_uri_that_was_sent(self, lr, capsys):
         response = _Response(400, {"error": {"message": "bad"}})
-        lr.authorize_url_is_accepted(_Session(response), "u", "http://localhost:8770/")
+        lr_auth.authorize_url_is_accepted(_Session(response), "u", "http://localhost:8770/")
         assert "http://localhost:8770/" in capsys.readouterr().out
 
     def test_accepts_a_sign_in_page(self, lr):
         response = _Response(200, "<html>sign in</html>", is_json=False)
-        assert lr.authorize_url_is_accepted(_Session(response), "u", "r") is True
+        assert lr_auth.authorize_url_is_accepted(_Session(response), "u", "r") is True
 
     def test_rejects_an_error_payload_returned_with_200(self, lr, capsys):
         response = _Response(200, {"error": {"message": "Invalid client_id"}})
-        assert lr.authorize_url_is_accepted(_Session(response), "u", "r") is False
+        assert lr_auth.authorize_url_is_accepted(_Session(response), "u", "r") is False
         assert "Invalid client_id" in capsys.readouterr().out
 
     def test_accepts_clean_json(self, lr):
-        assert lr.authorize_url_is_accepted(_Session(_Response(200, {"ok": True})), "u", "r") is True
+        assert lr_auth.authorize_url_is_accepted(_Session(_Response(200, {"ok": True})), "u", "r") is True
 
     def test_unreachable_preflight_does_not_block_sign_in(self, lr):
         import requests
@@ -226,7 +227,7 @@ class TestAuthorizePreflight:
                 raise requests.RequestException("no route to host")
 
         with redirect_stdout(io.StringIO()):
-            assert lr.authorize_url_is_accepted(Unreachable(), "u", "r") is True
+            assert lr_auth.authorize_url_is_accepted(Unreachable(), "u", "r") is True
 
 
 class TestRedirectUriIsConfigurable:
