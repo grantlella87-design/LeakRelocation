@@ -1,0 +1,609 @@
+{
+    "copiedAtLocal":  "2026-08-07 23:26:23 -04:00",
+    "sourceInputUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer",
+    "sourceServiceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer?f=pjson",
+    "layerCount":  100,
+    "outputFolder":  "reference\\mapserver_json\\NY_DNV_Synergi_RiskResults_Assets_NY",
+    "layers":  [
+                   {
+                       "id":  0,
+                       "name":  "OtherGIS(200-299)",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/0?f=pjson",
+                       "file":  "layer_000_OtherGIS_200-299.json"
+                   },
+                   {
+                       "id":  1,
+                       "name":  "Pipeline Assembly",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/1?f=pjson",
+                       "file":  "layer_001_Pipeline_Assembly.json"
+                   },
+                   {
+                       "id":  2,
+                       "name":  "Pipeline Device",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/2?f=pjson",
+                       "file":  "layer_002_Pipeline_Device.json"
+                   },
+                   {
+                       "id":  3,
+                       "name":  "Pipeline Junction",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/3?f=pjson",
+                       "file":  "layer_003_Pipeline_Junction.json"
+                   },
+                   {
+                       "id":  4,
+                       "name":  "Structure Junction",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/4?f=pjson",
+                       "file":  "layer_004_Structure_Junction.json"
+                   },
+                   {
+                       "id":  5,
+                       "name":  "Pipeline Line",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/5?f=pjson",
+                       "file":  "layer_005_Pipeline_Line.json"
+                   },
+                   {
+                       "id":  6,
+                       "name":  "Distribution Pipe",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/6?f=pjson",
+                       "file":  "layer_006_Distribution_Pipe.json"
+                   },
+                   {
+                       "id":  7,
+                       "name":  "Service Pipe",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/7?f=pjson",
+                       "file":  "layer_007_Service_Pipe.json"
+                   },
+                   {
+                       "id":  8,
+                       "name":  "Transmission Pipe",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/8?f=pjson",
+                       "file":  "layer_008_Transmission_Pipe.json"
+                   },
+                   {
+                       "id":  9,
+                       "name":  "Gathering Pipe",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/9?f=pjson",
+                       "file":  "layer_009_Gathering_Pipe.json"
+                   },
+                   {
+                       "id":  10,
+                       "name":  "Station Pipe",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/10?f=pjson",
+                       "file":  "layer_010_Station_Pipe.json"
+                   },
+                   {
+                       "id":  11,
+                       "name":  "CP Lines",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/11?f=pjson",
+                       "file":  "layer_011_CP_Lines.json"
+                   },
+                   {
+                       "id":  12,
+                       "name":  "Pipeline SubnetLine",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/12?f=pjson",
+                       "file":  "layer_012_Pipeline_SubnetLine.json"
+                   },
+                   {
+                       "id":  13,
+                       "name":  "Structure Line",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/13?f=pjson",
+                       "file":  "layer_013_Structure_Line.json"
+                   },
+                   {
+                       "id":  14,
+                       "name":  "Trans Structure Line",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/14?f=pjson",
+                       "file":  "layer_014_Trans_Structure_Line.json"
+                   },
+                   {
+                       "id":  15,
+                       "name":  "Structure Boundary",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/15?f=pjson",
+                       "file":  "layer_015_Structure_Boundary.json"
+                   },
+                   {
+                       "id":  16,
+                       "name":  "Trans Pipeline Device",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/16?f=pjson",
+                       "file":  "layer_016_Trans_Pipeline_Device.json"
+                   },
+                   {
+                       "id":  17,
+                       "name":  "Trans Pipeline Junction",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/17?f=pjson",
+                       "file":  "layer_017_Trans_Pipeline_Junction.json"
+                   },
+                   {
+                       "id":  18,
+                       "name":  "Stations",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/18?f=pjson",
+                       "file":  "layer_018_Stations.json"
+                   },
+                   {
+                       "id":  19,
+                       "name":  "Proposed Distribution Pipe",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/19?f=pjson",
+                       "file":  "layer_019_Proposed_Distribution_Pipe.json"
+                   },
+                   {
+                       "id":  100,
+                       "name":  "Integrity(100-199)",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/100?f=pjson",
+                       "file":  "layer_100_Integrity_100-199.json"
+                   },
+                   {
+                       "id":  101,
+                       "name":  "P_PipelineMarker",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/101?f=pjson",
+                       "file":  "layer_101_P_PipelineMarker.json"
+                   },
+                   {
+                       "id":  102,
+                       "name":  "P_SqueezeOff",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/102?f=pjson",
+                       "file":  "layer_102_P_SqueezeOff.json"
+                   },
+                   {
+                       "id":  103,
+                       "name":  "Inline Inspection",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/103?f=pjson",
+                       "file":  "layer_103_Inline_Inspection.json"
+                   },
+                   {
+                       "id":  104,
+                       "name":  "ILI Survey Readings",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/104?f=pjson",
+                       "file":  "layer_104_ILI_Survey_Readings.json"
+                   },
+                   {
+                       "id":  105,
+                       "name":  "Transmission Repairs",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/105?f=pjson",
+                       "file":  "layer_105_Transmission_Repairs.json"
+                   },
+                   {
+                       "id":  202,
+                       "name":  "P_GasLeak",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/202?f=pjson",
+                       "file":  "layer_202_P_GasLeak.json"
+                   },
+                   {
+                       "id":  203,
+                       "name":  "P_GasLeakInspection",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/203?f=pjson",
+                       "file":  "layer_203_P_GasLeakInspection.json"
+                   },
+                   {
+                       "id":  205,
+                       "name":  "P_LeakRepairs",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/205?f=pjson",
+                       "file":  "layer_205_P_LeakRepairs.json"
+                   },
+                   {
+                       "id":  206,
+                       "name":  "Hist_GasLeak",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/206?f=pjson",
+                       "file":  "layer_206_Hist_GasLeak.json"
+                   },
+                   {
+                       "id":  207,
+                       "name":  "RI_GasLeak",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/207?f=pjson",
+                       "file":  "layer_207_RI_GasLeak.json"
+                   },
+                   {
+                       "id":  300,
+                       "name":  "CompanySystems(300-499)",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/300?f=pjson",
+                       "file":  "layer_300_CompanySystems_300-499.json"
+                   },
+                   {
+                       "id":  301,
+                       "name":  "OneCallTickets",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/301?f=pjson",
+                       "file":  "layer_301_OneCallTickets.json"
+                   },
+                   {
+                       "id":  302,
+                       "name":  "OneCallDamages",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/302?f=pjson",
+                       "file":  "layer_302_OneCallDamages.json"
+                   },
+                   {
+                       "id":  500,
+                       "name":  "RouteInfo(500-599)",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/500?f=pjson",
+                       "file":  "layer_500_RouteInfo_500-599.json"
+                   },
+                   {
+                       "id":  501,
+                       "name":  "ContinuousNetwork",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/501?f=pjson",
+                       "file":  "layer_501_ContinuousNetwork.json"
+                   },
+                   {
+                       "id":  502,
+                       "name":  "Centerline",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/502?f=pjson",
+                       "file":  "layer_502_Centerline.json"
+                   },
+                   {
+                       "id":  503,
+                       "name":  "Calibration_Point",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/503?f=pjson",
+                       "file":  "layer_503_Calibration_Point.json"
+                   },
+                   {
+                       "id":  600,
+                       "name":  "Areas(600-699)",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/600?f=pjson",
+                       "file":  "layer_600_Areas_600-699.json"
+                   },
+                   {
+                       "id":  601,
+                       "name":  "SOP_polygon",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/601?f=pjson",
+                       "file":  "layer_601_SOP_polygon.json"
+                   },
+                   {
+                       "id":  602,
+                       "name":  "LeakRateArea",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/602?f=pjson",
+                       "file":  "layer_602_LeakRateArea.json"
+                   },
+                   {
+                       "id":  603,
+                       "name":  "SOP Polygon Reference",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/603?f=pjson",
+                       "file":  "layer_603_SOP_Polygon_Reference.json"
+                   },
+                   {
+                       "id":  800,
+                       "name":  "Landbase(800-899)",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/800?f=pjson",
+                       "file":  "layer_800_Landbase_800-899.json"
+                   },
+                   {
+                       "id":  801,
+                       "name":  "Structures",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/801?f=pjson",
+                       "file":  "layer_801_Structures.json"
+                   },
+                   {
+                       "id":  803,
+                       "name":  "FEMA_Flood_Hazard",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/803?f=pjson",
+                       "file":  "layer_803_FEMA_Flood_Hazard.json"
+                   },
+                   {
+                       "id":  804,
+                       "name":  "SurgoSoil",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/804?f=pjson",
+                       "file":  "layer_804_SurgoSoil.json"
+                   },
+                   {
+                       "id":  805,
+                       "name":  "ImperviousSurface",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/805?f=pjson",
+                       "file":  "layer_805_ImperviousSurface.json"
+                   },
+                   {
+                       "id":  806,
+                       "name":  "LandUse",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/806?f=pjson",
+                       "file":  "layer_806_LandUse.json"
+                   },
+                   {
+                       "id":  808,
+                       "name":  "PipeSystem(0-99)",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/808?f=pjson",
+                       "file":  "layer_808_PipeSystem_0-99.json"
+                   },
+                   {
+                       "id":  811,
+                       "name":  "WaterLine",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/811?f=pjson",
+                       "file":  "layer_811_WaterLine.json"
+                   },
+                   {
+                       "id":  812,
+                       "name":  "WaterArea",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/812?f=pjson",
+                       "file":  "layer_812_WaterArea.json"
+                   },
+                   {
+                       "id":  813,
+                       "name":  "WaterBody",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/813?f=pjson",
+                       "file":  "layer_813_WaterBody.json"
+                   },
+                   {
+                       "id":  815,
+                       "name":  "Quarry",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/815?f=pjson",
+                       "file":  "layer_815_Quarry.json"
+                   },
+                   {
+                       "id":  816,
+                       "name":  "Airports",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/816?f=pjson",
+                       "file":  "layer_816_Airports.json"
+                   },
+                   {
+                       "id":  818,
+                       "name":  "Lightning",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/818?f=pjson",
+                       "file":  "layer_818_Lightning.json"
+                   },
+                   {
+                       "id":  819,
+                       "name":  "TornadoPath",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/819?f=pjson",
+                       "file":  "layer_819_TornadoPath.json"
+                   },
+                   {
+                       "id":  820,
+                       "name":  "WindPath",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/820?f=pjson",
+                       "file":  "layer_820_WindPath.json"
+                   },
+                   {
+                       "id":  821,
+                       "name":  "WildFire",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/821?f=pjson",
+                       "file":  "layer_821_WildFire.json"
+                   },
+                   {
+                       "id":  822,
+                       "name":  "Mines",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/822?f=pjson",
+                       "file":  "layer_822_Mines.json"
+                   },
+                   {
+                       "id":  823,
+                       "name":  "LandslideRisk",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/823?f=pjson",
+                       "file":  "layer_823_LandslideRisk.json"
+                   },
+                   {
+                       "id":  824,
+                       "name":  "QuakeHazard",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/824?f=pjson",
+                       "file":  "layer_824_QuakeHazard.json"
+                   },
+                   {
+                       "id":  826,
+                       "name":  "Carbonates48",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/826?f=pjson",
+                       "file":  "layer_826_Carbonates48.json"
+                   },
+                   {
+                       "id":  828,
+                       "name":  "HighPopulatedArea",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/828?f=pjson",
+                       "file":  "layer_828_HighPopulatedArea.json"
+                   },
+                   {
+                       "id":  829,
+                       "name":  "Census_Block_Group",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/829?f=pjson",
+                       "file":  "layer_829_Census_Block_Group.json"
+                   },
+                   {
+                       "id":  830,
+                       "name":  "HVAC",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/830?f=pjson",
+                       "file":  "layer_830_HVAC.json"
+                   },
+                   {
+                       "id":  831,
+                       "name":  "LimitedAccessRoad",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/831?f=pjson",
+                       "file":  "layer_831_LimitedAccessRoad.json"
+                   },
+                   {
+                       "id":  832,
+                       "name":  "OpenLands_Area_All",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/832?f=pjson",
+                       "file":  "layer_832_OpenLands_Area_All.json"
+                   },
+                   {
+                       "id":  833,
+                       "name":  "Identified Sites",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/833?f=pjson",
+                       "file":  "layer_833_Identified_Sites.json"
+                   },
+                   {
+                       "id":  834,
+                       "name":  "Buildings Within Boundary",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/834?f=pjson",
+                       "file":  "layer_834_Buildings_Within_Boundary.json"
+                   },
+                   {
+                       "id":  835,
+                       "name":  "HCAStructures",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/835?f=pjson",
+                       "file":  "layer_835_HCAStructures.json"
+                   },
+                   {
+                       "id":  836,
+                       "name":  "Bridges",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/836?f=pjson",
+                       "file":  "layer_836_Bridges.json"
+                   },
+                   {
+                       "id":  900,
+                       "name":  "HEREData(900-999)",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/900?f=pjson",
+                       "file":  "layer_900_HEREData_900-999.json"
+                   },
+                   {
+                       "id":  909,
+                       "name":  "Hospital",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/909?f=pjson",
+                       "file":  "layer_909_Hospital.json"
+                   },
+                   {
+                       "id":  913,
+                       "name":  "Parking",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/913?f=pjson",
+                       "file":  "layer_913_Parking.json"
+                   },
+                   {
+                       "id":  914,
+                       "name":  "ParkRec",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/914?f=pjson",
+                       "file":  "layer_914_ParkRec.json"
+                   },
+                   {
+                       "id":  923,
+                       "name":  "AltStreets",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/923?f=pjson",
+                       "file":  "layer_923_AltStreets.json"
+                   },
+                   {
+                       "id":  926,
+                       "name":  "Streets",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/926?f=pjson",
+                       "file":  "layer_926_Streets.json"
+                   },
+                   {
+                       "id":  928,
+                       "name":  "WaterSeg",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/928?f=pjson",
+                       "file":  "layer_928_WaterSeg.json"
+                   },
+                   {
+                       "id":  929,
+                       "name":  "AdminLine1",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/929?f=pjson",
+                       "file":  "layer_929_AdminLine1.json"
+                   },
+                   {
+                       "id":  930,
+                       "name":  "AdminLine2",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/930?f=pjson",
+                       "file":  "layer_930_AdminLine2.json"
+                   },
+                   {
+                       "id":  933,
+                       "name":  "RailRoads",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/933?f=pjson",
+                       "file":  "layer_933_RailRoads.json"
+                   },
+                   {
+                       "id":  934,
+                       "name":  "Landmark",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/934?f=pjson",
+                       "file":  "layer_934_Landmark.json"
+                   },
+                   {
+                       "id":  935,
+                       "name":  "LandUseA",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/935?f=pjson",
+                       "file":  "layer_935_LandUseA.json"
+                   },
+                   {
+                       "id":  936,
+                       "name":  "LandUseB",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/936?f=pjson",
+                       "file":  "layer_936_LandUseB.json"
+                   },
+                   {
+                       "id":  937,
+                       "name":  "Oceans",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/937?f=pjson",
+                       "file":  "layer_937_Oceans.json"
+                   },
+                   {
+                       "id":  938,
+                       "name":  "WaterPoly",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/938?f=pjson",
+                       "file":  "layer_938_WaterPoly.json"
+                   },
+                   {
+                       "id":  939,
+                       "name":  "Islands",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/939?f=pjson",
+                       "file":  "layer_939_Islands.json"
+                   },
+                   {
+                       "id":  940,
+                       "name":  "Adminbndy2",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/940?f=pjson",
+                       "file":  "layer_940_Adminbndy2.json"
+                   },
+                   {
+                       "id":  941,
+                       "name":  "Adminbndy3",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/941?f=pjson",
+                       "file":  "layer_941_Adminbndy3.json"
+                   },
+                   {
+                       "id":  942,
+                       "name":  "Town Polygon",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/942?f=pjson",
+                       "file":  "layer_942_Town_Polygon.json"
+                   },
+                   {
+                       "id":  943,
+                       "name":  "HCA_Highways",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/943?f=pjson",
+                       "file":  "layer_943_HCA_Highways.json"
+                   },
+                   {
+                       "id":  1000,
+                       "name":  "HierarcheryLayers(1000-1099)",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/1000?f=pjson",
+                       "file":  "layer_1000_HierarcheryLayers_1000-1099.json"
+                   },
+                   {
+                       "id":  1001,
+                       "name":  "Jurisdiction",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/1001?f=pjson",
+                       "file":  "layer_1001_Jurisdiction.json"
+                   },
+                   {
+                       "id":  1002,
+                       "name":  "OPCO",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/1002?f=pjson",
+                       "file":  "layer_1002_OPCO.json"
+                   },
+                   {
+                       "id":  1003,
+                       "name":  "Yards",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/1003?f=pjson",
+                       "file":  "layer_1003_Yards.json"
+                   },
+                   {
+                       "id":  1004,
+                       "name":  "Towns",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/1004?f=pjson",
+                       "file":  "layer_1004_Towns.json"
+                   },
+                   {
+                       "id":  1005,
+                       "name":  "SUBOPCO",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/1005?f=pjson",
+                       "file":  "layer_1005_SUBOPCO.json"
+                   },
+                   {
+                       "id":  1006,
+                       "name":  "T-Jurisdiction",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/1006?f=pjson",
+                       "file":  "layer_1006_T-Jurisdiction.json"
+                   },
+                   {
+                       "id":  1007,
+                       "name":  "T-OPCO",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/1007?f=pjson",
+                       "file":  "layer_1007_T-OPCO.json"
+                   },
+                   {
+                       "id":  1008,
+                       "name":  "T-SUBOPCO",
+                       "sourceUrl":  "https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer/1008?f=pjson",
+                       "file":  "layer_1008_T-SUBOPCO.json"
+                   }
+               ]
+}
