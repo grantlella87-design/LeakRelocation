@@ -196,60 +196,56 @@ USE_LAYER_CACHE = config.USE_LAYER_CACHE
 LAYER_CACHE_FOLDER = str(config.LAYER_CACHE_DIR)
 FORCE_LAYER_REFRESH = config.FORCE_LAYER_REFRESH
 DELTA_REFRESH_SAFETY_SECONDS = config.DELTA_REFRESH_SAFETY_SECONDS
-MODIFIED_FIELD_CANDIDATES = [
-    "LASTUPDATE",
-    "lastupdate",
-    "LastUpdate",
-    "last_edited_date",
-    "EditDate",
-    "UPDATEDATE",
-    "MODIFIEDDATE",
-]
-LEAK_KEY_CANDIDATES = [
-    "LMSLEAKNUMBER",
-    "LMSLEAKSUMBER",
-    "LEAKNUMBER",
-    "LeakNumber",
-    "Name",
-    "name",
-]
-PIPE_DIAMETER_CANDIDATES = [
-    "nominaldiameter",
-    "NOMINALDIAMETER",
-    "NominalDiameter",
-    "diameter",
-    "DIAMETER",
-    "outsidediameter",
-    "OUTSIDEDIAMETER",
-]
+# --- DNV service field names -------------------------------------------------
+#
+# These are no longer guesses. Every name below was read out of the service's
+# own metadata, a copy of which is committed under
+# reference/mapserver_json/NY_DNV_Synergi_RiskResults_Assets_NY/ - layer 6
+# (Distribution Pipe), layer 7 (Service Pipe) and layer 206 (Hist_GasLeak).
+# tests/test_dnv_service_metadata.py checks these lists against that copy, so a
+# name that stops existing fails a test instead of silently resolving to
+# nothing at runtime.
+#
+# The lists that used to be here carried 34 spellings that exist on no layer -
+# NOMINALDIAMETER, OP_PRESSURE, MODIFIEDDATE, a misspelled LMSLEAKSUMBER and so
+# on. Most were case variants, and resolve_field_name compares names with case
+# and punctuation stripped, so they could never have resolved differently from
+# the entry beside them: one spelling covers every casing of the same name, and
+# the resolver returns the layer's own spelling. Where more than one name
+# survives below, they are genuinely different fields.
+MODIFIED_FIELD_CANDIDATES = ["LASTUPDATE"]
+
+# LMSLEAKNUMBER is the leak key; LEAKNUMBER also exists on layer 206 and is
+# kept as the fallback.
+LEAK_KEY_CANDIDATES = ["LMSLEAKNUMBER", "LEAKNUMBER"]
+
+PIPE_DIAMETER_CANDIDATES = ["nominaldiameter", "outsidediameter"]
+
 # Which field to ask the DNV service for, so the material arrives in the
-# download. That is a service field name, so it is resolved rather than known.
+# download. This is the DNV Grade field: the material *class* comes from the
+# decoded ASSETGROUP + ASSETTYPE subtype domains, which
+# apply_pipe_domain_out_fields appends to every pipe query.
 #
 # Not to be confused with which cache column the matching reads - that is
 # schema.MATERIAL, published by the enrichment, and read by name in
 # prepare_pipes. Removing this list because prepare_pipes no longer used it
 # broke build_out_fields, which still does.
-PIPE_MATERIAL_CANDIDATES = [
-    "assettype_material",
-    "ASSETTYPE_MATERIAL",
-    "AssetType_Material",
-    "material",
-    "MATERIAL",
-    "ASSETTYPE",
-    "assettype",
-]
-PIPE_PRESSURE_CANDIDATES = [
-    "operatingpressure",
-    "OPERATINGPRESSURE",
-    "OperatingPressure",
-    "maopdesign",
-    "MAOPDESIGN",
-    "MAOPDesign",
-    "pressure",
-    "PRESSURE",
-    "op_pressure",
-    "OP_PRESSURE",
-]
+PIPE_MATERIAL_CANDIDATES = ["material"]
+
+PIPE_PRESSURE_CANDIDATES = ["operatingpressure", "maopdesign"]
+
+# The pipe layers spell it GLOBALID and layer 206 spells it GlobalID. One entry
+# covers both: the resolver ignores case and returns the layer's own spelling.
+GLOBALID_CANDIDATES = ["GLOBALID"]
+OBJECTID_CANDIDATES = ["OBJECTID"]
+
+# Lower case on all three layers.
+JURISDICTION_CANDIDATES = ["jurisdiction"]
+# --- Supplemental CSV headers ------------------------------------------------
+#
+# These stay candidate lists. HL_SupplementalData.csv lives on the share, not in
+# the service, so nothing in this repository can say what its headers are. They
+# are the last unverified names in this file.
 SUPP_KEY_CANDIDATES = ["LeakNumber", "Name", "LMSLEAKNUMBER", "LEAKNUMBER"]
 SUPP_DIAMETER_CANDIDATES = ["Diameter", "Abdn_Diameter_Main", "Abdn_Diameter_Service"]
 SUPP_MATERIAL_CANDIDATES = [
@@ -266,8 +262,6 @@ SUPP_PRESSURE_CANDIDATES = [
     "op_pressure",
 ]
 SUPP_FACILITY_CANDIDATES = ["FacilityType", "PipeType"]
-GLOBALID_CANDIDATES = ["GlobalID", "GLOBALID", "globalid"]
-OBJECTID_CANDIDATES = ["OBJECTID", "ObjectID", "objectid", "FID", "OID"]
 WORKER_TREES = None
 
 
@@ -337,6 +331,28 @@ from leakrelocation.auth import (
 )
 
 
+def is_pipe_layer_url(url):
+    """True when this URL addresses one of the DNV pipe layers.
+
+    The layer id is the path segment straight after MapServer, so it is read
+    from there rather than searched for. Testing for "/mapserver/6" as a
+    substring also matched layers 600, 601, 602 and 603, which exist on this
+    service (SOP_polygon, LeakRateArea and SOP_Polygon_Reference) - a query
+    against one of those would have had ASSETGROUP and ASSETTYPE appended to its
+    outFields, and the service rejects a query naming fields the layer does not
+    have. The URL may address the layer itself or an operation on it
+    (".../MapServer/6" or ".../MapServer/6/query"), so the tail varies.
+    """
+    segments = [segment for segment in str(url).split("?")[0].split("/") if segment]
+    lowered = [segment.lower() for segment in segments]
+    if "mapserver" not in lowered:
+        return False
+    index = lowered.index("mapserver") + 1
+    if index >= len(segments) or not segments[index].isdigit():
+        return False
+    return int(segments[index]) in config.PIPE_LAYER_IDS
+
+
 def apply_pipe_domain_out_fields(url, params):
     """Ensure DNV pipe-layer queries also return ASSETGROUP and ASSETTYPE.
 
@@ -351,8 +367,7 @@ def apply_pipe_domain_out_fields(url, params):
     if not isinstance(params, dict):
         return params
 
-    url_text = str(url).lower()
-    if "/mapserver/6" not in url_text and "/mapserver/7" not in url_text:
+    if not is_pipe_layer_url(url):
         return params
 
     out_field_key = None
@@ -614,7 +629,7 @@ def build_out_fields(meta, layer_name):
         candidate_groups = [
             LEAK_KEY_CANDIDATES,
             GLOBALID_CANDIDATES,
-            ["jurisdiction", "Jurisdiction", "JURISDICTION"],
+            JURISDICTION_CANDIDATES,
         ]
     else:
         candidate_groups = [
@@ -622,7 +637,7 @@ def build_out_fields(meta, layer_name):
             PIPE_MATERIAL_CANDIDATES,
             PIPE_PRESSURE_CANDIDATES,
             GLOBALID_CANDIDATES,
-            ["jurisdiction", "Jurisdiction", "JURISDICTION"],
+            JURISDICTION_CANDIDATES,
         ]
     for group in candidate_groups:
         resolved = resolve_from_names(field_names, group)
