@@ -1,0 +1,1157 @@
+{
+    "currentVersion":  11.1,
+    "cimVersion":  "3.1.0",
+    "id":  801,
+    "name":  "Structures",
+    "type":  "Feature Layer",
+    "description":  "",
+    "geometryType":  "esriGeometryPolygon",
+    "sourceSpatialReference":  {
+                                   "wkt":  "PROJCS[\"NG_Equidistant_Conic_USft\",GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],PROJECTION[\"Equidistant_Conic\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",-74.0],PARAMETER[\"Standard_Parallel_1\",42.0],PARAMETER[\"Standard_Parallel_2\",44.0],PARAMETER[\"Latitude_Of_Origin\",43.0],UNIT[\"Foot_US\",0.3048006096012192]],VERTCS[\"WGS 1984 (US Feet)\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PARAMETER[\"Vertical_Shift\",0.0],PARAMETER[\"Direction\",1.0],UNIT[\"US Survey Feet\",0.3048006096012192]]",
+                                   "xyTolerance":  0.003280833333333333,
+                                   "zTolerance":  0.0032808333333333335,
+                                   "mTolerance":  0.001,
+                                   "falseX":  -70913500,
+                                   "falseY":  -48440900,
+                                   "xyUnits":  3048.0060960121928,
+                                   "falseZ":  -100000,
+                                   "zUnits":  10000,
+                                   "falseM":  0,
+                                   "mUnits":  1
+                               },
+    "sourceHeightModelInfo":  {
+                                  "heightModel":  "ellipsoidal",
+                                  "vertCRS":  "WGS 1984 (US Feet)",
+                                  "heightUnit":  "us-foot"
+                              },
+    "copyrightText":  "",
+    "parentLayer":  {
+                        "id":  800,
+                        "name":  "Landbase(800-899)"
+                    },
+    "subLayers":  [
+
+                  ],
+    "minScale":  0,
+    "maxScale":  0,
+    "referenceScale":  0.0,
+    "drawingInfo":  {
+                        "renderer":  {
+                                         "type":  "simple",
+                                         "symbol":  {
+                                                        "type":  "esriSFS",
+                                                        "style":  "esriSFSSolid",
+                                                        "color":  [
+                                                                      0,
+                                                                      0,
+                                                                      0,
+                                                                      0
+                                                                  ],
+                                                        "outline":  {
+                                                                        "type":  "esriSLS",
+                                                                        "style":  "esriSLSSolid",
+                                                                        "color":  [
+                                                                                      0,
+                                                                                      0,
+                                                                                      0,
+                                                                                      255
+                                                                                  ],
+                                                                        "width":  0.4
+                                                                    }
+                                                    }
+                                     },
+                        "scaleSymbols":  true,
+                        "transparency":  0,
+                        "labelingInfo":  null
+                    },
+    "defaultVisibility":  false,
+    "extent":  {
+                   "xmin":  -1564953.3607565165,
+                   "ymin":  -1060739.7086728439,
+                   "xmax":  1111787.476039812,
+                   "ymax":  853861.7744524851,
+                   "spatialReference":  {
+                                            "wkt":  "PROJCS[\"NG_Equidistant_Conic_USft\",GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],PROJECTION[\"Equidistant_Conic\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",-74.0],PARAMETER[\"Standard_Parallel_1\",42.0],PARAMETER[\"Standard_Parallel_2\",44.0],PARAMETER[\"Latitude_Of_Origin\",43.0],UNIT[\"Foot_US\",0.3048006096012192]]",
+                                            "xyTolerance":  0.003280833333333333,
+                                            "zTolerance":  0.001,
+                                            "mTolerance":  0.001,
+                                            "falseX":  -70913500,
+                                            "falseY":  -48440900,
+                                            "xyUnits":  3048.0060960121928,
+                                            "falseZ":  -100000,
+                                            "zUnits":  10000,
+                                            "falseM":  -100000,
+                                            "mUnits":  10000
+                                        }
+               },
+    "hasAttachments":  false,
+    "htmlPopupType":  "esriServerHTMLPopupTypeAsHTMLText",
+    "displayField":  "name",
+    "typeIdField":  "Subtype",
+    "subtypeFieldName":  "Subtype",
+    "subtypeField":  "Subtype",
+    "defaultSubtypeCode":  99,
+    "fields":  [
+                   {
+                       "name":  "OBJECTID",
+                       "type":  "esriFieldTypeOID",
+                       "alias":  "OBJECTID",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "globalid",
+                       "type":  "esriFieldTypeGlobalID",
+                       "alias":  "GlobalID",
+                       "length":  38,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "shape",
+                       "type":  "esriFieldTypeGeometry",
+                       "alias":  "Shape",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "shape.STArea()",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "shape.STArea()",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "shape.STLength()",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Shape.STLength()",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "subtype",
+                       "type":  "esriFieldTypeSmallInteger",
+                       "alias":  "Subtype",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "source",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "Source",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "domain",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "Domain",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "jurisdiction",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "Jurisdiction",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "description",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "Description",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "description2",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "Description2",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "description3",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "Description3",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "legacyid",
+                       "type":  "esriFieldTypeInteger",
+                       "alias":  "legacyid",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "creator",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "Creator",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "creationdate",
+                       "type":  "esriFieldTypeDate",
+                       "alias":  "Creation date",
+                       "length":  8,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "updatedby",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "Updated by",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "lastupdate",
+                       "type":  "esriFieldTypeDate",
+                       "alias":  "Last update",
+                       "length":  8,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "status",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "status",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "town",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "town",
+                       "length":  50,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "towncode",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "towncode",
+                       "length":  50,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "mastertown",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "mastertown",
+                       "length":  50,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "operatingareacode",
+                       "type":  "esriFieldTypeInteger",
+                       "alias":  "operatingareacode",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "name",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "name",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "name_electric",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "name_electric",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "state",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "state",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "street_number",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "street_number",
+                       "length":  10,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "street_number_overflow",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "street_number_overflow",
+                       "length":  25,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "unit_number",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "unit_number",
+                       "length":  5,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "lot_number",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "lot_number",
+                       "length":  20,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "BuildingRemarks",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "BuildingRemarks",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Building_T",
+                       "type":  "esriFieldTypeSmallInteger",
+                       "alias":  "Building_T",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "STREET_NUM",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "STREET_NUM",
+                       "length":  50,
+                       "domain":  null
+                   }
+               ],
+    "geometryField":  {
+                          "name":  "shape",
+                          "type":  "esriFieldTypeGeometry",
+                          "alias":  "Shape"
+                      },
+    "indexes":  [
+                    {
+                        "name":  "UUID_92",
+                        "fields":  "globalid",
+                        "isAscending":  true,
+                        "isUnique":  true,
+                        "description":  ""
+                    },
+                    {
+                        "name":  "I435domain",
+                        "fields":  "domain",
+                        "isAscending":  true,
+                        "isUnique":  false,
+                        "description":  ""
+                    },
+                    {
+                        "name":  "I435jurisdiction",
+                        "fields":  "jurisdiction",
+                        "isAscending":  true,
+                        "isUnique":  false,
+                        "description":  ""
+                    },
+                    {
+                        "name":  "I435subtype",
+                        "fields":  "subtype",
+                        "isAscending":  true,
+                        "isUnique":  false,
+                        "description":  ""
+                    },
+                    {
+                        "name":  "R92_SDE_ROWID_UK",
+                        "fields":  "OBJECTID",
+                        "isAscending":  true,
+                        "isUnique":  false,
+                        "description":  ""
+                    },
+                    {
+                        "name":  "I404domain",
+                        "fields":  "domain",
+                        "isAscending":  true,
+                        "isUnique":  false,
+                        "description":  ""
+                    },
+                    {
+                        "name":  "I404subtype",
+                        "fields":  "subtype",
+                        "isAscending":  true,
+                        "isUnique":  false,
+                        "description":  ""
+                    },
+                    {
+                        "name":  "UUID_85",
+                        "fields":  "globalid",
+                        "isAscending":  true,
+                        "isUnique":  true,
+                        "description":  ""
+                    },
+                    {
+                        "name":  "IX_STATE",
+                        "fields":  "state",
+                        "isAscending":  true,
+                        "isUnique":  false,
+                        "description":  ""
+                    },
+                    {
+                        "name":  "S53_idx",
+                        "fields":  "shape",
+                        "isAscending":  true,
+                        "isUnique":  true,
+                        "description":  ""
+                    }
+                ],
+    "types":  [
+                  {
+                      "domains":  {
+                                      "jurisdiction":  {
+                                                           "type":  "codedValue",
+                                                           "name":  "WS2_7_NG_Jurisdictions",
+                                                           "description":  "",
+                                                           "codedValues":  [
+                                                                               {
+                                                                                   "name":  "Massachusetts",
+                                                                                   "code":  "MA"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Rhode Island",
+                                                                                   "code":  "RI"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Upstate New York",
+                                                                                   "code":  "UNY"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Long Island",
+                                                                                   "code":  "LI"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "New York City",
+                                                                                   "code":  "NYC"
+                                                                               }
+                                                                           ],
+                                                           "mergePolicy":  "esriMPTDefaultValue",
+                                                           "splitPolicy":  "esriSPTDuplicate"
+                                                       }
+                                  },
+                      "id":  1,
+                      "name":  "Community Boundary"
+                  },
+                  {
+                      "domains":  {
+                                      "jurisdiction":  {
+                                                           "type":  "codedValue",
+                                                           "name":  "WS2_7_NG_Jurisdictions",
+                                                           "description":  "",
+                                                           "codedValues":  [
+                                                                               {
+                                                                                   "name":  "Massachusetts",
+                                                                                   "code":  "MA"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Rhode Island",
+                                                                                   "code":  "RI"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Upstate New York",
+                                                                                   "code":  "UNY"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Long Island",
+                                                                                   "code":  "LI"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "New York City",
+                                                                                   "code":  "NYC"
+                                                                               }
+                                                                           ],
+                                                           "mergePolicy":  "esriMPTDefaultValue",
+                                                           "splitPolicy":  "esriSPTDuplicate"
+                                                       }
+                                  },
+                      "id":  3,
+                      "name":  "Towns"
+                  },
+                  {
+                      "domains":  {
+                                      "jurisdiction":  {
+                                                           "type":  "codedValue",
+                                                           "name":  "WS2_7_NG_Jurisdictions",
+                                                           "description":  "",
+                                                           "codedValues":  [
+                                                                               {
+                                                                                   "name":  "Massachusetts",
+                                                                                   "code":  "MA"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Rhode Island",
+                                                                                   "code":  "RI"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Upstate New York",
+                                                                                   "code":  "UNY"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Long Island",
+                                                                                   "code":  "LI"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "New York City",
+                                                                                   "code":  "NYC"
+                                                                               }
+                                                                           ],
+                                                           "mergePolicy":  "esriMPTDefaultValue",
+                                                           "splitPolicy":  "esriSPTDuplicate"
+                                                       }
+                                  },
+                      "id":  4,
+                      "name":  "Zips"
+                  },
+                  {
+                      "domains":  {
+                                      "source":  {
+                                                     "type":  "codedValue",
+                                                     "name":  "WS2_7_building_footprint_source",
+                                                     "description":  "building_footprint_source",
+                                                     "codedValues":  [
+                                                                         {
+                                                                             "name":  "buildings",
+                                                                             "code":  "buildings"
+                                                                         },
+                                                                         {
+                                                                             "name":  "OSM Building Footprints",
+                                                                             "code":  "OSM Building Footprints"
+                                                                         }
+                                                                     ],
+                                                     "mergePolicy":  "esriMPTDefaultValue",
+                                                     "splitPolicy":  "esriSPTDefaultValue"
+                                                 },
+                                      "domain":  {
+                                                     "type":  "codedValue",
+                                                     "name":  "WS2_7_building_footprint_building_code",
+                                                     "description":  "building_footprint_building_code",
+                                                     "codedValues":  [
+                                                                         {
+                                                                             "name":  "Church",
+                                                                             "code":  "Church"
+                                                                         },
+                                                                         {
+                                                                             "name":  "College or University",
+                                                                             "code":  "College or University"
+                                                                         },
+                                                                         {
+                                                                             "name":  "Commercial",
+                                                                             "code":  "Commercial"
+                                                                         },
+                                                                         {
+                                                                             "name":  "Fire Station",
+                                                                             "code":  "Fire Station"
+                                                                         },
+                                                                         {
+                                                                             "name":  "Hospital",
+                                                                             "code":  "Hospital"
+                                                                         },
+                                                                         {
+                                                                             "name":  "Multi-Residence",
+                                                                             "code":  "Multi-Residence"
+                                                                         },
+                                                                         {
+                                                                             "name":  "National Grid-leased",
+                                                                             "code":  "National Grid-leased"
+                                                                         },
+                                                                         {
+                                                                             "name":  "National Grid-owned",
+                                                                             "code":  "National Grid-owned"
+                                                                         },
+                                                                         {
+                                                                             "name":  "Police Station",
+                                                                             "code":  "Police Station"
+                                                                         },
+                                                                         {
+                                                                             "name":  "Public",
+                                                                             "code":  "Public"
+                                                                         },
+                                                                         {
+                                                                             "name":  "School",
+                                                                             "code":  "School"
+                                                                         },
+                                                                         {
+                                                                             "name":  "Single Residence",
+                                                                             "code":  "Single Residence"
+                                                                         },
+                                                                         {
+                                                                             "name":  "Stadium",
+                                                                             "code":  "Stadium"
+                                                                         }
+                                                                     ],
+                                                     "mergePolicy":  "esriMPTDefaultValue",
+                                                     "splitPolicy":  "esriSPTDefaultValue"
+                                                 },
+                                      "jurisdiction":  {
+                                                           "type":  "codedValue",
+                                                           "name":  "WS2_7_NG_Jurisdictions",
+                                                           "description":  "",
+                                                           "codedValues":  [
+                                                                               {
+                                                                                   "name":  "Massachusetts",
+                                                                                   "code":  "MA"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Rhode Island",
+                                                                                   "code":  "RI"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Upstate New York",
+                                                                                   "code":  "UNY"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Long Island",
+                                                                                   "code":  "LI"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "New York City",
+                                                                                   "code":  "NYC"
+                                                                               }
+                                                                           ],
+                                                           "mergePolicy":  "esriMPTDefaultValue",
+                                                           "splitPolicy":  "esriSPTDuplicate"
+                                                       },
+                                      "status":  {
+                                                     "type":  "codedValue",
+                                                     "name":  "WS2_7_building_footprint_status",
+                                                     "description":  "",
+                                                     "codedValues":  [
+                                                                         {
+                                                                             "name":  "Proposed",
+                                                                             "code":  "Proposed"
+                                                                         },
+                                                                         {
+                                                                             "name":  "Existing",
+                                                                             "code":  "Existing"
+                                                                         }
+                                                                     ],
+                                                     "mergePolicy":  "esriMPTDefaultValue",
+                                                     "splitPolicy":  "esriSPTDefaultValue"
+                                                 }
+                                  },
+                      "id":  2,
+                      "name":  "Building Footprints"
+                  },
+                  {
+                      "domains":  {
+                                      "jurisdiction":  {
+                                                           "type":  "codedValue",
+                                                           "name":  "WS2_7_NG_Jurisdictions",
+                                                           "description":  "",
+                                                           "codedValues":  [
+                                                                               {
+                                                                                   "name":  "Massachusetts",
+                                                                                   "code":  "MA"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Rhode Island",
+                                                                                   "code":  "RI"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Upstate New York",
+                                                                                   "code":  "UNY"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "Long Island",
+                                                                                   "code":  "LI"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "New York City",
+                                                                                   "code":  "NYC"
+                                                                               }
+                                                                           ],
+                                                           "mergePolicy":  "esriMPTDefaultValue",
+                                                           "splitPolicy":  "esriSPTDuplicate"
+                                                       }
+                                  },
+                      "id":  99,
+                      "name":  "Unknown Landbase Polygon"
+                  }
+              ],
+    "subtypes":  [
+                     {
+                         "domains":  {
+                                         "jurisdiction":  {
+                                                              "type":  "codedValue",
+                                                              "name":  "WS2_7_NG_Jurisdictions",
+                                                              "description":  "",
+                                                              "codedValues":  [
+                                                                                  {
+                                                                                      "name":  "Massachusetts",
+                                                                                      "code":  "MA"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Rhode Island",
+                                                                                      "code":  "RI"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Upstate New York",
+                                                                                      "code":  "UNY"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Long Island",
+                                                                                      "code":  "LI"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "New York City",
+                                                                                      "code":  "NYC"
+                                                                                  }
+                                                                              ],
+                                                              "mergePolicy":  "esriMPTDefaultValue",
+                                                              "splitPolicy":  "esriSPTDuplicate"
+                                                          }
+                                     },
+                         "defaultValues":  {
+                                               "subtype":  null,
+                                               "source":  null,
+                                               "domain":  null,
+                                               "jurisdiction":  null,
+                                               "description":  null,
+                                               "description2":  null,
+                                               "description3":  null,
+                                               "legacyid":  null,
+                                               "globalid":  null,
+                                               "creator":  null,
+                                               "creationdate":  null,
+                                               "updatedby":  null,
+                                               "lastupdate":  null,
+                                               "status":  null,
+                                               "town":  null,
+                                               "towncode":  null,
+                                               "mastertown":  null,
+                                               "operatingareacode":  null,
+                                               "name":  null,
+                                               "name_electric":  null,
+                                               "state":  null,
+                                               "street_number":  null,
+                                               "street_number_overflow":  null,
+                                               "unit_number":  null,
+                                               "lot_number":  null,
+                                               "BuildingRemarks":  null,
+                                               "Building_T":  null,
+                                               "STREET_NUM":  null
+                                           },
+                         "code":  1,
+                         "name":  "Community Boundary"
+                     },
+                     {
+                         "domains":  {
+                                         "jurisdiction":  {
+                                                              "type":  "codedValue",
+                                                              "name":  "WS2_7_NG_Jurisdictions",
+                                                              "description":  "",
+                                                              "codedValues":  [
+                                                                                  {
+                                                                                      "name":  "Massachusetts",
+                                                                                      "code":  "MA"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Rhode Island",
+                                                                                      "code":  "RI"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Upstate New York",
+                                                                                      "code":  "UNY"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Long Island",
+                                                                                      "code":  "LI"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "New York City",
+                                                                                      "code":  "NYC"
+                                                                                  }
+                                                                              ],
+                                                              "mergePolicy":  "esriMPTDefaultValue",
+                                                              "splitPolicy":  "esriSPTDuplicate"
+                                                          }
+                                     },
+                         "defaultValues":  {
+                                               "subtype":  null,
+                                               "source":  null,
+                                               "domain":  null,
+                                               "jurisdiction":  null,
+                                               "description":  null,
+                                               "description2":  null,
+                                               "description3":  null,
+                                               "legacyid":  null,
+                                               "globalid":  null,
+                                               "creator":  null,
+                                               "creationdate":  null,
+                                               "updatedby":  null,
+                                               "lastupdate":  null,
+                                               "status":  null,
+                                               "town":  null,
+                                               "towncode":  null,
+                                               "mastertown":  null,
+                                               "operatingareacode":  null,
+                                               "name":  null,
+                                               "name_electric":  null,
+                                               "state":  null,
+                                               "street_number":  null,
+                                               "street_number_overflow":  null,
+                                               "unit_number":  null,
+                                               "lot_number":  null,
+                                               "BuildingRemarks":  null,
+                                               "Building_T":  null,
+                                               "STREET_NUM":  null
+                                           },
+                         "code":  3,
+                         "name":  "Towns"
+                     },
+                     {
+                         "domains":  {
+                                         "jurisdiction":  {
+                                                              "type":  "codedValue",
+                                                              "name":  "WS2_7_NG_Jurisdictions",
+                                                              "description":  "",
+                                                              "codedValues":  [
+                                                                                  {
+                                                                                      "name":  "Massachusetts",
+                                                                                      "code":  "MA"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Rhode Island",
+                                                                                      "code":  "RI"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Upstate New York",
+                                                                                      "code":  "UNY"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Long Island",
+                                                                                      "code":  "LI"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "New York City",
+                                                                                      "code":  "NYC"
+                                                                                  }
+                                                                              ],
+                                                              "mergePolicy":  "esriMPTDefaultValue",
+                                                              "splitPolicy":  "esriSPTDuplicate"
+                                                          }
+                                     },
+                         "defaultValues":  {
+                                               "subtype":  null,
+                                               "source":  null,
+                                               "domain":  null,
+                                               "jurisdiction":  null,
+                                               "description":  null,
+                                               "description2":  null,
+                                               "description3":  null,
+                                               "legacyid":  null,
+                                               "globalid":  null,
+                                               "creator":  null,
+                                               "creationdate":  null,
+                                               "updatedby":  null,
+                                               "lastupdate":  null,
+                                               "status":  null,
+                                               "town":  null,
+                                               "towncode":  null,
+                                               "mastertown":  null,
+                                               "operatingareacode":  null,
+                                               "name":  null,
+                                               "name_electric":  null,
+                                               "state":  null,
+                                               "street_number":  null,
+                                               "street_number_overflow":  null,
+                                               "unit_number":  null,
+                                               "lot_number":  null,
+                                               "BuildingRemarks":  null,
+                                               "Building_T":  null,
+                                               "STREET_NUM":  null
+                                           },
+                         "code":  4,
+                         "name":  "Zips"
+                     },
+                     {
+                         "domains":  {
+                                         "source":  {
+                                                        "type":  "codedValue",
+                                                        "name":  "WS2_7_building_footprint_source",
+                                                        "description":  "building_footprint_source",
+                                                        "codedValues":  [
+                                                                            {
+                                                                                "name":  "buildings",
+                                                                                "code":  "buildings"
+                                                                            },
+                                                                            {
+                                                                                "name":  "OSM Building Footprints",
+                                                                                "code":  "OSM Building Footprints"
+                                                                            }
+                                                                        ],
+                                                        "mergePolicy":  "esriMPTDefaultValue",
+                                                        "splitPolicy":  "esriSPTDefaultValue"
+                                                    },
+                                         "domain":  {
+                                                        "type":  "codedValue",
+                                                        "name":  "WS2_7_building_footprint_building_code",
+                                                        "description":  "building_footprint_building_code",
+                                                        "codedValues":  [
+                                                                            {
+                                                                                "name":  "Church",
+                                                                                "code":  "Church"
+                                                                            },
+                                                                            {
+                                                                                "name":  "College or University",
+                                                                                "code":  "College or University"
+                                                                            },
+                                                                            {
+                                                                                "name":  "Commercial",
+                                                                                "code":  "Commercial"
+                                                                            },
+                                                                            {
+                                                                                "name":  "Fire Station",
+                                                                                "code":  "Fire Station"
+                                                                            },
+                                                                            {
+                                                                                "name":  "Hospital",
+                                                                                "code":  "Hospital"
+                                                                            },
+                                                                            {
+                                                                                "name":  "Multi-Residence",
+                                                                                "code":  "Multi-Residence"
+                                                                            },
+                                                                            {
+                                                                                "name":  "National Grid-leased",
+                                                                                "code":  "National Grid-leased"
+                                                                            },
+                                                                            {
+                                                                                "name":  "National Grid-owned",
+                                                                                "code":  "National Grid-owned"
+                                                                            },
+                                                                            {
+                                                                                "name":  "Police Station",
+                                                                                "code":  "Police Station"
+                                                                            },
+                                                                            {
+                                                                                "name":  "Public",
+                                                                                "code":  "Public"
+                                                                            },
+                                                                            {
+                                                                                "name":  "School",
+                                                                                "code":  "School"
+                                                                            },
+                                                                            {
+                                                                                "name":  "Single Residence",
+                                                                                "code":  "Single Residence"
+                                                                            },
+                                                                            {
+                                                                                "name":  "Stadium",
+                                                                                "code":  "Stadium"
+                                                                            }
+                                                                        ],
+                                                        "mergePolicy":  "esriMPTDefaultValue",
+                                                        "splitPolicy":  "esriSPTDefaultValue"
+                                                    },
+                                         "jurisdiction":  {
+                                                              "type":  "codedValue",
+                                                              "name":  "WS2_7_NG_Jurisdictions",
+                                                              "description":  "",
+                                                              "codedValues":  [
+                                                                                  {
+                                                                                      "name":  "Massachusetts",
+                                                                                      "code":  "MA"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Rhode Island",
+                                                                                      "code":  "RI"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Upstate New York",
+                                                                                      "code":  "UNY"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Long Island",
+                                                                                      "code":  "LI"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "New York City",
+                                                                                      "code":  "NYC"
+                                                                                  }
+                                                                              ],
+                                                              "mergePolicy":  "esriMPTDefaultValue",
+                                                              "splitPolicy":  "esriSPTDuplicate"
+                                                          },
+                                         "status":  {
+                                                        "type":  "codedValue",
+                                                        "name":  "WS2_7_building_footprint_status",
+                                                        "description":  "",
+                                                        "codedValues":  [
+                                                                            {
+                                                                                "name":  "Proposed",
+                                                                                "code":  "Proposed"
+                                                                            },
+                                                                            {
+                                                                                "name":  "Existing",
+                                                                                "code":  "Existing"
+                                                                            }
+                                                                        ],
+                                                        "mergePolicy":  "esriMPTDefaultValue",
+                                                        "splitPolicy":  "esriSPTDefaultValue"
+                                                    }
+                                     },
+                         "defaultValues":  {
+                                               "subtype":  null,
+                                               "source":  null,
+                                               "domain":  null,
+                                               "jurisdiction":  null,
+                                               "description":  null,
+                                               "description2":  null,
+                                               "description3":  null,
+                                               "legacyid":  null,
+                                               "globalid":  null,
+                                               "creator":  null,
+                                               "creationdate":  null,
+                                               "updatedby":  null,
+                                               "lastupdate":  null,
+                                               "status":  "Existing",
+                                               "town":  null,
+                                               "towncode":  null,
+                                               "mastertown":  null,
+                                               "operatingareacode":  null,
+                                               "name":  null,
+                                               "name_electric":  null,
+                                               "state":  null,
+                                               "street_number":  null,
+                                               "street_number_overflow":  null,
+                                               "unit_number":  null,
+                                               "lot_number":  null,
+                                               "BuildingRemarks":  null,
+                                               "Building_T":  null,
+                                               "STREET_NUM":  null
+                                           },
+                         "code":  2,
+                         "name":  "Building Footprints"
+                     },
+                     {
+                         "domains":  {
+                                         "jurisdiction":  {
+                                                              "type":  "codedValue",
+                                                              "name":  "WS2_7_NG_Jurisdictions",
+                                                              "description":  "",
+                                                              "codedValues":  [
+                                                                                  {
+                                                                                      "name":  "Massachusetts",
+                                                                                      "code":  "MA"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Rhode Island",
+                                                                                      "code":  "RI"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Upstate New York",
+                                                                                      "code":  "UNY"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "Long Island",
+                                                                                      "code":  "LI"
+                                                                                  },
+                                                                                  {
+                                                                                      "name":  "New York City",
+                                                                                      "code":  "NYC"
+                                                                                  }
+                                                                              ],
+                                                              "mergePolicy":  "esriMPTDefaultValue",
+                                                              "splitPolicy":  "esriSPTDuplicate"
+                                                          }
+                                     },
+                         "defaultValues":  {
+                                               "subtype":  null,
+                                               "source":  null,
+                                               "domain":  null,
+                                               "jurisdiction":  null,
+                                               "description":  null,
+                                               "description2":  null,
+                                               "description3":  null,
+                                               "legacyid":  null,
+                                               "globalid":  null,
+                                               "creator":  null,
+                                               "creationdate":  null,
+                                               "updatedby":  null,
+                                               "lastupdate":  null,
+                                               "status":  null,
+                                               "town":  null,
+                                               "towncode":  null,
+                                               "mastertown":  null,
+                                               "operatingareacode":  null,
+                                               "name":  null,
+                                               "name_electric":  null,
+                                               "state":  null,
+                                               "street_number":  null,
+                                               "street_number_overflow":  null,
+                                               "unit_number":  null,
+                                               "lot_number":  null,
+                                               "BuildingRemarks":  null,
+                                               "Building_T":  null,
+                                               "STREET_NUM":  null
+                                           },
+                         "code":  99,
+                         "name":  "Unknown Landbase Polygon"
+                     }
+                 ],
+    "relationships":  [
+
+                      ],
+    "canModifyLayer":  true,
+    "canScaleSymbols":  false,
+    "hasLabels":  false,
+    "capabilities":  "Map,Query,Data",
+    "maxRecordCount":  100000,
+    "supportsStatistics":  true,
+    "supportsExceedsLimitStatistics":  true,
+    "supportsAdvancedQueries":  true,
+    "hasZ":  true,
+    "supportedQueryFormats":  "JSON, geoJSON, PBF",
+    "isDataVersioned":  true,
+    "ownershipBasedAccessControlForFeatures":  {
+                                                   "allowOthersToQuery":  true
+                                               },
+    "useStandardizedQueries":  true,
+    "supportedSpatialRelationships":  [
+                                          "esriSpatialRelIntersects",
+                                          "esriSpatialRelContains",
+                                          "esriSpatialRelCrosses",
+                                          "esriSpatialRelEnvelopeIntersects",
+                                          "esriSpatialRelIndexIntersects",
+                                          "esriSpatialRelOverlaps",
+                                          "esriSpatialRelTouches",
+                                          "esriSpatialRelWithin",
+                                          "esriSpatialRelRelation"
+                                      ],
+    "advancedQueryCapabilities":  {
+                                      "useStandardizedQueries":  true,
+                                      "supportsStatistics":  true,
+                                      "supportsPercentileStatistics":  true,
+                                      "supportsHavingClause":  true,
+                                      "supportsOrderBy":  true,
+                                      "supportsDistinct":  true,
+                                      "supportsCountDistinct":  true,
+                                      "supportsPagination":  true,
+                                      "supportsLod":  false,
+                                      "supportsQueryWithLodSR":  false,
+                                      "supportsTrueCurve":  true,
+                                      "supportsQueryWithDatumTransformation":  true,
+                                      "supportsReturningQueryExtent":  true,
+                                      "supportsQueryWithDistance":  true,
+                                      "supportsSqlExpression":  true,
+                                      "supportsTimeRelation":  true,
+                                      "supportsSqlFormat":  false,
+                                      "supportsQueryAnalytic":  false
+                                  },
+    "supportsDatumTransformation":  true,
+    "dateFieldsTimeReference":  {
+                                    "timeZone":  "Eastern Standard Time",
+                                    "respectsDaylightSaving":  true
+                                },
+    "preferredTimeReference":  null,
+    "datesInUnknownTimezone":  false,
+    "hasGeometryProperties":  true,
+    "geometryProperties":  {
+                               "shapeAreaFieldName":  "shape.STArea()",
+                               "shapeLengthFieldName":  "shape.STLength()",
+                               "units":  "esriFeet",
+                               "mapUnits":  {
+                                                "uwkid":  9003
+                                            }
+                           },
+    "hasMetadata":  true,
+    "isDataArchived":  true,
+    "archivingInfo":  {
+                          "supportsQueryWithHistoricMoment":  true,
+                          "startArchivingMoment":  1654385803000
+                      },
+    "supportsCoordinatesQuantization":  true,
+    "supportsDynamicLegends":  true,
+    "serviceItemId":  "7a1f21397a6a48f18d8a1b705ba22da3"
+}

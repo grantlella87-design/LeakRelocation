@@ -1,0 +1,136 @@
+{
+    "currentVersion":  11.1,
+    "cimVersion":  "3.1.0",
+    "id":  1000,
+    "name":  "HierarcheryLayers(1000-1099)",
+    "type":  "Group Layer",
+    "description":  "",
+    "geometryType":  null,
+    "copyrightText":  "",
+    "parentLayer":  null,
+    "subLayers":  [
+                      {
+                          "id":  1001,
+                          "name":  "Jurisdiction"
+                      },
+                      {
+                          "id":  1002,
+                          "name":  "OPCO"
+                      },
+                      {
+                          "id":  1005,
+                          "name":  "SUBOPCO"
+                      },
+                      {
+                          "id":  1003,
+                          "name":  "Yards"
+                      },
+                      {
+                          "id":  1004,
+                          "name":  "Towns"
+                      },
+                      {
+                          "id":  1006,
+                          "name":  "T-Jurisdiction"
+                      },
+                      {
+                          "id":  1007,
+                          "name":  "T-OPCO"
+                      },
+                      {
+                          "id":  1008,
+                          "name":  "T-SUBOPCO"
+                      }
+                  ],
+    "minScale":  0,
+    "maxScale":  0,
+    "defaultVisibility":  true,
+    "extent":  {
+                   "xmin":  -1565013.855058107,
+                   "ymin":  -912329.382462597,
+                   "xmax":  1111513.8128732315,
+                   "ymax":  735921.3105307441,
+                   "spatialReference":  {
+                                            "wkt":  "PROJCS[\"NG_Equidistant_Conic_USft\",GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],PROJECTION[\"Equidistant_Conic\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",-74.0],PARAMETER[\"Standard_Parallel_1\",42.0],PARAMETER[\"Standard_Parallel_2\",44.0],PARAMETER[\"Latitude_Of_Origin\",43.0],UNIT[\"Foot_US\",0.3048006096012192]]",
+                                            "xyTolerance":  0.003280833333333333,
+                                            "zTolerance":  0.001,
+                                            "mTolerance":  0.001,
+                                            "falseX":  -70913500,
+                                            "falseY":  -48440900,
+                                            "xyUnits":  3048.0060960121928,
+                                            "falseZ":  -100000,
+                                            "zUnits":  10000,
+                                            "falseM":  -100000,
+                                            "mUnits":  10000
+                                        }
+               },
+    "hasAttachments":  false,
+    "htmlPopupType":  "esriServerHTMLPopupTypeNone",
+    "displayField":  "",
+    "typeIdField":  null,
+    "subtypeFieldName":  null,
+    "subtypeField":  null,
+    "defaultSubtypeCode":  null,
+    "fields":  null,
+    "geometryField":  {
+
+                      },
+    "indexes":  [
+
+                ],
+    "subtypes":  [
+
+                 ],
+    "relationships":  [
+
+                      ],
+    "canModifyLayer":  false,
+    "canScaleSymbols":  false,
+    "hasLabels":  false,
+    "capabilities":  "Map,Query",
+    "supportsStatistics":  false,
+    "supportsExceedsLimitStatistics":  false,
+    "supportsAdvancedQueries":  false,
+    "supportedQueryFormats":  "JSON, geoJSON, PBF",
+    "isDataVersioned":  false,
+    "ownershipBasedAccessControlForFeatures":  {
+                                                   "allowOthersToQuery":  true
+                                               },
+    "useStandardizedQueries":  true,
+    "advancedQueryCapabilities":  {
+                                      "useStandardizedQueries":  true,
+                                      "supportsStatistics":  false,
+                                      "supportsPercentileStatistics":  false,
+                                      "supportsHavingClause":  false,
+                                      "supportsOrderBy":  false,
+                                      "supportsDistinct":  false,
+                                      "supportsCountDistinct":  false,
+                                      "supportsPagination":  false,
+                                      "supportsLod":  false,
+                                      "supportsQueryWithLodSR":  false,
+                                      "supportsTrueCurve":  true,
+                                      "supportsQueryWithDatumTransformation":  true,
+                                      "supportsReturningQueryExtent":  true,
+                                      "supportsQueryWithDistance":  true,
+                                      "supportsSqlExpression":  false,
+                                      "supportsTimeRelation":  true,
+                                      "supportsSqlFormat":  false,
+                                      "supportsQueryAnalytic":  false
+                                  },
+    "supportsDatumTransformation":  true,
+    "dateFieldsTimeReference":  {
+                                    "timeZone":  "Eastern Standard Time",
+                                    "respectsDaylightSaving":  true
+                                },
+    "preferredTimeReference":  null,
+    "datesInUnknownTimezone":  false,
+    "hasMetadata":  true,
+    "isDataArchived":  false,
+    "archivingInfo":  {
+                          "supportsQueryWithHistoricMoment":  false,
+                          "startArchivingMoment":  -1
+                      },
+    "supportsCoordinatesQuantization":  true,
+    "supportsDynamicLegends":  false,
+    "serviceItemId":  "7a1f21397a6a48f18d8a1b705ba22da3"
+}

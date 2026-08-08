@@ -1,0 +1,545 @@
+{
+    "currentVersion":  11.1,
+    "cimVersion":  "3.1.0",
+    "id":  822,
+    "name":  "Mines",
+    "type":  "Feature Layer",
+    "description":  "",
+    "geometryType":  "esriGeometryPoint",
+    "sourceSpatialReference":  {
+                                   "wkt":  "PROJCS[\"NG_Equidistant_Conic\",GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],PROJECTION[\"Equidistant_Conic\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",-74.0],PARAMETER[\"Standard_Parallel_1\",42.0],PARAMETER[\"Standard_Parallel_2\",44.0],PARAMETER[\"Latitude_Of_Origin\",43.0],UNIT[\"Foot_US\",0.3048006096012192]]",
+                                   "xyTolerance":  0.00328083333333333,
+                                   "zTolerance":  0.001,
+                                   "mTolerance":  0.001,
+                                   "falseX":  -70913500,
+                                   "falseY":  -48440900,
+                                   "xyUnits":  3048.00609601219,
+                                   "falseZ":  0,
+                                   "zUnits":  1,
+                                   "falseM":  0,
+                                   "mUnits":  1
+                               },
+    "copyrightText":  "",
+    "parentLayer":  {
+                        "id":  800,
+                        "name":  "Landbase(800-899)"
+                    },
+    "subLayers":  [
+
+                  ],
+    "minScale":  0,
+    "maxScale":  0,
+    "referenceScale":  0.0,
+    "drawingInfo":  {
+                        "renderer":  {
+                                         "type":  "simple",
+                                         "symbol":  {
+                                                        "type":  "esriSMS",
+                                                        "style":  "esriSMSCircle",
+                                                        "color":  [
+                                                                      96,
+                                                                      54,
+                                                                      140,
+                                                                      255
+                                                                  ],
+                                                        "size":  4,
+                                                        "angle":  0,
+                                                        "xoffset":  0,
+                                                        "yoffset":  0,
+                                                        "outline":  {
+                                                                        "color":  [
+                                                                                      0,
+                                                                                      0,
+                                                                                      0,
+                                                                                      255
+                                                                                  ],
+                                                                        "width":  0.7
+                                                                    }
+                                                    }
+                                     },
+                        "scaleSymbols":  true,
+                        "transparency":  0,
+                        "labelingInfo":  null
+                    },
+    "defaultVisibility":  false,
+    "extent":  {
+                   "xmin":  -1541322.6822961282,
+                   "ymin":  -879898.8429930545,
+                   "xmax":  1091380.700908636,
+                   "ymax":  728345.5760103716,
+                   "spatialReference":  {
+                                            "wkt":  "PROJCS[\"NG_Equidistant_Conic_USft\",GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],PROJECTION[\"Equidistant_Conic\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",-74.0],PARAMETER[\"Standard_Parallel_1\",42.0],PARAMETER[\"Standard_Parallel_2\",44.0],PARAMETER[\"Latitude_Of_Origin\",43.0],UNIT[\"Foot_US\",0.3048006096012192]]",
+                                            "xyTolerance":  0.003280833333333333,
+                                            "zTolerance":  0.001,
+                                            "mTolerance":  0.001,
+                                            "falseX":  -70913500,
+                                            "falseY":  -48440900,
+                                            "xyUnits":  3048.0060960121928,
+                                            "falseZ":  -100000,
+                                            "zUnits":  10000,
+                                            "falseM":  -100000,
+                                            "mUnits":  10000
+                                        }
+               },
+    "hasAttachments":  false,
+    "htmlPopupType":  "esriServerHTMLPopupTypeAsHTMLText",
+    "displayField":  "site_name",
+    "typeIdField":  null,
+    "subtypeFieldName":  null,
+    "subtypeField":  null,
+    "defaultSubtypeCode":  null,
+    "fields":  [
+                   {
+                       "name":  "OBJECTID",
+                       "type":  "esriFieldTypeOID",
+                       "alias":  "OBJECTID",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "dep_id",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "dep_id",
+                       "length":  12,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "url",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "url",
+                       "length":  60,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "mrds_id",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "mrds_id",
+                       "length":  7,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "mas_id",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "mas_id",
+                       "length":  10,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "site_name",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "site_name",
+                       "length":  70,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "latitude",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "latitude",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "longitude",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "longitude",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "region",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "region",
+                       "length":  2,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "country",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "country",
+                       "length":  32,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "state",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "state",
+                       "length":  53,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "county",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "county",
+                       "length":  40,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "com_type",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "com_type",
+                       "length":  1,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "commod1",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "commod1",
+                       "length":  125,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "commod2",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "commod2",
+                       "length":  129,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "commod3",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "commod3",
+                       "length":  161,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "oper_type",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "oper_type",
+                       "length":  19,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "dep_type",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "dep_type",
+                       "length":  40,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "prod_size",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "prod_size",
+                       "length":  12,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "dev_stat",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "dev_stat",
+                       "length":  13,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "ore",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "ore",
+                       "length":  128,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "gangue",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "gangue",
+                       "length":  128,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "other_matl",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "other_matl",
+                       "length":  210,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "orebody_fm",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "orebody_fm",
+                       "length":  60,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "work_type",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "work_type",
+                       "length":  27,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "model",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "model",
+                       "length":  75,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "alteration",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "alteration",
+                       "length":  200,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "conc_proc",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "conc_proc",
+                       "length":  254,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "names",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "names",
+                       "length":  254,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "ore_ctrl",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "ore_ctrl",
+                       "length":  200,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "reporter",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "reporter",
+                       "length":  128,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "hrock_unit",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "hrock_unit",
+                       "length":  128,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "hrock_type",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "hrock_type",
+                       "length":  128,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "arock_unit",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "arock_unit",
+                       "length":  128,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "arock_type",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "arock_type",
+                       "length":  160,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "structure",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "structure",
+                       "length":  254,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "tectonic",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "tectonic",
+                       "length":  96,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "ref",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "ref",
+                       "length":  254,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "yfp_ba",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "yfp_ba",
+                       "length":  1,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "yr_fst_prd",
+                       "type":  "esriFieldTypeSmallInteger",
+                       "alias":  "yr_fst_prd",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "ylp_ba",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "ylp_ba",
+                       "length":  1,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "yr_lst_prd",
+                       "type":  "esriFieldTypeSmallInteger",
+                       "alias":  "yr_lst_prd",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "dy_ba",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "dy_ba",
+                       "length":  1,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "disc_yr",
+                       "type":  "esriFieldTypeSmallInteger",
+                       "alias":  "disc_yr",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "prod_yrs",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "prod_yrs",
+                       "length":  64,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "discr",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "discr",
+                       "length":  64,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Shape",
+                       "type":  "esriFieldTypeGeometry",
+                       "alias":  "Shape",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "GlobalID",
+                       "type":  "esriFieldTypeGlobalID",
+                       "alias":  "GlobalID",
+                       "length":  38,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "created_user",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "created_user",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "created_date",
+                       "type":  "esriFieldTypeDate",
+                       "alias":  "created_date",
+                       "length":  8,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "last_edited_user",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "last_edited_user",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "last_edited_date",
+                       "type":  "esriFieldTypeDate",
+                       "alias":  "last_edited_date",
+                       "length":  8,
+                       "domain":  null
+                   }
+               ],
+    "geometryField":  {
+                          "name":  "Shape",
+                          "type":  "esriFieldTypeGeometry",
+                          "alias":  "Shape"
+                      },
+    "indexes":  [
+                    {
+                        "name":  "UUID_188",
+                        "fields":  "GlobalID",
+                        "isAscending":  true,
+                        "isUnique":  true,
+                        "description":  ""
+                    },
+                    {
+                        "name":  "R188_SDE_ROWID_UK",
+                        "fields":  "OBJECTID",
+                        "isAscending":  true,
+                        "isUnique":  false,
+                        "description":  ""
+                    },
+                    {
+                        "name":  "S178_idx",
+                        "fields":  "Shape",
+                        "isAscending":  true,
+                        "isUnique":  true,
+                        "description":  ""
+                    }
+                ],
+    "subtypes":  [
+
+                 ],
+    "relationships":  [
+
+                      ],
+    "canModifyLayer":  true,
+    "canScaleSymbols":  false,
+    "hasLabels":  false,
+    "capabilities":  "Map,Query,Data",
+    "maxRecordCount":  100000,
+    "supportsStatistics":  true,
+    "supportsExceedsLimitStatistics":  true,
+    "supportsAdvancedQueries":  true,
+    "supportedQueryFormats":  "JSON, geoJSON, PBF",
+    "isDataVersioned":  true,
+    "ownershipBasedAccessControlForFeatures":  {
+                                                   "allowOthersToQuery":  true
+                                               },
+    "useStandardizedQueries":  true,
+    "supportedSpatialRelationships":  [
+                                          "esriSpatialRelIntersects",
+                                          "esriSpatialRelContains",
+                                          "esriSpatialRelCrosses",
+                                          "esriSpatialRelEnvelopeIntersects",
+                                          "esriSpatialRelIndexIntersects",
+                                          "esriSpatialRelOverlaps",
+                                          "esriSpatialRelTouches",
+                                          "esriSpatialRelWithin",
+                                          "esriSpatialRelRelation"
+                                      ],
+    "advancedQueryCapabilities":  {
+                                      "useStandardizedQueries":  true,
+                                      "supportsStatistics":  true,
+                                      "supportsPercentileStatistics":  true,
+                                      "supportsHavingClause":  true,
+                                      "supportsOrderBy":  true,
+                                      "supportsDistinct":  true,
+                                      "supportsCountDistinct":  true,
+                                      "supportsPagination":  true,
+                                      "supportsLod":  false,
+                                      "supportsQueryWithLodSR":  false,
+                                      "supportsTrueCurve":  true,
+                                      "supportsQueryWithDatumTransformation":  true,
+                                      "supportsReturningQueryExtent":  true,
+                                      "supportsQueryWithDistance":  true,
+                                      "supportsSqlExpression":  true,
+                                      "supportsTimeRelation":  true,
+                                      "supportsSqlFormat":  false,
+                                      "supportsQueryAnalytic":  false
+                                  },
+    "supportsDatumTransformation":  true,
+    "dateFieldsTimeReference":  {
+                                    "timeZone":  "Eastern Standard Time",
+                                    "respectsDaylightSaving":  true
+                                },
+    "preferredTimeReference":  null,
+    "datesInUnknownTimezone":  false,
+    "hasMetadata":  true,
+    "isDataArchived":  true,
+    "archivingInfo":  {
+                          "supportsQueryWithHistoricMoment":  true,
+                          "startArchivingMoment":  1561157932000
+                      },
+    "supportsCoordinatesQuantization":  true,
+    "supportsDynamicLegends":  true,
+    "serviceItemId":  "7a1f21397a6a48f18d8a1b705ba22da3"
+}

@@ -1,0 +1,629 @@
+{
+    "currentVersion":  11.1,
+    "cimVersion":  "3.1.0",
+    "id":  804,
+    "name":  "SurgoSoil",
+    "type":  "Feature Layer",
+    "description":  "",
+    "geometryType":  "esriGeometryPolygon",
+    "sourceSpatialReference":  {
+                                   "wkt":  "PROJCS[\"NG_Equidistant_Conic\",GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],PROJECTION[\"Equidistant_Conic\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",-74.0],PARAMETER[\"Standard_Parallel_1\",42.0],PARAMETER[\"Standard_Parallel_2\",44.0],PARAMETER[\"Latitude_Of_Origin\",43.0],UNIT[\"Foot_US\",0.3048006096012192]]",
+                                   "xyTolerance":  0.00328083333333333,
+                                   "zTolerance":  0.001,
+                                   "mTolerance":  0.001,
+                                   "falseX":  -70913500,
+                                   "falseY":  -48440900,
+                                   "xyUnits":  3048.00609601219,
+                                   "falseZ":  0,
+                                   "zUnits":  1,
+                                   "falseM":  0,
+                                   "mUnits":  1
+                               },
+    "copyrightText":  "",
+    "parentLayer":  {
+                        "id":  800,
+                        "name":  "Landbase(800-899)"
+                    },
+    "subLayers":  [
+
+                  ],
+    "minScale":  0,
+    "maxScale":  0,
+    "referenceScale":  0.0,
+    "drawingInfo":  {
+                        "renderer":  {
+                                         "type":  "simple",
+                                         "symbol":  {
+                                                        "type":  "esriSFS",
+                                                        "style":  "esriSFSSolid",
+                                                        "color":  [
+                                                                      130,
+                                                                      130,
+                                                                      130,
+                                                                      0
+                                                                  ],
+                                                        "outline":  {
+                                                                        "type":  "esriSLS",
+                                                                        "style":  "esriSLSSolid",
+                                                                        "color":  [
+                                                                                      0,
+                                                                                      0,
+                                                                                      0,
+                                                                                      255
+                                                                                  ],
+                                                                        "width":  1
+                                                                    }
+                                                    }
+                                     },
+                        "scaleSymbols":  true,
+                        "transparency":  0,
+                        "labelingInfo":  null
+                    },
+    "defaultVisibility":  false,
+    "extent":  {
+                   "xmin":  -1354997.1632156237,
+                   "ymin":  -919419.2400019708,
+                   "xmax":  1129558.9841319656,
+                   "ymax":  735918.9850761167,
+                   "spatialReference":  {
+                                            "wkt":  "PROJCS[\"NG_Equidistant_Conic_USft\",GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],PROJECTION[\"Equidistant_Conic\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",-74.0],PARAMETER[\"Standard_Parallel_1\",42.0],PARAMETER[\"Standard_Parallel_2\",44.0],PARAMETER[\"Latitude_Of_Origin\",43.0],UNIT[\"Foot_US\",0.3048006096012192]]",
+                                            "xyTolerance":  0.003280833333333333,
+                                            "zTolerance":  0.001,
+                                            "mTolerance":  0.001,
+                                            "falseX":  -70913500,
+                                            "falseY":  -48440900,
+                                            "xyUnits":  3048.0060960121928,
+                                            "falseZ":  -100000,
+                                            "zUnits":  10000,
+                                            "falseM":  -100000,
+                                            "mUnits":  10000
+                                        }
+               },
+    "hasAttachments":  false,
+    "htmlPopupType":  "esriServerHTMLPopupTypeAsHTMLText",
+    "displayField":  "NAME",
+    "typeIdField":  null,
+    "subtypeFieldName":  null,
+    "subtypeField":  null,
+    "defaultSubtypeCode":  null,
+    "fields":  [
+                   {
+                       "name":  "OBJECTID",
+                       "type":  "esriFieldTypeOID",
+                       "alias":  "OBJECTID",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "CREATIONDATE",
+                       "type":  "esriFieldTypeDate",
+                       "alias":  "CREATIONDATE",
+                       "length":  8,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "CREATOR",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "CREATOR",
+                       "length":  24,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "LASTUPDATE",
+                       "type":  "esriFieldTypeDate",
+                       "alias":  "LASTUPDATE",
+                       "length":  8,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "UPDATEDBY",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "UPDATEDBY",
+                       "length":  24,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "AREASYMBOL",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "AREASYMBOL",
+                       "length":  20,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "SPATIALVER",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "SPATIALVER",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "MUSYM",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "MUSYM",
+                       "length":  6,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "MUKEY",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "MUKEY",
+                       "length":  30,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "NAME",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "NAME",
+                       "length":  6,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "MUKIND",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "MUKIND",
+                       "length":  6,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "LKEY",
+                       "type":  "esriFieldTypeInteger",
+                       "alias":  "LKEY",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "COKEY",
+                       "type":  "esriFieldTypeInteger",
+                       "alias":  "COKEY",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "CORESTRICTKEY",
+                       "type":  "esriFieldTypeInteger",
+                       "alias":  "CORESTRICTKEY",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "CLASSNAME",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "CLASSNAME",
+                       "length":  60,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "RUNOFF",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "RUNOFF",
+                       "length":  20,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "HYDRICRATING",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "HYDRICRATING",
+                       "length":  10,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "HYDRICON",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "HYDRICON",
+                       "length":  30,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "DRAINAGE",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "DRAINAGE",
+                       "length":  50,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "FROSTACTION",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "FROSTACTION",
+                       "length":  30,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "FROSTFREEDAYS",
+                       "type":  "esriFieldTypeInteger",
+                       "alias":  "FROSTFREEDAYS",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "HYDRICGROUP",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "HYDRICGROUP",
+                       "length":  10,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "CORCONCRETE",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "CORCONCRETE",
+                       "length":  30,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "CORSTEEL",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "CORSTEEL",
+                       "length":  30,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "PARTSIZE",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "PARTSIZE",
+                       "length":  50,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "RESHARDNESS",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "RESHARDNESS",
+                       "length":  30,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "RESKIND",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "RESKIND",
+                       "length":  30,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "PH_MCACL",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "PH_MCACL",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "PH_SOLUBLE",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "PH_SOLUBLE",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "PH_H20",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "PH_H20",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "SATURATEDHYDCOND",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "SATURATEDHYDCOND",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "ORGANICMATTER",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "ORGANICMATTER",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "AVAILWATERCAP",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "AVAILWATERCAP",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Count_of_hzdept_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Count_of_hzdept_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Max_of_hzdept_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Max_of_hzdept_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Min_of_hzdept_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Min_of_hzdept_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Count_of_hzdepb_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Count_of_hzdepb_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Max_of_hzdepb_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Max_of_hzdepb_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Min_of_hzdepb_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Min_of_hzdepb_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Average_of_ec_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Average_of_ec_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Min_of_ec_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Min_of_ec_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Max_of_ec_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Max_of_ec_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Average_of_ec_h",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Average_of_ec_h",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Min_of_ec_h",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Min_of_ec_h",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Max_of_ec_h",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Max_of_ec_h",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Min_of_ph1to1h2o_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Min_of_ph1to1h2o_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Max_of_ph1to1h2o_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Max_of_ph1to1h2o_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Min_of_kffact",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Min_of_kffact",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Max_of_kffact",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Max_of_kffact",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Min_of_kwfact",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Min_of_kwfact",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Max_of_kwfact",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Max_of_kwfact",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Average_of_claytotal_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Average_of_claytotal_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Average_of_sandtotal_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Average_of_sandtotal_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Average_of_silttotal_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Average_of_silttotal_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Max_of_fraggt10_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Max_of_fraggt10_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Max_of_frag3to10_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Max_of_frag3to10_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Average_of_sieveno4_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Average_of_sieveno4_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Average_of_sieveno10_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Average_of_sieveno10_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Average_of_sieveno40_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Average_of_sieveno40_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Average_of_sieveno200_r",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Average_of_sieveno200_r",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Shape",
+                       "type":  "esriFieldTypeGeometry",
+                       "alias":  "Shape",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "GlobalID",
+                       "type":  "esriFieldTypeGlobalID",
+                       "alias":  "GlobalID",
+                       "length":  38,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "created_user",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "created_user",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "created_date",
+                       "type":  "esriFieldTypeDate",
+                       "alias":  "created_date",
+                       "length":  8,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "last_edited_user",
+                       "type":  "esriFieldTypeString",
+                       "alias":  "last_edited_user",
+                       "length":  255,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "last_edited_date",
+                       "type":  "esriFieldTypeDate",
+                       "alias":  "last_edited_date",
+                       "length":  8,
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Shape.STArea()",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Shape.STArea()",
+                       "domain":  null
+                   },
+                   {
+                       "name":  "Shape.STLength()",
+                       "type":  "esriFieldTypeDouble",
+                       "alias":  "Shape.STLength()",
+                       "domain":  null
+                   }
+               ],
+    "geometryField":  {
+                          "name":  "Shape",
+                          "type":  "esriFieldTypeGeometry",
+                          "alias":  "Shape"
+                      },
+    "indexes":  [
+                    {
+                        "name":  "UUID_246",
+                        "fields":  "GlobalID",
+                        "isAscending":  true,
+                        "isUnique":  true,
+                        "description":  ""
+                    },
+                    {
+                        "name":  "R246_SDE_ROWID_UK",
+                        "fields":  "OBJECTID",
+                        "isAscending":  true,
+                        "isUnique":  false,
+                        "description":  ""
+                    },
+                    {
+                        "name":  "S236_idx",
+                        "fields":  "Shape",
+                        "isAscending":  true,
+                        "isUnique":  true,
+                        "description":  ""
+                    }
+                ],
+    "subtypes":  [
+
+                 ],
+    "relationships":  [
+
+                      ],
+    "canModifyLayer":  true,
+    "canScaleSymbols":  false,
+    "hasLabels":  false,
+    "capabilities":  "Map,Query,Data",
+    "maxRecordCount":  100000,
+    "supportsStatistics":  true,
+    "supportsExceedsLimitStatistics":  true,
+    "supportsAdvancedQueries":  true,
+    "supportedQueryFormats":  "JSON, geoJSON, PBF",
+    "isDataVersioned":  true,
+    "ownershipBasedAccessControlForFeatures":  {
+                                                   "allowOthersToQuery":  true
+                                               },
+    "useStandardizedQueries":  true,
+    "supportedSpatialRelationships":  [
+                                          "esriSpatialRelIntersects",
+                                          "esriSpatialRelContains",
+                                          "esriSpatialRelCrosses",
+                                          "esriSpatialRelEnvelopeIntersects",
+                                          "esriSpatialRelIndexIntersects",
+                                          "esriSpatialRelOverlaps",
+                                          "esriSpatialRelTouches",
+                                          "esriSpatialRelWithin",
+                                          "esriSpatialRelRelation"
+                                      ],
+    "advancedQueryCapabilities":  {
+                                      "useStandardizedQueries":  true,
+                                      "supportsStatistics":  true,
+                                      "supportsPercentileStatistics":  true,
+                                      "supportsHavingClause":  true,
+                                      "supportsOrderBy":  true,
+                                      "supportsDistinct":  true,
+                                      "supportsCountDistinct":  true,
+                                      "supportsPagination":  true,
+                                      "supportsLod":  false,
+                                      "supportsQueryWithLodSR":  false,
+                                      "supportsTrueCurve":  true,
+                                      "supportsQueryWithDatumTransformation":  true,
+                                      "supportsReturningQueryExtent":  true,
+                                      "supportsQueryWithDistance":  true,
+                                      "supportsSqlExpression":  true,
+                                      "supportsTimeRelation":  true,
+                                      "supportsSqlFormat":  false,
+                                      "supportsQueryAnalytic":  false
+                                  },
+    "supportsDatumTransformation":  true,
+    "dateFieldsTimeReference":  {
+                                    "timeZone":  "Eastern Standard Time",
+                                    "respectsDaylightSaving":  true
+                                },
+    "preferredTimeReference":  null,
+    "datesInUnknownTimezone":  false,
+    "hasGeometryProperties":  true,
+    "geometryProperties":  {
+                               "shapeAreaFieldName":  "Shape.STArea()",
+                               "shapeLengthFieldName":  "Shape.STLength()",
+                               "units":  "esriFeet",
+                               "mapUnits":  {
+                                                "uwkid":  9003
+                                            }
+                           },
+    "hasMetadata":  true,
+    "isDataArchived":  true,
+    "archivingInfo":  {
+                          "supportsQueryWithHistoricMoment":  true,
+                          "startArchivingMoment":  1687610168000
+                      },
+    "supportsCoordinatesQuantization":  true,
+    "supportsDynamicLegends":  true,
+    "serviceItemId":  "7a1f21397a6a48f18d8a1b705ba22da3"
+}
