@@ -27,41 +27,34 @@ assessment.
 | `src/leakrelocation/viewer_html.py` | Relocation viewer HTML template. |
 | `scripts/` | Enrichment, audit and viewer-building tools. |
 | `viewer/` | Local map viewer and its server. |
-| `GISportal/` | Separate project: MA main lines export and its map. |
+| `reference/` | Service metadata copies the tests check against. |
 | `tests/` | Tests that need no network and no shared drive. |
 
-### GISportal
+### Service metadata reference
 
-A separate project against the same ArcGIS Portal. It imports the shared
-`leakrelocation` package through `GISportal/_bootstrap.py`, so one sign-in
-serves both and there is a single copy of the authentication flow.
+`reference/mapserver_json/NY_DNV_Synergi_RiskResults_Assets_NY/` is a
+point-in-time copy of the DNV MapServer metadata, taken 2026-08-07 from
 
-| Script | Purpose |
+    https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer?f=pjson
+
+It is the reason the field names in the workflow are facts rather than guesses.
+`tests/test_dnv_service_metadata.py` reads it to confirm that every field name
+the workflow uses still exists, that `SERVICE_ASSETTYPE_LABELS` matches the real
+ASSETTYPE domain, and that every domain label lands in the expected material
+family — offline, with no token.
+
+Only the layers this project reads are kept:
+
+| File | Contents |
 | --- | --- |
-| `query_ma_main_lines_2022_plus.py` | Export MA main lines installed or created since a date, to CSV and GeoJSON. |
-| `main_lines_viewer.py` | Build and serve a Leaflet map of that export. |
+| `layer_006_Distribution_Pipe.json` | Distribution pipes, with the ASSETTYPE subtype domains. |
+| `layer_007_Service_Pipe.json` | Service pipes, same domains. |
+| `layer_206_Hist_GasLeak.json` | Historic leaks. Carries no material or diameter field, which is why both come from the supplemental CSV. |
+| `manifest.json` | Every layer id on the service and its source URL. |
+| `service.json` | Service-level metadata. |
 
-```bat
-:: how many main lines the date range covers, before downloading them
-python GISportal\query_ma_main_lines_2022_plus.py --count-only
-
-:: export, then map it in one step
-python GISportal\query_ma_main_lines_2022_plus.py --viewer
-
-:: map an export produced earlier
-python GISportal\main_lines_viewer.py
-```
-
-Lines are coloured by material family, and each family is a layer that can be
-switched off and its own tab in the attribute table. The family is computed in
-Python and written into the GeoJSON, so the map cannot disagree with the data —
-the relocation viewers each carry their own JavaScript copy of that logic, and
-those copies drifting is what made every copper pipe render as plastic.
-
-The map needs Leaflet locally. The build copies it from
-`<work root>/leaflet_context/vendor/leaflet` if present, otherwise downloads it
-into the viewer folder once. Basemap tiles come from OpenStreetMap or Esri; if
-this network blocks them the lines still draw, on a blank background.
+The original copy held all 102 layer JSONs, 150 MB, of which these were the only
+files anything read. Re-copy from the URL above if another layer is ever needed.
 
 ### Scripts
 
@@ -94,7 +87,7 @@ set to run as before.
 | `LEAKRELOCATION_CACHE_FRESH_SECONDS` | `3600` — trust a cache younger than this without asking the server; `0` always checks |
 | `LEAKRELOCATION_PARALLEL_LOAD` | `1` — load the three layers concurrently |
 | `LEAKRELOCATION_LOOPBACK_OAUTH` | `1` — sign in via a loopback redirect; `0` uses the out-of-band page |
-| `LEAKRELOCATION_LOOPBACK_PORT` | `8770` |
+| `LEAKRELOCATION_LOOPBACK_PORT` | `8080` — must match a redirect URI on the portal app registration |
 
 ### Output location
 
@@ -110,7 +103,7 @@ Authentication uses a loopback redirect: the browser lands on a page this
 process serves, which reports success and closes itself. Nothing displays the
 authorization code and no tab is left behind.
 
-This requires `http://localhost:8770/` to be listed as a redirect URI on the
+This requires `http://localhost:8080/` to be listed as a redirect URI on the
 portal app registration. If it is not, the run warns and falls back to the
 out-of-band page — the one that shows `SUCCESS code=...` and cannot be closed
 programmatically, because that page belongs to the portal rather than to this

@@ -12,10 +12,9 @@ production_moved_leak_outputs/**/*.log
 production_moved_leak_outputs/local_leaflet_view/relocated_*.geojson
 production_moved_leak_outputs/local_leaflet_view_with_pipes/*.geojson
 
-# GISportal exports and the viewer built from them. These hold real asset
-# attributes, and the viewer folder also carries a downloaded copy of Leaflet.
+# Generated exports and built viewers. These hold real asset attributes, and a
+# built viewer folder also carries a downloaded copy of Leaflet.
 outputs/
-GISportal/outputs/
 *_viewer/leaflet/
 *.pkl.gz
 *.gpkg
