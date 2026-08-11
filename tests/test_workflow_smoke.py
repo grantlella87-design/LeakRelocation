@@ -132,3 +132,77 @@ class TestPreparePipesReadsSchemaMaterial:
         message = str(excinfo.value)
         assert "material" in message
         assert "enrich_assettype_cache" in message
+
+
+class TestNarrowedExceptionHandlers:
+    """These handlers used to catch bare Exception. Narrowing them risks turning
+    a swallowed error into a crash, so the inputs they have to absorb are pinned
+    here.
+
+    The exception classes were read off the libraries rather than assumed - and
+    one of them defeats intuition: shapely's GeometryTypeError descends from
+    ShapelyError, not TypeError, so catching TypeError alone would let an
+    unknown geometry "type" through.
+    """
+
+    @pytest.mark.parametrize("geometry", [
+        None,
+        {},
+        {"type": "Nope", "coordinates": []},      # GeometryTypeError
+        {"type": "Point"},                        # KeyError
+        {"nope": 1},                              # AttributeError
+        {"type": "Point", "coordinates": "xx"},   # TypeError
+        {"type": "Polygon", "coordinates": [[[0, 0], [1, 1]]]},   # ValueError
+        "not a dict",
+        {"paths": []},
+        {"x": 1},
+    ])
+    def test_malformed_geometry_becomes_none(self, lr, geometry):
+        assert lr.esri_geometry_to_shape(geometry) is None
+
+    @pytest.mark.parametrize("value", [
+        "not a date",
+        None,
+        [],
+        float("nan"),
+    ])
+    def test_unparseable_dates_become_none(self, lr, value):
+        assert lr.date_value_to_epoch_ms(value) is None
+
+    def test_a_real_epoch_still_converts(self, lr):
+        assert lr.date_value_to_epoch_ms(1640995200000) == 1640995200000
+
+    @pytest.mark.parametrize(("value", "result"), [
+        ("2022-01-01", 2022),
+        ("9999999-01-01", 9999999),
+        ({"a": 1}, 1),
+    ])
+    def test_a_value_containing_a_digit_returns_that_digit(self, lr, value, result):
+        """Recording existing behaviour, not endorsing it.
+
+        parse_number runs first and pulls the first number out of str(value), so
+        anything with a digit in it short-circuits the date parse: the ISO string
+        "2022-01-01" becomes 2022 milliseconds after the epoch. This is upstream
+        of the narrowed handler and unchanged by it. It only matters for the delta
+        watermark, and it fails safe - a garbage watermark falls back to a full
+        refresh - which is presumably why it has gone unnoticed.
+        """
+        assert lr.date_value_to_epoch_ms(value) == result
+
+    @pytest.mark.parametrize("value", [
+        None,
+        "abc",                # not numeric
+        float("inf"),         # not finite
+        float("nan"),
+        -5,                   # <= 0
+        0,
+        1e30,                 # outside the representable range
+    ])
+    def test_bad_watermarks_fall_back_to_the_safe_default(self, lr, value):
+        with redirect_stdout(io.StringIO()):
+            assert lr.epoch_ms_to_sql_timestamp(value) == "timestamp '1970-01-01 00:00:00'"
+
+    def test_a_real_watermark_still_converts(self, lr):
+        with redirect_stdout(io.StringIO()):
+            result = lr.epoch_ms_to_sql_timestamp(1640995200000)
+        assert result == "timestamp '2022-01-01 00:00:00'"
