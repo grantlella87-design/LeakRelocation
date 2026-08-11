@@ -140,8 +140,8 @@ python -m venv .venv
 ## Running
 
 One command does everything: check the token, download the three layers, decode
-the pipe material from ASSETGROUP + ASSETTYPE, match, write the GeoPackage,
-build the map and serve it.
+the pipe material from ASSETGROUP + ASSETTYPE, match, write the GeoPackage, and
+serve the map.
 
 ```bat
 python run.py
@@ -150,31 +150,33 @@ python run.py
 | Flag | Effect |
 | --- | --- |
 | `--no-view` | Stop after the GeoPackage. |
-| `--view-only` | Skip the workflow; rebuild and serve the map. |
+| `--view-only` | Skip the workflow and serve the map. |
 | `--refresh` | Ignore the layer caches and re-download. |
-| `--pipes` | Show the pipe map: distribution and service lines coloured by material. |
 | `--port 8800` | Serve the map somewhere else. |
 | `--no-browser` | Serve without opening a browser. |
 | `--skip-signin-check` | Do not verify the token first. |
 
-### The two maps
+### The map
 
-`python run.py` builds the **relocation map**: the relocated leak points and the
-trace lines from each leak's original position, written out as GeoJSON.
+`run.py` serves `src/leaflet_bbox_server.py`, which shows, as switchable layers:
 
-`python run.py --pipes` serves the **pipe map**: the distribution and service
-pipe layers themselves, each line coloured by its material — plastic, steel,
-iron, copper, unknown — with the leaks and relocated points as switchable
-overlays. Material comes from the decoded `ASSETGROUP + ASSETTYPE` subtype
-domains, which is also what the matching uses, so the map and the match agree.
+- **distribution pipes** and **service pipes**, each line coloured by its
+  material — plastic, steel, iron, copper, unknown;
+- the historic leaks in their original positions;
+- the relocated leak points and the trace lines back to where each leak was.
 
-The pipe layers are served by bounding box from the downloaded caches, a capped
-number of features at a time, and re-fetched as the map moves. They are far too
-large to write into a single GeoJSON and hand to a browser, which is why they
-are not on the static map.
+Material comes from the decoded `ASSETGROUP + ASSETTYPE` subtype domains, which
+is what the matching uses too, so the map and the match agree. Colours live in
+one place, `MATERIAL_COLORS` in that file; the page's palette is generated from
+it, so editing it changes the map.
 
-Colours live in one place: `MATERIAL_COLORS` in `src/leaflet_bbox_server.py`.
-The page's palette is generated from it, so editing it changes the map.
+The pipe layers are read from the downloaded caches and served by bounding box, a
+capped number of features at a time, re-fetched as the map moves. They are far
+too large to write into a single GeoJSON and hand to a browser.
+
+`scripts/build_local_relocation_viewer.py` still builds a **static** map of the
+relocated leaks and trace lines — a folder that can be zipped and opened without
+Python running. It does not carry the pipe layers, for the reason above.
 
 There is no longer an enrichment step to remember. The material decode happens
 inside the workflow, which is why the order can no longer be got wrong; it used
