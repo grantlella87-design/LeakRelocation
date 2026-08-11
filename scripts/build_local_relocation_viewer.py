@@ -1,118 +1,193 @@
-﻿from pathlib import Path
-import shutil
-import pandas as pd
-import geopandas as gpd
+"""Build the local Leaflet map of the relocated leaks.
 
+    python scripts/build_local_relocation_viewer.py
+    python scripts/build_local_relocation_viewer.py --gpkg path/to/other.gpkg
+
+Reads the GeoPackage the workflow writes and produces a viewer folder holding
+index.html and the two GeoJSON layers.
+
+Importable: run.py calls build() directly so one command can go from download to
+map. Everything used to execute at import time, which made that impossible.
+"""
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
+import geopandas as gpd
+import pandas as pd
 from _bootstrap import config
+
+from leakrelocation.output import fail, log, warn
 from leakrelocation.viewer_html import render as render_viewer
 
-ROOT = config.WORK_ROOT
-PROJECT = config.PROJECT_DIR
-GPKG = PROJECT / "HistoricLeakRelocation.gpkg"
-OUT = config.VIEWER_DIR
-OUT.mkdir(parents=True, exist_ok=True)
-VENDOR_SRC = ROOT / "leaflet_context" / "vendor" / "leaflet"
-VENDOR_DST = OUT / "leaflet"
 POINT_LAYER = "relocated_leaks"
 LINE_LAYER = "relocated_leak_offset_lines"
 
-print("=== Build local LeakRelocation Leaflet viewer ===", flush=True)
-print("GeoPackage:", GPKG, flush=True)
-print("Output folder:", OUT, flush=True)
-if not GPKG.exists():
-    raise FileNotFoundError(f"GeoPackage not found: {GPKG}")
+LEAFLET_CDN = "https://unpkg.com/leaflet@1.9.4/dist"
 
-def clean_value(v):
-    if v is None:
+PREFERRED_COLUMNS = [
+    "OrigLeakOID", "LeakKey", "LinkedLayer", "MatchedPipeOID", "MatchedPipeGID",
+    "DistanceFt", "SearchRadiusFt", "MatchMaterial", "MatchDiameter",
+    "MatchPressure",
+]
+COLUMN_KEYWORDS = ["leak", "pipe", "material", "diam", "distance", "match",
+                   "linked", "pressure"]
+MAX_COLUMNS = 18
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--gpkg", default=None,
+                        help="GeoPackage to read. Default: the workflow's output.")
+    parser.add_argument("--out-dir", default=None,
+                        help="Viewer folder to write. Default: config.VIEWER_DIR.")
+    return parser.parse_args(argv)
+
+
+def resolve_gpkg(explicit=None):
+    """Which GeoPackage to map.
+
+    Defaults to the local output the workflow writes, falling back to the
+    published copy on the share. It used to read the share unconditionally,
+    which stopped being right when output moved local: a fresh run wrote locally
+    and the map kept showing whatever had last been published.
+    """
+    if explicit:
+        path = Path(explicit)
+        if not path.exists():
+            fail(f"GeoPackage not found: {path}")
+        return path
+
+    local = Path(config.OUTPUT_GPKG)
+    if local.exists():
+        return local
+
+    published = Path(config.PUBLISHED_OUTPUT_GPKG)
+    if published.exists():
+        warn(f"No local GeoPackage at {local}; using the published copy at "
+             f"{published}. Run the workflow to refresh the local one.")
+        return published
+
+    fail(f"No GeoPackage at {local} (nor at {published}). "
+         f"Run: python src/leak_relocation_geopandas.py")
+    return None  # unreachable; fail() raises
+
+
+def clean_value(value):
+    if value is None:
         return None
     try:
-        if pd.isna(v):
+        if pd.isna(value):
             return None
-    except Exception:
+    except (TypeError, ValueError):
+        # pd.isna raises on array-likes; those are kept and stringified below.
         pass
-    if hasattr(v, "item"):
+    if hasattr(value, "item"):
         try:
-            v = v.item()
-        except Exception:
+            value = value.item()
+        except (AttributeError, ValueError):
             pass
-    if isinstance(v, pd.Timestamp):
-        return v.isoformat()
-    if isinstance(v, (str, int, float, bool)):
-        return v
-    return str(v)
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
 
 def reduce_columns(gdf):
-    preferred = ["OrigLeakOID","LeakKey","LinkedLayer","MatchedPipeOID","MatchedPipeGID","DistanceFt","SearchRadiusFt","MatchMaterial","MatchDiameter","MatchPressure"]
-    keep = [c for c in preferred if c in gdf.columns]
-    for col in gdf.columns:
-        if col == "geometry" or col in keep:
+    """Keep the columns worth showing, and make their values JSON-safe."""
+    keep = [name for name in PREFERRED_COLUMNS if name in gdf.columns]
+    for column in gdf.columns:
+        if column == "geometry" or column in keep:
             continue
-        low = str(col).lower()
-        if any(k in low for k in ["leak", "pipe", "material", "diam", "distance", "match", "linked", "pressure"]):
-            keep.append(col)
-    keep = list(dict.fromkeys(keep))[:18]
+        lowered = str(column).lower()
+        if any(keyword in lowered for keyword in COLUMN_KEYWORDS):
+            keep.append(column)
+    keep = list(dict.fromkeys(keep))[:MAX_COLUMNS]
     keep.append("geometry")
+
     out = gdf[keep].copy()
-    for col in out.columns:
-        if col != "geometry":
-            out[col] = out[col].map(clean_value)
+    for column in out.columns:
+        if column != "geometry":
+            out[column] = out[column].map(clean_value)
     return out
 
-def load_layer(layer_name):
-    gdf = gpd.read_file(GPKG, layer=layer_name)
+
+def load_layer(gpkg, layer_name):
+    gdf = gpd.read_file(gpkg, layer=layer_name)
     gdf = gdf[gdf.geometry.notna()].copy()
-    print(f"{layer_name}: {len(gdf):,} features, CRS={gdf.crs}", flush=True)
+    log(f"{layer_name}: {len(gdf):,} features, CRS={gdf.crs}")
     if gdf.crs is None:
-        raise RuntimeError(f"Layer {layer_name} has no CRS")
-    gdf = gdf.to_crs(4326)
-    return reduce_columns(gdf)
+        fail(f"Layer {layer_name} has no CRS")
+    return reduce_columns(gdf.to_crs(4326))
 
-points = load_layer(POINT_LAYER)
-lines = load_layer(LINE_LAYER)
-if len(lines):
-    lines["geometry"] = lines.geometry.simplify(0.000001, preserve_topology=True)
 
-points_geojson = OUT / "relocated_leaks.geojson"
-lines_geojson = OUT / "relocated_leak_trace_lines.geojson"
-points.to_file(points_geojson, driver="GeoJSON")
-lines.to_file(lines_geojson, driver="GeoJSON")
-print("Wrote:", points_geojson, flush=True)
-print("Wrote:", lines_geojson, flush=True)
+def copy_vendored_leaflet(out_dir):
+    """Return (css_ref, js_ref), preferring a local copy of Leaflet."""
+    source = config.WORK_ROOT / "leaflet_context" / "vendor" / "leaflet"
+    target = out_dir / "leaflet"
+    names = ["leaflet.css", "leaflet.js"]
 
-bounds = points.total_bounds if len(points) else lines.total_bounds
-west, south, east, north = [float(x) for x in bounds]
+    if source.exists():
+        target.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            if (source / name).exists():
+                shutil.copy2(source / name, target / name)
 
-leaflet_local = False
-if VENDOR_SRC.exists():
-    VENDOR_DST.mkdir(parents=True, exist_ok=True)
-    for name in ["leaflet.css", "leaflet.js"]:
-        src = VENDOR_SRC / name
-        if src.exists():
-            shutil.copy2(src, VENDOR_DST / name)
-    leaflet_local = (VENDOR_DST / "leaflet.css").exists() and (VENDOR_DST / "leaflet.js").exists()
-css_ref = "leaflet/leaflet.css" if leaflet_local else "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-js_ref = "leaflet/leaflet.js" if leaflet_local else "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    if all((target / name).exists() for name in names):
+        return "leaflet/leaflet.css", "leaflet/leaflet.js"
 
-html = render_viewer(css_ref, js_ref, south, west, north, east)
-html_path = OUT / "index.html"
-html_path.write_text(html, encoding="utf-8")
-server_py = OUT / "serve_viewer.py"
-server_py.write_text('''"""Serve the generated viewer on http://127.0.0.1:8777 and open a browser."""
-import functools
-import http.server
-import pathlib
-import webbrowser
+    warn("Leaflet is not vendored locally, so the page will load it from "
+         "unpkg.com. If this network blocks that, the map will be blank. "
+         "Run: python scripts/build_leaflet_context.py")
+    return f"{LEAFLET_CDN}/leaflet.css", f"{LEAFLET_CDN}/leaflet.js"
 
-PORT = 8777
-HERE = pathlib.Path(__file__).resolve().parent
 
-handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(HERE))
-with http.server.ThreadingHTTPServer(("127.0.0.1", PORT), handler) as server:
-    url = "http://127.0.0.1:{0}/index.html".format(PORT)
-    print("Serving {0} at {1}".format(HERE, url), flush=True)
-    webbrowser.open(url)
-    server.serve_forever()
-''', encoding="utf-8")
-print("HTML viewer:", html_path, flush=True)
-print("Viewer server:", server_py, flush=True)
-print("Run:", f'python "{server_py}"', flush=True)
+def build(gpkg=None, out_dir=None):
+    """Write the viewer folder. Returns the index.html path."""
+    gpkg = resolve_gpkg(gpkg)
+    out_dir = Path(out_dir) if out_dir else Path(config.VIEWER_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    log("=== Build local LeakRelocation Leaflet viewer ===")
+    log(f"GeoPackage: {gpkg}")
+    log(f"Output folder: {out_dir}")
+
+    points = load_layer(gpkg, POINT_LAYER)
+    lines = load_layer(gpkg, LINE_LAYER)
+    if len(lines):
+        lines["geometry"] = lines.geometry.simplify(0.000001, preserve_topology=True)
+
+    if not len(points) and not len(lines):
+        fail(f"{gpkg} holds no relocated features, so there is nothing to map.")
+
+    points_geojson = out_dir / "relocated_leaks.geojson"
+    lines_geojson = out_dir / "relocated_leak_trace_lines.geojson"
+    points.to_file(points_geojson, driver="GeoJSON")
+    lines.to_file(lines_geojson, driver="GeoJSON")
+    log(f"Wrote: {points_geojson}")
+    log(f"Wrote: {lines_geojson}")
+
+    west, south, east, north = (
+        float(value) for value in (points.total_bounds if len(points)
+                                   else lines.total_bounds))
+
+    css_ref, js_ref = copy_vendored_leaflet(out_dir)
+    index = out_dir / "index.html"
+    index.write_text(render_viewer(css_ref, js_ref, south, west, north, east),
+                     encoding="utf-8")
+    log(f"HTML viewer: {index}")
+    log(f"Serve it with: python viewer/serve_viewer.py --page {index}")
+    return index
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    build(args.gpkg, args.out_dir)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

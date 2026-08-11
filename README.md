@@ -18,6 +18,7 @@ assessment.
 
 | Path | Contents |
 | --- | --- |
+| `run.py` | Single entry point: download, decode, match, write, map. |
 | `src/leak_relocation_geopandas.py` | The production workflow. |
 | `src/leaflet_bbox_server.py` | Local map viewer backend. |
 | `src/leakrelocation/config.py` | Every path, URL and tuning knob. |
@@ -138,25 +139,44 @@ python -m venv .venv
 
 ## Running
 
-Everything runs through Python directly.
+One command does everything: check the token, download the three layers, decode
+the pipe material from ASSETGROUP + ASSETTYPE, match, write the GeoPackage,
+build the map and serve it.
 
-```bash
-# the relocation workflow
-python src/leak_relocation_geopandas.py
+```bat
+python run.py
+```
 
-# enrichment and diagnostics
-python scripts/preflight_assettype_cache_check.py
-python scripts/enrich_assettype_cache.py                 # both pipe layers
-python scripts/enrich_assettype_cache.py --workers 1     # unreliable connection
-python scripts/enrich_assettype_cache.py --dry-run       # report, write nothing
-python scripts/audit_production_relocation_match_material.py
+| Flag | Effect |
+| --- | --- |
+| `--no-view` | Stop after the GeoPackage. |
+| `--view-only` | Skip the workflow; rebuild and serve the map. |
+| `--refresh` | Ignore the layer caches and re-download. |
+| `--port 8800` | Serve the map somewhere else. |
+| `--no-browser` | Serve without opening a browser. |
+| `--skip-signin-check` | Do not verify the token first. |
 
-# build the viewers
-python scripts/build_local_relocation_viewer.py
-python scripts/build_leaflet_context.py
+There is no longer an enrichment step to remember. The material decode happens
+inside the workflow, which is why the order can no longer be got wrong; it used
+to stop after the download with `material is missing, so this cache is not
+ASSETTYPE-enriched` and have to be restarted after a second command.
 
-# serve the checked-in viewer
-python viewer/serve_viewer.py
+Every stage still runs on its own:
+
+```bat
+python scripts\arcgis_signin.py --test-query      :: sign in, prove the token works
+python src\leak_relocation_geopandas.py           :: download, decode, match, write
+python scripts\build_local_relocation_viewer.py   :: build the map
+python viewer\serve_viewer.py                     :: serve a built map
+
+:: diagnostics
+python scripts\preflight_assettype_cache_check.py
+python scripts\enrich_assettype_cache.py          :: repair an existing cache
+python scripts\enrich_assettype_cache.py --workers 1     :: unreliable connection
+python scripts\enrich_assettype_cache.py --dry-run       :: report, write nothing
+python scripts\audit_production_relocation_match_material.py
+python scripts\report_copper_impact.py
+python scripts\build_leaflet_context.py
 ```
 
 ### Attribute pane

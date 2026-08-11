@@ -39,6 +39,7 @@ if _SCRIPT_DIR not in sys.path:
 from pyproj import CRS
 
 from leakrelocation import config, schema
+from leakrelocation.assettype import build_assettype_decoder, norm_code
 from leakrelocation.matching import (
     clean,
     diameter_matches,
@@ -1262,6 +1263,72 @@ def prepare_leaks(leaks_gdf, supplemental):
     return prepared, counters
 
 
+def decode_pipe_materials(session, pipe_gdf, layer_url, layer_name):
+    """Turn ASSETGROUP + ASSETTYPE into the material columns, in this process.
+
+    ASSETTYPE is the material type and its subtype domain value is the material
+    name, so once the download carries ASSETGROUP and ASSETTYPE, naming the
+    material needs nothing but the layer's own metadata - which this run already
+    fetches. Doing it here means one command downloads and decodes;
+    scripts/enrich_assettype_cache.py remains for repairing an existing cache.
+
+    The decode itself comes from leakrelocation.assettype, the same function the
+    enrichment script uses, so the two cannot disagree.
+
+    Returns the frame unchanged if it already carries a decoded material - a
+    cache enriched by the script, or a re-run.
+    """
+    if schema.MATERIAL in pipe_gdf.columns:
+        detail(f"{layer_name}: already carries {schema.MATERIAL}; no decode needed.")
+        return pipe_gdf
+
+    missing = [name for name in (schema.ASSETGROUP, schema.ASSETTYPE)
+               if name not in pipe_gdf.columns]
+    if missing:
+        fail(f"{layer_name}: cannot decode the material because {missing} "
+             f"is missing from the download. ASSETTYPE is the material type. "
+             f"Present: {sorted(pipe_gdf.columns)}")
+
+    layer_json = request_json(session, layer_url, {"f": "json"})
+    type_id_field, decoder = build_assettype_decoder(layer_json)
+    if not decoder:
+        fail(f"{layer_name}: the layer metadata carries no ASSETTYPE subtype "
+             f"domains, so the material cannot be named. typeIdField="
+             f"{type_id_field!r}")
+
+    decoded = [
+        decoder.get((norm_code(group), norm_code(asset_type)), {})
+        for group, asset_type in zip(pipe_gdf[schema.ASSETGROUP],
+                                     pipe_gdf[schema.ASSETTYPE])
+    ]
+
+    pipe_gdf = pipe_gdf.copy()
+    pipe_gdf[schema.PIPE_MATERIAL_RAW] = pipe_gdf[schema.ASSETTYPE]
+    pipe_gdf[schema.ASSETTYPE_DECODED] = [row.get("ASSETTYPE_DECODED") for row in decoded]
+    pipe_gdf[schema.PIPE_MATERIAL_FAMILY] = [row.get("PipeMaterialFamily") for row in decoded]
+    # The decoded label, under the name the matching reads.
+    pipe_gdf[schema.MATERIAL] = pipe_gdf[schema.ASSETTYPE_DECODED]
+
+    named = int(pipe_gdf[schema.MATERIAL].notna().sum())
+    log(f"{layer_name}: decoded {named:,}/{len(pipe_gdf):,} pipe materials from "
+        f"ASSETGROUP + ASSETTYPE")
+    if named < len(pipe_gdf):
+        unknown = sorted({
+            f"({norm_code(group)}, {norm_code(asset_type)})"
+            for group, asset_type, row in zip(
+                pipe_gdf[schema.ASSETGROUP], pipe_gdf[schema.ASSETTYPE], decoded)
+            if not row
+        })
+        warn(f"{layer_name}: {len(pipe_gdf) - named:,} rows had an "
+             f"(ASSETGROUP, ASSETTYPE) pair the layer's domains do not define: "
+             f"{unknown[:10]}")
+
+    counts = pipe_gdf[schema.PIPE_MATERIAL_FAMILY].value_counts(dropna=False)
+    for family, count in counts.items():
+        log(f"    {family}: {count:,}")
+    return pipe_gdf
+
+
 def prepare_pipes(pipe_gdf, layer_name):
     step(f"Preparing pipe records: {layer_name}")
     pipe_oid_field = resolved_field(
@@ -1275,9 +1342,10 @@ def prepare_pipes(pipe_gdf, layer_name):
     material_field = schema.MATERIAL
     if material_field not in pipe_gdf.columns:
         fail(
-            f"{layer_name}: {material_field} is missing, so this cache is not "
-            f"ASSETTYPE-enriched. Run: python scripts/enrich_assettype_cache.py. "
-            f"Present: {sorted(pipe_gdf.columns)}"
+            f"{layer_name}: {material_field} is missing, so the ASSETTYPE decode "
+            f"has not run on this frame. decode_pipe_materials does it in the "
+            f"workflow; scripts/enrich_assettype_cache.py repairs an existing "
+            f"cache. Present: {sorted(pipe_gdf.columns)}"
         )
     diameter_field = resolved_field(
         pipe_gdf.columns, PIPE_DIAMETER_CANDIDATES, True, layer_name + " diameter"
@@ -1613,6 +1681,12 @@ def main():
     for label, gdf in [("historic leaks", leaks), ("distribution pipes", distribution),
                        ("service pipes", service)]:
         detail(f"  {label}: CRS={gdf.crs} bounds={list(gdf.total_bounds)}")
+
+    with timed("decode pipe materials"):
+        distribution = decode_pipe_materials(
+            session, distribution, DISTRIBUTION_PIPE_URL, "distribution pipes")
+        service = decode_pipe_materials(
+            session, service, SERVICE_PIPE_URL, "service pipes")
 
     with timed("prepare leaks"):
         leak_tasks, initial_counters = prepare_leaks(leaks, supplemental)
