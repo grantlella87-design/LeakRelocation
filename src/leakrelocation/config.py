@@ -94,6 +94,7 @@ SERVICE_PIPE_URL = f"{_MAP_SERVER}/{SERVICE_PIPE_LAYER_ID}"
 
 PIPE_LAYER_IDS = (DISTRIBUTION_PIPE_LAYER_ID, SERVICE_PIPE_LAYER_ID)
 
+
 PORTAL_AUTHORIZE_URL = PORTAL_ROOT + "/sharing/rest/oauth2/authorize"
 PORTAL_TOKEN_URL = PORTAL_ROOT + "/sharing/rest/oauth2/token"
 
@@ -120,6 +121,22 @@ def _flag_from_env(name, default=False):
         return default
     return value in ("1", "true", "yes", "on")
 
+
+# Retired pipe, for leaks that pre-date a pipe's retirement. This one is on the
+# MA service rather than the DNV NY service - the DNV service has no layer 62 and
+# no ids between 20 and 99 at all - so it gets its own MapServer root.
+RETIRED_PIPE_LAYER_ID = _int_from_env("LEAKRELOCATION_RETIRED_LAYER_ID", 62)
+_MA_MAP_SERVER = os.environ.get(
+    "LEAKRELOCATION_MA_MAP_SERVER",
+    GIS_ROOT + "/arcgis/rest/services/MA/Material_View_MA/MapServer").rstrip("/")
+RETIRED_PIPE_URL = os.environ.get(
+    "LEAKRELOCATION_RETIRED_PIPE_URL",
+    f"{_MA_MAP_SERVER}/{RETIRED_PIPE_LAYER_ID}")
+
+# Include the retired layer in matching. Its schema has not been read yet, so a
+# run reports what it finds and carries on with the live layers if it cannot use
+# it; set this to 0 to skip it outright.
+USE_RETIRED_PIPE_LAYER = _flag_from_env("LEAKRELOCATION_USE_RETIRED_LAYER", True)
 
 # --- Matching / request tuning ------------------------------------------------
 

@@ -41,7 +41,10 @@ from pyproj import CRS
 from leakrelocation import config, schema
 from leakrelocation.assettype import build_assettype_decoder, norm_code
 from leakrelocation.matching import (
+    IN_SERVICE_AT_LEAK,
+    RETIRED_AFTER_LEAK,
     clean,
+    date_rule_result,
     diameter_matches,
     matched_radius_from_distance,
     material_label,
@@ -58,6 +61,9 @@ LAYER_NATIVE_CRS_CONFIG = {
     "historic_leaks": {"url_global": "HIST_LEAK_URL"},
     "distribution_pipes": {"url_global": "DISTRIBUTION_PIPE_URL"},
     "service_pipes": {"url_global": "SERVICE_PIPE_URL"},
+    # On the MA service, so its native spatial reference is read from its own
+    # metadata like every other layer rather than assumed to match the DNV ones.
+    "retired_pipes": {"url_global": "RETIRED_PIPE_URL"},
 }
 
 ANALYSIS_CRS_LAYER_KEY = "distribution_pipes"
@@ -164,6 +170,8 @@ OUTPUT_GPKG = str(config.OUTPUT_GPKG)
 HIST_LEAK_URL = config.HIST_LEAK_URL
 DISTRIBUTION_PIPE_URL = config.DISTRIBUTION_PIPE_URL
 SERVICE_PIPE_URL = config.SERVICE_PIPE_URL
+RETIRED_PIPE_URL = config.RETIRED_PIPE_URL
+USE_RETIRED_PIPE_LAYER = config.USE_RETIRED_PIPE_LAYER
 
 WHERE_MA = config.WHERE_MA
 TARGET_CRS = None  # Native CRS patch: do not force EPSG:2249 before matching
@@ -242,6 +250,26 @@ PIPE_DIAMETER_CANDIDATES = ["nominaldiameter", "outsidediameter"]
 PIPE_MATERIAL_FIELDS = [schema.ASSETGROUP, schema.ASSETTYPE]
 
 PIPE_PRESSURE_CANDIDATES = ["operatingpressure", "maopdesign"]
+
+# --- Temporal validity -------------------------------------------------------
+#
+# A leak is only relocated onto a pipe that existed when the leak was recorded.
+# REVISEDLEAKDATE is on layer 206; CREATIONDATE and dateretired are on layers 6
+# and 7. All three were read out of the committed service metadata.
+#
+# The retired layer lives on a different service, so its own field names are
+# resolved from its metadata at run time and the run stops if they are not there
+# - see resolve_pipe_date_fields.
+LEAK_DATE_CANDIDATES = ["REVISEDLEAKDATE"]
+PIPE_CREATED_CANDIDATES = ["CREATIONDATE"]
+PIPE_RETIRED_CANDIDATES = ["dateretired"]
+
+# Which end of a pipe's life each layer is checked against.
+LAYER_DATE_RULES = {
+    "distribution": IN_SERVICE_AT_LEAK,
+    "service": IN_SERVICE_AT_LEAK,
+    "retired": RETIRED_AFTER_LEAK,
+}
 
 # The pipe layers spell it GLOBALID and layer 206 spells it GlobalID. One entry
 # covers both: the resolver ignores case and returns the layer's own spelling.
@@ -646,6 +674,8 @@ def build_out_fields(meta, layer_name):
             LEAK_KEY_CANDIDATES,
             GLOBALID_CANDIDATES,
             JURISDICTION_CANDIDATES,
+            # The date the relocation window is measured from.
+            LEAK_DATE_CANDIDATES,
         ]
     else:
         candidate_groups = [
@@ -653,6 +683,10 @@ def build_out_fields(meta, layer_name):
             PIPE_PRESSURE_CANDIDATES,
             GLOBALID_CANDIDATES,
             JURISDICTION_CANDIDATES,
+            # Both ends of the pipe's life. Which one is checked depends on the
+            # layer, but asking for both keeps one outFields list for all of them.
+            PIPE_CREATED_CANDIDATES,
+            PIPE_RETIRED_CANDIDATES,
         ]
         # The material type. Every one of these is required, not a first match
         # among alternatives, so they are added outright rather than resolved as
@@ -716,6 +750,17 @@ def date_value_to_epoch_ms(value):
         # type it cannot read raises TypeError. OverflowError covers the int()
         # conversion of a non-finite timestamp.
         return None
+
+
+def epoch_ms_to_iso(epoch_ms):
+    """Epoch milliseconds as an ISO date, for the audit columns. "" when absent."""
+    if epoch_ms is None:
+        return ""
+    try:
+        return dt.datetime.fromtimestamp(
+            float(epoch_ms) / 1000.0, dt.UTC).date().isoformat()
+    except (OSError, OverflowError, TypeError, ValueError):
+        return ""
 
 
 def max_modified_epoch_ms(gdf, modified_field):
@@ -1221,6 +1266,35 @@ def to_target_crs(gdf, name):
     return projected
 
 
+def load_retired_pipes(session):
+    """Load the retired pipe layer, or report why it cannot be used.
+
+    This layer is on the MA service, and its schema has not been read from that
+    service yet - so rather than assume it looks like the DNV pipe layers, the
+    run says exactly what it found and carries on with the live layers. A leak
+    that belongs on a retired pipe then goes unmatched, which is visible in the
+    counters, instead of the whole run ending.
+
+    Run scripts/describe_layer.py against the URL to see its fields, and this
+    stops guessing.
+    """
+    step("Loading retired pipes")
+    log(f"Layer: {RETIRED_PIPE_URL}")
+    try:
+        retired = query_arcgis_layer(session, RETIRED_PIPE_URL, WHERE_MA,
+                                     "retired pipes")
+        retired = assign_native_crs(session, "retired_pipes", retired)
+        retired = to_analysis_crs(session, "retired_pipes", retired)
+        return decode_pipe_materials(session, retired, RETIRED_PIPE_URL,
+                                     "retired pipes")
+    except Exception as ex:  # noqa: BLE001 - reported, and the run continues
+        warn(f"The retired pipe layer could not be used, so relocations onto "
+             f"retired pipes are NOT included in this run. Reason: {ex}")
+        warn(f"To see what that layer actually has: "
+             f"python scripts/describe_layer.py {RETIRED_PIPE_URL}")
+        return None
+
+
 def prepare_leaks(leaks_gdf, supplemental):
     step("Preparing leak records")
     leak_oid_field = resolved_field(
@@ -1232,6 +1306,14 @@ def prepare_leaks(leaks_gdf, supplemental):
     leak_globalid_field = resolved_field(
         leaks_gdf.columns, GLOBALID_CANDIDATES, False, "leak GlobalID"
     )
+    # Optional: a cache downloaded before the date rule existed has no such
+    # column, and every leak then matches unfiltered rather than not at all.
+    leak_date_field = resolved_field(
+        leaks_gdf.columns, LEAK_DATE_CANDIDATES, False, "leak revised date"
+    )
+    if not leak_date_field:
+        warn("No leak date column, so no relocation can be checked against the "
+             "pipe's life. Re-download the leak layer: python run.py --refresh")
     prepared = []
     counters = defaultdict(int)
     for _, row in leaks_gdf.iterrows():
@@ -1245,6 +1327,10 @@ def prepare_leaks(leaks_gdf, supplemental):
         if leak_info["diameter"] is None or not leak_info["material"]:
             counters["unmatched_missing_match_attributes"] += 1
             continue
+        leak_date_ms = (date_value_to_epoch_ms(row.get(leak_date_field))
+                        if leak_date_field else None)
+        if leak_date_ms is None:
+            counters["leaks_without_a_revised_date"] += 1
         prepared.append(
             {
                 "leak_oid": leak_oid,
@@ -1253,6 +1339,7 @@ def prepare_leaks(leaks_gdf, supplemental):
                 if leak_globalid_field
                 else "",
                 "leak_info": leak_info,
+                "leak_date_ms": leak_date_ms,
                 "allowed_layers": route_layers(leak_info["facility"]),
                 "geometry": row.geometry,
             }
@@ -1329,6 +1416,31 @@ def decode_pipe_materials(session, pipe_gdf, layer_url, layer_name):
     return pipe_gdf
 
 
+def resolve_pipe_date_fields(pipe_gdf, layer_name):
+    """The pipe's created and retired columns, whichever of them this layer has.
+
+    The live layers carry both. The retired layer is on a different service, so
+    its spelling is confirmed here rather than assumed; the rule that layer is
+    checked against needs its retirement date, so a run without it stops instead
+    of matching every retired pipe unfiltered.
+    """
+    created = resolved_field(pipe_gdf.columns, PIPE_CREATED_CANDIDATES, False,
+                             layer_name + " created date")
+    retired = resolved_field(pipe_gdf.columns, PIPE_RETIRED_CANDIDATES, False,
+                             layer_name + " retired date")
+    rule = LAYER_DATE_RULES.get(layer_name)
+
+    if rule == RETIRED_AFTER_LEAK and not retired:
+        fail(f"{layer_name}: no retirement date column, so a leak cannot be "
+             f"checked against when the pipe left service. Looked for "
+             f"{PIPE_RETIRED_CANDIDATES}. Present: {sorted(pipe_gdf.columns)}")
+    if rule == IN_SERVICE_AT_LEAK and not created:
+        warn(f"{layer_name}: no {PIPE_CREATED_CANDIDATES[0]} column, so its pipes "
+             f"are matched without checking that they pre-date the leak. "
+             f"Re-download: python run.py --refresh")
+    return created, retired
+
+
 def prepare_pipes(pipe_gdf, layer_name):
     step(f"Preparing pipe records: {layer_name}")
     pipe_oid_field = resolved_field(
@@ -1360,6 +1472,12 @@ def prepare_pipes(pipe_gdf, layer_name):
         fail(
             f"REQUIRE_PRESSURE_MATCH is True but no pressure field was resolved on {layer_name}."
         )
+    created_field, retired_field = resolve_pipe_date_fields(pipe_gdf, layer_name)
+    date_rule = LAYER_DATE_RULES.get(layer_name)
+    if date_rule is None:
+        fail(f"{layer_name}: no date rule is defined for this layer. "
+             f"Known: {sorted(LAYER_DATE_RULES)}")
+
     records = []
     missing_material = 0
     missing_diameter = 0
@@ -1379,10 +1497,15 @@ def prepare_pipes(pipe_gdf, layer_name):
                 "material": mat,
                 "diameter": diam,
                 "pressure": clean(row.get(pressure_field)) if pressure_field else "",
+                "date_rule": date_rule,
+                "created_ms": date_value_to_epoch_ms(row.get(created_field))
+                if created_field else None,
+                "retired_ms": date_value_to_epoch_ms(row.get(retired_field))
+                if retired_field else None,
                 "geometry": row.geometry,
             }
         )
-    log(f"Prepared {len(records):,} {layer_name} pipes")
+    log(f"Prepared {len(records):,} {layer_name} pipes (date rule: {date_rule})")
     log(f"{layer_name} pipes missing material: {missing_material:,}")
     log(f"{layer_name} pipes missing diameter: {missing_diameter:,}")
     return records
@@ -1417,8 +1540,10 @@ def match_one_leak(task):
     leak_number = task["leak_number"]
     leak_info = task["leak_info"]
     leak_geometry = task["geometry"]
+    leak_date_ms = task.get("leak_date_ms")
     allowed_layers = task["allowed_layers"]
     candidates = []
+    rejected_on_date = 0
     for layer_name in allowed_layers:
         tree_info = WORKER_TREES[layer_name]
         for idx in get_tree_hits(tree_info, leak_geometry):
@@ -1432,18 +1557,37 @@ def match_one_leak(task):
                 continue
             if not pressure_matches(leak_info["pressure"], pipe["pressure"]):
                 continue
+            # The pipe has to have been there when the leak was recorded: after
+            # CREATIONDATE on the live layers, before dateretired on the retired
+            # one. A leak with no date, or a pipe missing the date its rule needs,
+            # is allowed through and the reason is carried to the output.
+            allowed, date_reason = date_rule_result(
+                pipe["date_rule"], leak_date_ms,
+                pipe.get("created_ms"), pipe.get("retired_ms"))
+            if not allowed:
+                rejected_on_date += 1
+                continue
             candidates.append(
                 {
                     "layer": layer_name,
                     "pipe_oid": pipe["pipe_oid"],
                     "distance_ft": distance_ft,
+                    "date_rule": pipe["date_rule"],
+                    "date_reason": date_reason,
                 }
             )
     if not candidates:
+        reason = ("No exact diameter/material/pressure match found within "
+                  "MAX_RADIUS_FT")
+        if rejected_on_date:
+            reason = (f"{rejected_on_date:,} pipe(s) matched on "
+                      f"diameter/material/pressure but were not in service when "
+                      f"the leak was recorded")
         return {
             "leak_oid": leak_oid,
             "matched": False,
-            "reason": "No exact diameter/material/pressure match found within MAX_RADIUS_FT",
+            "rejected_on_date": rejected_on_date,
+            "reason": reason,
         }
     candidates.sort(key=lambda item: item["distance_ft"])
     best = candidates[0]
@@ -1457,6 +1601,9 @@ def match_one_leak(task):
         "pipe_oid": best["pipe_oid"],
         "distance_ft": best["distance_ft"],
         "matched_radius": matched_radius_from_distance(best["distance_ft"]),
+        "date_rule": best["date_rule"],
+        "date_reason": best["date_reason"],
+        "rejected_on_date": rejected_on_date,
         "reason": "",
     }
 
@@ -1537,6 +1684,8 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
                     "PipePressure": "",
                     "SearchRadiusFt": None,
                     "DistanceFt": None,
+                    "LeakDate": epoch_ms_to_iso(task.get("leak_date_ms")),
+                    "PipesRejectedOnDate": result.get("rejected_on_date", 0),
                     "MatchStatus": "NoMatch",
                     "NoMatchReason": result["reason"],
                     "OrigX": original_point.x,
@@ -1563,6 +1712,9 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
                 "MatchMaterial": pipe["material"],
                 "MatchDiameter": pipe["diameter"],
                 "MatchPressure": pipe["pressure"],
+                "LeakDate": epoch_ms_to_iso(task.get("leak_date_ms")),
+                "DateRule": result.get("date_rule", ""),
+                "DateCheck": result.get("date_reason", ""),
                 "geometry": snapped_point,
             }
         )
@@ -1593,6 +1745,14 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
                 "PipePressure": pipe["pressure"],
                 "SearchRadiusFt": result["matched_radius"],
                 "DistanceFt": result["distance_ft"],
+                "LeakDate": epoch_ms_to_iso(task.get("leak_date_ms")),
+                "PipeCreated": epoch_ms_to_iso(pipe.get("created_ms")),
+                "PipeRetired": epoch_ms_to_iso(pipe.get("retired_ms")),
+                "DateRule": result.get("date_rule", ""),
+                # "ok" means the dates were compared and the pipe was in service.
+                # Anything else says why the check could not be made.
+                "DateCheck": result.get("date_reason", ""),
+                "PipesRejectedOnDate": result.get("rejected_on_date", 0),
                 "MatchStatus": "Matched",
                 "NoMatchReason": "",
                 "OrigX": original_point.x,
@@ -1688,6 +1848,11 @@ def main():
         service = decode_pipe_materials(
             session, service, SERVICE_PIPE_URL, "service pipes")
 
+    retired = None
+    if USE_RETIRED_PIPE_LAYER:
+        with timed("load retired pipes"):
+            retired = load_retired_pipes(session)
+
     with timed("prepare leaks"):
         leak_tasks, initial_counters = prepare_leaks(leaks, supplemental)
     with timed("build pipe indexes"):
@@ -1695,6 +1860,8 @@ def main():
             "distribution": prepare_pipes(distribution, "distribution"),
             "service": prepare_pipes(service, "service"),
         }
+        if retired is not None and len(retired):
+            pipe_sources["retired"] = prepare_pipes(retired, "retired")
     with timed("match leaks to pipes"):
         match_results = run_matching(leak_tasks, pipe_sources)
     with timed("write outputs"):

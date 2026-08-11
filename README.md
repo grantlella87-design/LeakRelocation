@@ -8,11 +8,29 @@ each leak to the nearest pipe with an exact diameter and material/family match,
 snaps the leak to that pipe, and writes a GeoPackage with relocated points,
 offset guide lines and an audit table.
 
-## Key rule
+## Key rules
 
-Use decoded `ASSETGROUP + ASSETTYPE` for pipe material classification. Do not
-use the DNV `material` Grade field as the material class for relocation
-assessment.
+**Material** comes from decoded `ASSETGROUP + ASSETTYPE`. Do not use the DNV
+`material` Grade field as the material class for relocation assessment.
+
+**A leak only relocates onto a pipe that existed when it was recorded.** The date
+is `REVISEDLEAKDATE` on layer 206, and which end of the pipe's life is checked
+depends on the layer:
+
+| Layer | Rule |
+| --- | --- |
+| 6 Distribution Pipe, 7 Service Pipe | `REVISEDLEAKDATE` **after** `CREATIONDATE` |
+| 62 Pipeline Line (A), on the MA service | `REVISEDLEAKDATE` **before** `dateretired` |
+
+Both comparisons are strict. A leak with no revised date, or a pipe missing the
+date its rule needs, is matched anyway and the audit table records which — a data
+gap does not silently remove a relocation. The `DateCheck` column reads `ok` when
+the dates were actually compared.
+
+`CREATIONDATE` is when the GIS record was created, not when the pipe was laid;
+those layers also carry `installationdate` and `inservicedate`. A pipe installed
+in 1960 and migrated into the system in 2015 has `CREATIONDATE` 2015, so a 2010
+leak fails the check even though the pipe was in the ground.
 
 ## Layout
 
@@ -62,6 +80,7 @@ files anything read. Re-copy from the URL above if another layer is ever needed.
 | --- | --- |
 | `arcgis_signin.py` | Sign in on its own, inspect or clear the cached token, test the redirect. |
 | `preflight_assettype_cache_check.py` | Report which pipe caches are present. |
+| `describe_layer.py` | Print a layer's fields, dates and subtype domains; `--save` writes it into `reference/`. |
 | `enrich_assettype_cache.py` | Repair an existing cache. Not needed for a normal run — `run.py` decodes the material itself. |
 
 The viewer builders, the audit and the inspect scripts are gone: `run.py` serves
