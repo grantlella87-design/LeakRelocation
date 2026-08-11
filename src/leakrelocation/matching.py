@@ -238,3 +238,60 @@ def matched_radius_from_distance(distance_ft):
         return config.INITIAL_RADIUS_FT
     steps = math.ceil((distance_ft - config.INITIAL_RADIUS_FT) / config.RADIUS_INCREMENT_FT)
     return config.INITIAL_RADIUS_FT + steps * config.RADIUS_INCREMENT_FT
+
+
+# --- Temporal validity ------------------------------------------------------
+#
+# A leak can only be relocated onto a pipe that existed when the leak was
+# recorded. Which end of the pipe's life is checked depends on the layer:
+#
+#   IN_SERVICE_AT_LEAK   the live layers. The pipe's record must pre-date the
+#                        leak: REVISEDLEAKDATE after CREATIONDATE.
+#   RETIRED_AFTER_LEAK   the retired layer. The pipe must still have been in
+#                        service: REVISEDLEAKDATE before dateretired.
+#
+# Both comparisons are strict, as specified - "before" and "after", not "on or
+# before". Equal timestamps fail, which for date-only values means a leak
+# recorded the same day as the pipe record is not matched to it.
+IN_SERVICE_AT_LEAK = "in_service_at_leak"
+RETIRED_AFTER_LEAK = "retired_after_leak"
+DATE_RULES = (IN_SERVICE_AT_LEAK, RETIRED_AFTER_LEAK)
+
+# Why a candidate was allowed or rejected, for the audit column and the counts.
+DATE_OK = "ok"
+DATE_NO_LEAK_DATE = "no_leak_date"
+DATE_MISSING_PIPE_DATE = "missing_pipe_date"
+DATE_PIPE_TOO_NEW = "pipe_created_after_leak"
+DATE_PIPE_ALREADY_RETIRED = "pipe_retired_before_leak"
+
+
+def date_rule_result(rule, leak_ms, created_ms, retired_ms):
+    """Whether a pipe was in service when the leak was recorded.
+
+    Returns (allowed, reason). Every argument is epoch milliseconds or None.
+
+    A leak with no date is allowed through every rule, and the reason says so,
+    so those matches can be counted and flagged rather than silently dropped -
+    dropping them would lose relocations that are produced today.
+
+    A pipe missing the date its rule needs is also allowed through, for the same
+    reason: the pipe layers carry nulls, and refusing every one of them would
+    quietly discard candidates on a data gap rather than on the rule.
+    """
+    if rule not in DATE_RULES:
+        raise ValueError(f"unknown date rule: {rule!r}")
+    if leak_ms is None:
+        return True, DATE_NO_LEAK_DATE
+
+    if rule == IN_SERVICE_AT_LEAK:
+        if created_ms is None:
+            return True, DATE_MISSING_PIPE_DATE
+        if leak_ms > created_ms:
+            return True, DATE_OK
+        return False, DATE_PIPE_TOO_NEW
+
+    if retired_ms is None:
+        return True, DATE_MISSING_PIPE_DATE
+    if leak_ms < retired_ms:
+        return True, DATE_OK
+    return False, DATE_PIPE_ALREADY_RETIRED
