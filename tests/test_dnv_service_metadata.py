@@ -9,9 +9,11 @@ instead of silently resolving to nothing during a production run.
 If these fail after the service changes, re-copy the reference folder and read
 what actually moved - do not widen a list back into guesses.
 """
+import io
 import json
 import os
 import sys
+from contextlib import redirect_stdout
 
 import pytest
 
@@ -332,3 +334,98 @@ class TestPipeLayerUrlMatching:
 
         other = workflow.apply_pipe_domain_out_fields(self.url(602, "/query"), params)
         assert other["outFields"] == params["outFields"]
+
+
+# Pairs taken from the real domains, including the three a flat code table gets
+# wrong: 999 differs by subtype, and 281 exists only outside the pipe subtypes.
+DECODE_PAIRS = ((2, 9), (2, 5), (2, 2), (2, 1), (1, 15), (2, 999), (8, 281),
+                (999, 999), (2, 13))
+DECODE_EXPECTED = ("Plastic PE", "Copper", "Cast Iron", "Bare Steel",
+                   "Galvanized Steel", "UNK", "Bond Wire", "Unknown Type",
+                   "Polybutylene")
+
+
+class TestTheWorkflowDecodesTheMaterialItself:
+    """The download carries ASSETGROUP and ASSETTYPE, and the layer metadata
+    names the material, so the workflow decodes it in-process. Before this, a
+    run stopped after the download with "material is missing, so this cache is
+    not ASSETTYPE-enriched" and had to be restarted after a separate script.
+    """
+
+
+    def frame(self, pairs=None, **extra):
+        gpd = pytest.importorskip("geopandas")
+        from shapely.geometry import LineString
+        pairs = list(DECODE_PAIRS) if pairs is None else pairs
+        columns = {
+            "OBJECTID": list(range(1, len(pairs) + 1)),
+            "ASSETGROUP": [group for group, _ in pairs],
+            "ASSETTYPE": [code for _, code in pairs],
+            "nominaldiameter": [4] * len(pairs),
+            "geometry": [LineString([(0, i), (1, i + 1)]) for i in range(len(pairs))],
+        }
+        columns.update(extra)
+        return gpd.GeoDataFrame(columns, crs="EPSG:4326")
+
+    def decode(self, workflow, distribution, frame, monkeypatch):
+        monkeypatch.setattr(workflow, "request_json",
+                            lambda session, url, params=None: distribution)
+        with redirect_stdout(io.StringIO()) as buffer:
+            result = workflow.decode_pipe_materials(
+                object(), frame, "https://stub/MapServer/6", "distribution pipes")
+        return result, buffer.getvalue()
+
+    def test_every_pair_decodes_to_its_domain_label(
+            self, workflow, distribution, monkeypatch):
+        result, _ = self.decode(workflow, distribution, self.frame(), monkeypatch)
+        assert list(result["material"]) == list(DECODE_EXPECTED)
+
+    def test_the_raw_assettype_is_kept(self, workflow, distribution, monkeypatch):
+        result, _ = self.decode(workflow, distribution, self.frame(), monkeypatch)
+        assert list(result["PipeMaterialRaw"]) == [code for _, code in DECODE_PAIRS]
+
+    def test_copper_is_copper(self, workflow, distribution, monkeypatch):
+        result, _ = self.decode(workflow, distribution, self.frame(), monkeypatch)
+        families = dict(zip(result["material"], result["PipeMaterialFamily"]))
+        assert families["Copper"] == "COPPER"
+        assert families["Plastic PE"] == "PLASTIC"
+
+    def test_the_same_code_decodes_per_subtype(
+            self, workflow, distribution, monkeypatch):
+        """999 is "UNK" under a pipe subtype and "Unknown Type" under the unknown
+        subtype. A flat code table cannot express that."""
+        result, _ = self.decode(workflow, distribution,
+                                self.frame([(2, 999), (999, 999)]), monkeypatch)
+        assert list(result["material"]) == ["UNK", "Unknown Type"]
+
+    def test_the_decoded_frame_is_accepted_by_prepare_pipes(
+            self, workflow, distribution, monkeypatch):
+        """The two halves have to agree: this is the failure the user hit."""
+        result, _ = self.decode(workflow, distribution, self.frame(), monkeypatch)
+        with redirect_stdout(io.StringIO()):
+            assert workflow.prepare_pipes(result, "distribution")
+
+    def test_an_already_decoded_frame_passes_through(
+            self, workflow, distribution, monkeypatch):
+        """A cache enriched by the script, or a re-run, must not be re-decoded -
+        that is what destroyed the original GradeMaterial once before."""
+        frame = self.frame(material=["Copper"] * len(DECODE_PAIRS))
+        result, _ = self.decode(workflow, distribution, frame, monkeypatch)
+        assert list(result["material"]) == ["Copper"] * len(DECODE_PAIRS)
+
+    def test_a_missing_domain_field_fails_naming_assettype(
+            self, workflow, distribution, monkeypatch):
+        frame = self.frame().drop(columns=["ASSETGROUP"])
+        monkeypatch.setattr(workflow, "request_json",
+                            lambda session, url, params=None: distribution)
+        with pytest.raises(RuntimeError, match="ASSETTYPE is the material type"), \
+                redirect_stdout(io.StringIO()):
+            workflow.decode_pipe_materials(
+                object(), frame, "https://stub/MapServer/6", "distribution pipes")
+
+    def test_an_undefined_pair_is_reported_not_silently_blank(
+            self, workflow, distribution, monkeypatch):
+        _, output = self.decode(workflow, distribution,
+                                self.frame([(2, 9), (77, 88)]), monkeypatch)
+        assert "domains do not define" in output
+        assert "(77, 88)" in output
