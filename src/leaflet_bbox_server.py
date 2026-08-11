@@ -15,11 +15,11 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from leakrelocation import config, schema
-
 # Shared with the relocation workflow. A local copy of this classification used
 # substring matching, where "PE" matched inside "PIPE" and "TYPE" and sent every
 # such label to PLASTIC.
+from leakrelocation import assettype, config, schema
+from leakrelocation.assettype import decoder_for_layer, norm_code
 from leakrelocation.assettype import family_from_assettype as material_family
 from leakrelocation.viewer_pane import PANE_CSS, PANE_HTML, PANE_JS
 
@@ -237,6 +237,45 @@ def enrich_historic_leaks(gdf):
     return merged
 
 
+def decode_from_subtypes(gdf, layer_id, layer_name):
+    """Name each pipe's material from ASSETGROUP + ASSETTYPE.
+
+    ASSETTYPE is the material type and its subtype domain value is the material
+    name. A downloaded cache carries both codes, and the committed service
+    metadata carries the domains, so the decode needs no token and no enrichment
+    pass. Returns a list of labels, or None when it cannot be done.
+
+    This exists because the map used to require a cache that
+    scripts/enrich_assettype_cache.py had already written ASSETTYPE_DECODED into.
+    Without that pass every pipe fell to one colour - the same trap the workflow
+    hit, where the codes were present and only the decode was missing.
+    """
+    if schema.ASSETGROUP not in gdf.columns or schema.ASSETTYPE not in gdf.columns:
+        return None
+
+    type_id_field, decoder = decoder_for_layer(layer_id)
+    if not decoder:
+        log(f"WARNING {layer_name}: no committed metadata for layer {layer_id} in "
+            f"{config.REFERENCE_DIR}, so ASSETTYPE cannot be decoded.")
+        return None
+
+    labels = [
+        decoder.get((norm_code(group), norm_code(asset_type)), {}).get("ASSETTYPE_DECODED")
+        for group, asset_type in zip(gdf[schema.ASSETGROUP], gdf[schema.ASSETTYPE])
+    ]
+    named = sum(1 for label in labels if label)
+    log(f"{layer_name}: decoded {named:,}/{len(labels):,} pipe materials from "
+        f"{type_id_field or schema.ASSETGROUP} + {schema.ASSETTYPE}")
+    return labels
+
+
+# Which DNV layer each cached pipe frame came from, so its domains can be found.
+PIPE_LAYER_IDS_BY_KEY = {
+    "distribution_pipes": config.DISTRIBUTION_PIPE_LAYER_ID,
+    "service_pipes": config.SERVICE_PIPE_LAYER_ID,
+}
+
+
 def add_pipe_material_fields(gdf, layer_name="pipes"):
     if len(gdf) == 0:
         return gdf
@@ -254,13 +293,6 @@ def add_pipe_material_fields(gdf, layer_name="pipes"):
             f"{schema.PIPE_MATERIAL_RAW} will be empty. "
             f"Run: python scripts/enrich_assettype_cache.py"
         )
-    if not has_decoded:
-        log(
-            f"WARNING {layer_name}: no {schema.ASSETTYPE_DECODED} column, so material "
-            f"family cannot be derived from the decoded ASSETTYPE. Colours will be "
-            f"blank rather than derived from the DNV Grade field. "
-            f"Run: python scripts/enrich_assettype_cache.py"
-        )
 
     # nominaldiameter comes from the DNV service, not from this project, so it is
     # still resolved by candidate list.
@@ -270,9 +302,21 @@ def add_pipe_material_fields(gdf, layer_name="pipes"):
     )
 
     gdf[schema.PIPE_MATERIAL_RAW] = gdf[schema.ASSETTYPE].map(clean_value) if has_raw else None
-    gdf["PipeMaterialDomain"] = (
-        gdf[schema.ASSETTYPE_DECODED].map(clean_value) if has_decoded else None
-    )
+
+    if has_decoded:
+        gdf["PipeMaterialDomain"] = gdf[schema.ASSETTYPE_DECODED].map(clean_value)
+    else:
+        # No enrichment pass on this cache. Decode the codes it does carry.
+        labels = decode_from_subtypes(
+            gdf, PIPE_LAYER_IDS_BY_KEY.get(layer_name), layer_name)
+        if labels is None:
+            log(f"WARNING {layer_name}: material cannot be named, so every pipe "
+                f"will draw in the {assettype.UNCLASSIFIED_FAMILY} colour. "
+                f"Run: python scripts/enrich_assettype_cache.py")
+            gdf["PipeMaterialDomain"] = None
+        else:
+            gdf["PipeMaterialDomain"] = [clean_value(label) for label in labels]
+
     gdf["PipeMaterialFamily"] = gdf["PipeMaterialDomain"].map(material_family)
 
     # The column can also exist and be entirely null, when an enrichment run
@@ -417,24 +461,51 @@ def select_bbox(key, west, south, east, north, simplify, max_features):
     return sub, truncated, total
 
 
+LEAFLET_CDN = "https://unpkg.com/leaflet@1.9.4/dist"
+LEAFLET_FILES = ("leaflet.css", "leaflet.js")
+
+
+def leaflet_refs():
+    """Where the page should load Leaflet from.
+
+    The vendored copy is served from /leaflet/ when it is present. When it is
+    not, this used to emit /leaflet/leaflet.js anyway, the request 404'd, and the
+    page rendered as an empty white rectangle - the only clue being
+    "L is not defined" in the browser console.
+    """
+    if all((VENDOR / name).exists() for name in LEAFLET_FILES):
+        return "/leaflet/leaflet.css", "/leaflet/leaflet.js"
+    log(f"WARNING Leaflet is not vendored in {VENDOR}, so the page will load it "
+        f"from unpkg.com. If this network blocks that, the map will be blank. "
+        f"Run: python scripts/build_leaflet_context.py")
+    return f"{LEAFLET_CDN}/leaflet.css", f"{LEAFLET_CDN}/leaflet.js"
+
+
 def html_page():
     cfg_json = json.dumps(LAYERS)
     bounds_json = json.dumps(BOUNDS)
     parts = []
     parts.append('<!doctype html><html><head><meta charset="utf-8"/>')
     parts.append("<title>LeakRelocation DNV Material Leaflet Context</title>")
-    parts.append('<link rel="stylesheet" href="/leaflet/leaflet.css"/>')
+    css_ref, js_ref = leaflet_refs()
+    parts.append(f'<link rel="stylesheet" href="{css_ref}"/>')
     parts.append(
         "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}" + PANE_CSS + "</style>"
     )
     parts.append(
-        '</head><body><div id="map"></div>' + PANE_HTML + '<script src="/leaflet/leaflet.js"></script><script>' + PANE_JS
+        '</head><body><div id="map"></div>' + PANE_HTML
+        + f'<script src="{js_ref}"></script><script>' + PANE_JS
     )
     parts.append("const LAYER_CONFIG = " + cfg_json + ";")
     parts.append("const DATA_BOUNDS = " + bounds_json + ";")
     parts.append("const MAX_FEATURES=25000; const SIMPLIFY=0.000002;")
     parts.append(
-        "const MATERIAL_COLORS={PLASTIC:'#00b050',STEEL:'#404040',IRON:'#8b4513',COPPER:'#b87333',UNKNOWN:'#999999',OTHER:'#7b68ee'};"
+        # Generated from the Python MATERIAL_COLORS above, not written out a
+        # second time. The two used to be separate literals, so editing the
+        # Python one - as commit 87453fb did, moving PLASTIC to yellow and STEEL
+        # to blue - changed nothing on the map: this line is what paints the
+        # pipes, and it still held the old values.
+        "const MATERIAL_COLORS=" + json.dumps(MATERIAL_COLORS) + ";"
     )
     parts.append("const map=L.map('map',{preferCanvas:true});")
     parts.append(
@@ -559,9 +630,26 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
-if __name__ == "__main__":
+def serve(port=PORT, open_browser=False):
+    """Load the layers and serve the map until interrupted.
+
+    A function rather than module-level code so run.py can start it; it used to
+    run only under __main__.
+    """
     load_all()
-    url = f"http://{HOST}:{PORT}/"
-    print("OPEN THIS URL:", url, flush=True)
-    print("Press Ctrl+C in this window to stop the server.", flush=True)
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    url = f"http://{HOST}:{port}/"
+    log(f"OPEN THIS URL: {url}")
+    log("Press Ctrl+C in this window to stop the server.")
+    if open_browser:
+        import webbrowser
+
+        webbrowser.open(url)
+    with ThreadingHTTPServer((HOST, port), Handler) as server:
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            log("Stopped.")
+
+
+if __name__ == "__main__":
+    serve()
