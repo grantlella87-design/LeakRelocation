@@ -48,6 +48,9 @@ def parse_args(argv=None):
                         help="Serve the map without opening a browser.")
     parser.add_argument("--skip-signin-check", action="store_true",
                         help="Do not verify the token before the long stages.")
+    parser.add_argument("--pipes", action="store_true",
+                        help="Show the map with distribution and service pipes "
+                             "coloured by material, instead of the static map.")
     return parser.parse_args(argv)
 
 
@@ -89,7 +92,33 @@ def build_view():
     step("Building the map")
     import build_local_relocation_viewer as builder
 
-    return builder.build()
+    index = builder.build()
+    log("To see the distribution and service pipes coloured by material, "
+        "run: python run.py --pipes")
+    return index
+
+
+def serve_pipe_view(port, open_browser):
+    """Serve the map that carries the pipe layers themselves.
+
+    The static map holds the relocated leaks and their trace lines. The full
+    distribution and service pipe layers are far too large to write into one
+    GeoJSON and hand to a browser, so they are served by bounding box from the
+    downloaded caches instead, coloured per feature by material.
+    """
+    step("Serving the pipe map")
+    import leaflet_bbox_server as pipe_server
+
+    missing = [name for name in ("distribution_pipes", "service_pipes")
+               if not (config.LAYER_CACHE_DIR / f"{name}.pkl.gz").exists()]
+    if missing:
+        fail(f"No downloaded cache for {missing} in {config.LAYER_CACHE_DIR}. "
+             f"Run: python run.py --no-view")
+
+    # None means "the pipe server's own default", so --port stays meaningful for
+    # both maps without one stealing the other's port.
+    pipe_server.serve(port=port if port else pipe_server.PORT,
+                      open_browser=open_browser)
 
 
 def serve(index_path, port, open_browser):
@@ -141,6 +170,11 @@ def main(argv=None):
 
     if args.no_view:
         log("Done. Build the map later with: python run.py --view-only")
+        return 0
+
+    if args.pipes:
+        serve_pipe_view(args.port if args.port != DEFAULT_PORT else None,
+                        open_browser=not args.no_browser)
         return 0
 
     index = build_view()

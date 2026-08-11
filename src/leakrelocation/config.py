@@ -64,6 +64,13 @@ WORKFLOW_SCRIPT = Path(__file__).resolve().parent.parent / "leak_relocation_geop
 # The ArcPy-era copy that still runs from the share, kept for reference.
 NETWORK_MAIN_SCRIPT = PROJECT_DIR / "Arcpy Code" / "leak reolcation - geopandas.py"
 
+# Committed point-in-time copy of the DNV service metadata. It carries the
+# ASSETTYPE subtype domains, which is what makes a material decode possible
+# without a token - see assettype.decoder_for_layer.
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+REFERENCE_DIR = (REPO_ROOT / "reference" / "mapserver_json"
+                 / "NY_DNV_Synergi_RiskResults_Assets_NY")
+
 # --- Services ----------------------------------------------------------------
 
 GIS_ROOT = os.environ.get("LEAKRELOCATION_GIS_ROOT", "https://gis.nationalgrid.com").rstrip("/")

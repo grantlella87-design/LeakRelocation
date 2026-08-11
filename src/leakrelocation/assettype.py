@@ -20,9 +20,7 @@ _PACKAGE_PARENT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 if _PACKAGE_PARENT not in _sys.path:
     _sys.path.insert(0, _PACKAGE_PARENT)
 
-from leakrelocation import (
-    config,  # noqa: F401  (kept so callers can reach config via this module)
-)
+from leakrelocation import config
 from leakrelocation.matching import match_term, material_tokens
 
 # Checked in order; the first family with a matching term wins.
@@ -68,6 +66,37 @@ def family_from_assettype(decoded_assettype):
         if any(match_term(tokens, term) for term in terms):
             return family
     return UNCLASSIFIED_FAMILY
+
+
+def reference_layer_json(layer_id):
+    """The committed metadata copy for a layer id, or None.
+
+    config.REFERENCE_DIR holds one file per layer, named layer_006_*.json and so
+    on. Reading the domains from there means a tool can name a pipe material with
+    no token and no network - which is what lets the map colour pipes straight
+    from a downloaded cache.
+    """
+    import json
+
+    if not config.REFERENCE_DIR.is_dir():
+        return None
+    matches = sorted(config.REFERENCE_DIR.glob(f"layer_{int(layer_id):03d}_*.json"))
+    if not matches:
+        return None
+    with open(matches[0], encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def decoder_for_layer(layer_id):
+    """(type_id_field, decoder) built from the committed metadata for a layer.
+
+    Returns (None, {}) when that copy is not in the checkout, so a caller can say
+    so rather than silently colouring everything the same.
+    """
+    layer_json = reference_layer_json(layer_id)
+    if not layer_json:
+        return None, {}
+    return build_assettype_decoder(layer_json)
 
 
 def build_assettype_decoder(layer_json):
