@@ -21,6 +21,7 @@ from concurrent import futures
 import geopandas as gpd
 import pandas as pd
 import requests
+from shapely.errors import ShapelyError
 from shapely.geometry import LineString, MultiLineString, Point, shape
 from shapely.ops import nearest_points
 from shapely.strtree import STRtree
@@ -582,7 +583,12 @@ def esri_geometry_to_shape(geometry):
         return esri_polyline_to_geom(geometry)
     try:
         return shape(geometry)
-    except Exception:
+    except (AttributeError, KeyError, TypeError, ValueError, ShapelyError):
+        # Everything a malformed geometry dict raises: a missing "coordinates"
+        # is a KeyError, a non-dict an AttributeError, bad coordinate values a
+        # TypeError or ValueError, and an unknown "type" a GeometryTypeError -
+        # which descends from ShapelyError, not from TypeError, so it has to be
+        # named.
         return None
 
 
@@ -703,7 +709,11 @@ def date_value_to_epoch_ms(value):
         if pd.isna(parsed):
             return None
         return int(parsed.timestamp() * 1000)
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
+        # pandas raises DateParseError and OutOfBoundsDatetime for unparseable
+        # or out-of-range input, and both descend from ValueError; a value of a
+        # type it cannot read raises TypeError. OverflowError covers the int()
+        # conversion of a non-finite timestamp.
         return None
 
 
@@ -732,19 +742,19 @@ def epoch_ms_to_sql_timestamp(epoch_ms):
         return safe_default
     try:
         value = float(epoch_ms)
-    except Exception:
+    except (TypeError, ValueError):
         warn(
             f"Delta watermark was not numeric [{epoch_ms}]. Falling back to full safe delta window."
         )
         return safe_default
-    try:
-        if not math.isfinite(value):
-            warn(
-                f"Delta watermark was not finite [{epoch_ms}]. Falling back to full safe delta window."
-            )
-            return safe_default
-    except Exception:
-        pass
+    # No try/except around isfinite: value came from a float() that succeeded,
+    # and math.isfinite cannot fail on a float. The except/pass that used to sit
+    # here could never run.
+    if not math.isfinite(value):
+        warn(
+            f"Delta watermark was not finite [{epoch_ms}]. Falling back to full safe delta window."
+        )
+        return safe_default
     if value <= 0:
         warn(
             f"Delta watermark was <= 0 [{epoch_ms}]. Falling back to full safe delta window."
@@ -758,7 +768,9 @@ def epoch_ms_to_sql_timestamp(epoch_ms):
         return safe_default
     try:
         when = dt.datetime.fromtimestamp(value / 1000.0, dt.UTC).replace(tzinfo=None)
-    except Exception as ex:
+    except (OSError, OverflowError, ValueError) as ex:
+        # A watermark outside the platform's representable range raises
+        # OverflowError, or OSError on Windows for pre-epoch values.
         warn(
             f"Could not convert delta watermark [{epoch_ms}] to timestamp: {ex}. Falling back to full safe delta window."
         )
@@ -789,7 +801,12 @@ def read_layer_cache(layer_name, layer_url, where_clause):
         gdf = pd.read_pickle(data_path, compression="gzip")
         log(f"{layer_name}: loaded {len(gdf):,} records from local cache: {data_path}")
         return gdf, meta
-    except Exception as ex:
+    except Exception as ex:  # noqa: BLE001 - see below
+        # Deliberately broad. Unpickling a cache written by a different pandas,
+        # geopandas or Python raises whatever that payload's classes raise,
+        # including ModuleNotFoundError and AttributeError, and a truncated file
+        # raises EOFError or a gzip error. No cache is worth ending a run for:
+        # the error is reported and the layer is refreshed from the service.
         warn(
             f"{layer_name}: failed to read cache. Full refresh will be used. Error={ex}"
         )
@@ -821,7 +838,10 @@ def write_layer_cache(
             json.dump(meta, handle, indent=2)
         log(f"{layer_name}: wrote local cache: {data_path}")
         log(f"{layer_name}: max cached {modified_field} = {max_modified_ms}")
-    except Exception as ex:
+    except Exception as ex:  # noqa: BLE001 - the cache is an optimisation
+        # Pickling a frame can fail on an unpicklable column, and the write
+        # itself on a full disk or a permission problem. A run that has already
+        # done the work should finish, just without leaving a cache behind.
         warn(f"{layer_name}: failed to write cache. Error={ex}")
 
 
@@ -926,19 +946,21 @@ def query_feature_set(session, layer_url, where_clause, layer_name, meta, out_fi
                 for batch_number, object_id_batch in enumerate(batches, start=1)
             }
 
-            completed_batches = 0
-
-            for future in futures.as_completed(future_lookup):
+            for completed_batches, future in enumerate(
+                futures.as_completed(future_lookup), start=1
+            ):
                 batch_number = future_lookup[future]
 
                 try:
                     features.extend(future.result())
-                except Exception as ex:
+                except Exception as ex:  # noqa: BLE001 - re-raised from a worker
+                    # future.result() re-raises whatever the download raised, so
+                    # narrowing here would mean listing every failure mode of
+                    # the request path. It is turned into one fatal message that
+                    # names the batch.
                     fail(
                         f"{layer_name}: objectId POST batch {batch_number:,}/{total_batches:,} failed: {ex}"
                     )
-
-                completed_batches += 1
 
                 if (
                     completed_batches == 1
@@ -1614,6 +1636,8 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except Exception:
+    except Exception:  # noqa: BLE001 - the top-level handler catches everything
+        # Its whole purpose: print the traceback and exit non-zero, rather than
+        # let a bare stack trace scroll past in a console that then closes.
         print(traceback.format_exc(), flush=True)
         sys.exit(1)
