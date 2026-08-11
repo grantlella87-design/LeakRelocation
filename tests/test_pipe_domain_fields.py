@@ -42,8 +42,15 @@ class TestAppendsDomainFields:
         assert result["outFields"] == "OBJECTID,operatingpressure,ASSETGROUP,ASSETTYPE"
 
     def test_out_fields_key_is_matched_case_insensitively(self, lr):
-        result = lr.apply_pipe_domain_out_fields(DISTRIBUTION, {"OUTFIELDS": "material"})
-        assert result["OUTFIELDS"] == "material,ASSETGROUP,ASSETTYPE"
+        result = lr.apply_pipe_domain_out_fields(
+            DISTRIBUTION, {"OUTFIELDS": "nominaldiameter"})
+        assert result["OUTFIELDS"] == "nominaldiameter,ASSETGROUP,ASSETTYPE"
+
+    def test_the_dnv_material_field_alone_does_not_trigger_it(self, lr):
+        """That field is not requested any more, so it is not a signal that a
+        query wants attributes."""
+        params = {"outFields": "material"}
+        assert lr.apply_pipe_domain_out_fields(DISTRIBUTION, params) == params
 
 
 class TestLeavesOtherQueriesAlone:

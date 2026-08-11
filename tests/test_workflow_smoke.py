@@ -54,7 +54,8 @@ class TestBuildOutFields:
             out_fields = lr.build_out_fields(PIPE_META, layer_name)
         assert out_fields and out_fields != "*"
 
-    @pytest.mark.parametrize("field", ["nominaldiameter", "material", "operatingpressure"])
+    @pytest.mark.parametrize("field", ["nominaldiameter", "operatingpressure",
+                                       "ASSETGROUP", "ASSETTYPE"])
     def test_pipe_attributes_are_requested(self, lr, field):
         with redirect_stdout(io.StringIO()):
             out_fields = lr.build_out_fields(PIPE_META, "distribution pipes")
@@ -66,11 +67,19 @@ class TestBuildOutFields:
         assert "LMSLEAKNUMBER" in out_fields
         assert "jurisdiction" in out_fields
 
-    def test_falls_back_to_all_fields_when_nothing_resolves(self, lr):
-        with redirect_stdout(io.StringIO()):
-            assert lr.build_out_fields({"fields": [{"name": "zzz"}]}, "distribution pipes") == "*"
+    def test_a_pipe_layer_without_assettype_fails_loudly(self, lr):
+        """ASSETTYPE is the material type, so a pipe layer that does not have it
+        cannot be matched on material. This used to fall back to requesting every
+        field, which downloaded pipes with no material type and left the failure
+        to be discovered much later as an empty PipeMaterialRaw."""
+        with pytest.raises(RuntimeError, match="ASSETTYPE is the material type"), \
+                redirect_stdout(io.StringIO()):
+            lr.build_out_fields({"fields": [{"name": "zzz"}]}, "distribution pipes")
 
-    def test_empty_metadata(self, lr):
+    def test_empty_metadata_still_falls_back_to_all_fields(self, lr):
+        """No field list is not the same as a field list without ASSETTYPE:
+        there is nothing to check against, and "*" returns ASSETTYPE if the layer
+        has it."""
         with redirect_stdout(io.StringIO()):
             assert lr.build_out_fields({}, "distribution pipes") == "*"
 
@@ -84,7 +93,7 @@ class TestCandidateGroupsExist:
         "GLOBALID_CANDIDATES",
         "OBJECTID_CANDIDATES",
         "PIPE_DIAMETER_CANDIDATES",
-        "PIPE_MATERIAL_CANDIDATES",
+        "PIPE_MATERIAL_FIELDS",
         "PIPE_PRESSURE_CANDIDATES",
         "SUPP_KEY_CANDIDATES",
         "SUPP_DIAMETER_CANDIDATES",

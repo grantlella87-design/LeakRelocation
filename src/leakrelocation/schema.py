@@ -25,8 +25,11 @@ ASSETTYPE_DOMAIN = "ASSETTYPE_DOMAIN"
 PIPE_MATERIAL_RAW = "PipeMaterialRaw"
 # The decoded ASSETTYPE label, classified into a family.
 PIPE_MATERIAL_FAMILY = "PipeMaterialFamily"
-# The original DNV material/Grade field, preserved before "material" is
-# republished as the decoded ASSETTYPE.
+# Legacy. This held the DNV `material` field - a spec, grade or descriptor, not
+# the material type - carried across so republishing "material" as the decoded
+# ASSETTYPE did not destroy it. The workflow no longer downloads that field, so
+# new caches will not have this column; the enrichment still preserves it where
+# an older cache already carries one. Nothing reads it.
 GRADE_MATERIAL = "GradeMaterial"
 # The decoded ASSETTYPE, under the name the relocation logic reads.
 MATERIAL = "material"
