@@ -309,3 +309,41 @@ class TestRunPyServesThisMap:
         with redirect_stdout(io.StringIO()):
             run_py.serve_map(8800, open_browser=False)
         assert served["port"] == 8800
+
+
+class TestBothPipeLayersAreOnAtStartup:
+    """They used to be off, so the map opened with no pipes on it and the two
+    layers the whole thing is about had to be found in the control first."""
+
+    @pytest.mark.parametrize("key", ["distribution_pipes", "service_pipes"])
+    def test_the_pipe_layer_is_a_default(self, server, key):
+        assert server.LAYERS[key]["default"] is True
+
+    def test_every_layer_is_on(self, server):
+        off = [key for key, cfg in server.LAYERS.items() if not cfg["default"]]
+        assert off == []
+
+    def test_the_page_adds_defaults_to_the_map(self, server):
+        """One loop reads the flag, so the config above is what the page acts on."""
+        assert "if(LAYER_CONFIG[key].default){groups[key].addTo(map)" in server.html_page()
+
+
+class TestTheMapZoomsFurtherThanTheTiles:
+    def test_the_map_max_zoom_is_past_the_tile_providers(self, server):
+        assert server.MAX_ZOOM > server.OSM_MAX_NATIVE_ZOOM
+        assert server.MAX_ZOOM > server.ESRI_MAX_NATIVE_ZOOM
+
+    def test_the_page_sets_the_map_max_zoom(self, server):
+        assert f"maxZoom:{server.MAX_ZOOM}" in server.html_page()
+
+    def test_every_tile_layer_upscales_past_its_native_zoom(self, server):
+        """Without maxNativeZoom a tile layer refuses to render past its own
+        maxZoom, and Leaflet caps the map at the same place - so zooming stops."""
+        page = server.html_page()
+        assert page.count("maxNativeZoom:") == 3
+        for native in (server.OSM_MAX_NATIVE_ZOOM, server.ESRI_MAX_NATIVE_ZOOM):
+            assert f"maxNativeZoom:{native}" in page
+
+    def test_no_tile_layer_still_caps_the_map_at_its_own_zoom(self, server):
+        page = server.html_page()
+        assert f"maxZoom:{server.OSM_MAX_NATIVE_ZOOM}," not in page
