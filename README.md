@@ -27,7 +27,41 @@ assessment.
 | `src/leakrelocation/viewer_html.py` | Relocation viewer HTML template. |
 | `scripts/` | Enrichment, audit and viewer-building tools. |
 | `viewer/` | Local map viewer and its server. |
+| `GISportal/` | Separate project: MA main lines export and its map. |
 | `tests/` | Tests that need no network and no shared drive. |
+
+### GISportal
+
+A separate project against the same ArcGIS Portal. It imports the shared
+`leakrelocation` package through `GISportal/_bootstrap.py`, so one sign-in
+serves both and there is a single copy of the authentication flow.
+
+| Script | Purpose |
+| --- | --- |
+| `query_ma_main_lines_2022_plus.py` | Export MA main lines installed or created since a date, to CSV and GeoJSON. |
+| `main_lines_viewer.py` | Build and serve a Leaflet map of that export. |
+
+```bat
+:: how many main lines the date range covers, before downloading them
+python GISportal\query_ma_main_lines_2022_plus.py --count-only
+
+:: export, then map it in one step
+python GISportal\query_ma_main_lines_2022_plus.py --viewer
+
+:: map an export produced earlier
+python GISportal\main_lines_viewer.py
+```
+
+Lines are coloured by material family, and each family is a layer that can be
+switched off and its own tab in the attribute table. The family is computed in
+Python and written into the GeoJSON, so the map cannot disagree with the data —
+the relocation viewers each carry their own JavaScript copy of that logic, and
+those copies drifting is what made every copper pipe render as plastic.
+
+The map needs Leaflet locally. The build copies it from
+`<work root>/leaflet_context/vendor/leaflet` if present, otherwise downloads it
+into the viewer folder once. Basemap tiles come from OpenStreetMap or Esri; if
+this network blocks them the lines still draw, on a blank background.
 
 ### Scripts
 

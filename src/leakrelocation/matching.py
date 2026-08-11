@@ -137,13 +137,18 @@ PREFIX_MATCH_MIN_LENGTH = 4
 _TOKEN_SEPARATOR = re.compile(r"[^A-Z0-9]+")
 
 
-def material_tokens(value):
-    """Split a decoded material label into uppercase alphanumeric tokens.
+def tokens_of_label(label):
+    """Split an already-decoded label into uppercase alphanumeric tokens.
 
     Splitting on punctuation means "cast-iron" and "Cast Iron" tokenise the
     same way, so both resolve to the IRON family.
     """
-    return [token for token in _TOKEN_SEPARATOR.split(upper(material_label(value))) if token]
+    return [token for token in _TOKEN_SEPARATOR.split(upper(label)) if token]
+
+
+def material_tokens(value):
+    """Tokens for a DNV ASSETTYPE value, decoding a numeric subtype code first."""
+    return tokens_of_label(material_label(value))
 
 
 def match_term(tokens, term):
@@ -167,13 +172,25 @@ def match_term(tokens, term):
     return False
 
 
-def material_family(value):
-    """Map a material to its broad family, falling back to the label itself."""
-    tokens = material_tokens(value)
+def family_from_label(label):
+    """Family for a label that is already text, falling back to the label itself.
+
+    No numeric decoding happens here, which is what makes this usable for
+    material text from another service. material_family goes through
+    material_label first, and that decodes any value whose first number matches
+    a DNV service-pipe subtype code - so "2 IN PLASTIC" would come back "Cast
+    Iron", because it starts with a 2.
+    """
+    tokens = tokens_of_label(label)
     for family, terms in MATERIAL_FAMILY_TERMS.items():
         if any(match_term(tokens, term) for term in terms):
             return family
-    return upper(material_label(value))
+    return upper(label)
+
+
+def material_family(value):
+    """Map a DNV ASSETTYPE material to its broad family."""
+    return family_from_label(material_label(value))
 
 
 def material_matches(leak_value, pipe_value):
