@@ -221,16 +221,23 @@ LEAK_KEY_CANDIDATES = ["LMSLEAKNUMBER", "LEAKNUMBER"]
 
 PIPE_DIAMETER_CANDIDATES = ["nominaldiameter", "outsidediameter"]
 
-# Which field to ask the DNV service for, so the material arrives in the
-# download. This is the DNV Grade field: the material *class* comes from the
-# decoded ASSETGROUP + ASSETTYPE subtype domains, which
-# apply_pipe_domain_out_fields appends to every pipe query.
+# ASSETTYPE *is* the pipe material. Its subtype domain value is the material
+# name - "Copper", "Cast Iron", "Plastic PE" - and decoding needs ASSETGROUP
+# too, because the domain is defined per subtype: code 999 is "UNK" for a pipe
+# and "Unknown Type" for the unknown subtype, and codes 281 and 321 exist only
+# outside the pipe subtypes.
 #
-# Not to be confused with which cache column the matching reads - that is
-# schema.MATERIAL, published by the enrichment, and read by name in
-# prepare_pipes. Removing this list because prepare_pipes no longer used it
-# broke build_out_fields, which still does.
-PIPE_MATERIAL_CANDIDATES = ["material"]
+# Both are requested outright. They were previously bolted on by
+# apply_pipe_domain_out_fields after the fact, and only when the outFields it
+# was handed happened to mention nominaldiameter or operatingpressure - so the
+# material type reached the download by way of a heuristic. It is now asked for
+# directly, and a pipe layer without it fails immediately rather than
+# downloading pipes that have no material.
+#
+# The DNV `material` field is not requested at all. It holds a spec, grade or
+# descriptor - not the material type - and requesting it alongside ASSETTYPE
+# only invited the two to be confused for each other.
+PIPE_MATERIAL_FIELDS = [schema.ASSETGROUP, schema.ASSETTYPE]
 
 PIPE_PRESSURE_CANDIDATES = ["operatingpressure", "maopdesign"]
 
@@ -356,10 +363,10 @@ def is_pipe_layer_url(url):
 def apply_pipe_domain_out_fields(url, params):
     """Ensure DNV pipe-layer queries also return ASSETGROUP and ASSETTYPE.
 
-    Pipe material classification comes from the decoded ASSETGROUP + ASSETTYPE
-    subtype domains. The DNV `material` field is Grade/characteristic data and
-    is not the material class used for relocation assessment, so any pipe query
-    that asks for attribute columns must carry the domain fields as well.
+    ASSETTYPE is the pipe material and ASSETGROUP selects the subtype domain
+    that names it, so no pipe query that asks for attributes is of any use
+    without them. build_out_fields now requests both outright; this stays as the
+    backstop for any other code path that builds an outFields list.
 
     Returns `params` unchanged unless this is a pipe-layer query whose
     outFields requests attributes but omits ASSETTYPE.
@@ -383,9 +390,10 @@ def apply_pipe_domain_out_fields(url, params):
         return params
 
     lowered = out_fields.lower()
+    # Deliberately does not look for "material": that field is not requested
+    # any more, and a request built without it still needs the domain fields.
     wants_attributes = (
         "nominaldiameter" in lowered
-        or "material" in lowered
         or "operatingpressure" in lowered
     )
     if not wants_attributes or "assettype" in lowered:
@@ -625,7 +633,8 @@ def build_out_fields(meta, layer_name):
         wanted.append(object_id_field)
     if modified_field:
         wanted.append(modified_field)
-    if "historic" in layer_name.lower() or "leak" in layer_name.lower():
+    is_leak_layer = "historic" in layer_name.lower() or "leak" in layer_name.lower()
+    if is_leak_layer:
         candidate_groups = [
             LEAK_KEY_CANDIDATES,
             GLOBALID_CANDIDATES,
@@ -634,11 +643,26 @@ def build_out_fields(meta, layer_name):
     else:
         candidate_groups = [
             PIPE_DIAMETER_CANDIDATES,
-            PIPE_MATERIAL_CANDIDATES,
             PIPE_PRESSURE_CANDIDATES,
             GLOBALID_CANDIDATES,
             JURISDICTION_CANDIDATES,
         ]
+        # The material type. Every one of these is required, not a first match
+        # among alternatives, so they are added outright rather than resolved as
+        # a candidate group.
+        #
+        # Only checked when the metadata actually lists fields. With no field
+        # list there is nothing to check against, and the fallback at the end of
+        # this function requests every field - which includes these two - so
+        # failing there would break a run that would otherwise have worked.
+        for name in PIPE_MATERIAL_FIELDS if field_names else []:
+            resolved = resolve_from_names(field_names, [name])
+            if resolved:
+                wanted.append(resolved)
+            else:
+                fail(f"{layer_name}: the layer has no {name} field, so pipe "
+                     f"material cannot be read. ASSETTYPE is the material type. "
+                     f"Fields: {sorted(field_names)}")
     for group in candidate_groups:
         resolved = resolve_from_names(field_names, group)
         if resolved:

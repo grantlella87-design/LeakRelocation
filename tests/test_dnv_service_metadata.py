@@ -105,12 +105,24 @@ class TestFieldNamesUsedByTheWorkflow:
             assert self.resolved(workflow, layer,
                                  workflow.PIPE_DIAMETER_CANDIDATES) == "nominaldiameter"
 
-    def test_pipe_material_is_the_dnv_grade_field(self, workflow, distribution, service):
-        """This list asks for the DNV material/Grade field. The material class
-        comes from ASSETGROUP + ASSETTYPE, appended separately."""
+    def test_pipe_material_is_assettype(self, workflow, distribution, service):
+        """ASSETTYPE is the pipe material, with ASSETGROUP selecting the subtype
+        domain that names it. Both are required, so both are requested."""
+        assert workflow.PIPE_MATERIAL_FIELDS == ["ASSETGROUP", "ASSETTYPE"]
         for layer in (distribution, service):
-            assert self.resolved(workflow, layer,
-                                 workflow.PIPE_MATERIAL_CANDIDATES) == "material"
+            for name in workflow.PIPE_MATERIAL_FIELDS:
+                assert self.resolved(workflow, layer, [name]) == name
+
+    def test_the_dnv_material_field_is_not_requested(self, workflow):
+        """It is a spec, grade or descriptor - not the material type - and is of
+        no use to this workflow."""
+        for attribute in dir(workflow):
+            if not attribute.endswith("_CANDIDATES") or attribute.startswith("SUPP_"):
+                continue
+            values = getattr(workflow, attribute)
+            if not isinstance(values, list):
+                continue
+            assert "material" not in [str(v).lower() for v in values], attribute
 
     def test_pipe_pressure(self, workflow, distribution, service):
         for layer in (distribution, service):
@@ -139,7 +151,6 @@ class TestFieldNamesUsedByTheWorkflow:
         "MODIFIED_FIELD_CANDIDATES",
         "LEAK_KEY_CANDIDATES",
         "PIPE_DIAMETER_CANDIDATES",
-        "PIPE_MATERIAL_CANDIDATES",
         "PIPE_PRESSURE_CANDIDATES",
         "GLOBALID_CANDIDATES",
         "OBJECTID_CANDIDATES",
@@ -159,7 +170,6 @@ class TestFieldNamesUsedByTheWorkflow:
         "MODIFIED_FIELD_CANDIDATES",
         "LEAK_KEY_CANDIDATES",
         "PIPE_DIAMETER_CANDIDATES",
-        "PIPE_MATERIAL_CANDIDATES",
         "PIPE_PRESSURE_CANDIDATES",
         "GLOBALID_CANDIDATES",
         "OBJECTID_CANDIDATES",
