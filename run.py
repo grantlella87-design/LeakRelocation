@@ -17,10 +17,8 @@ to get wrong. The individual scripts still work on their own - this drives them.
 
 The map is src/leaflet_bbox_server.py, which shows the distribution and service
 pipes coloured by material along with the leaks, the relocated points and the
-trace lines. It used to build a static GeoJSON map instead, and then needed
---pipes to see the pipes at all - two maps where the second showed everything
-the first did. scripts/build_local_relocation_viewer.py still builds the static
-one, for a folder that can be zipped and opened without Python.
+trace lines. There used to be a second, static map and a --pipes flag to reach
+the pipes at all; that map showed a subset of this one and has been removed.
 """
 import argparse
 import os

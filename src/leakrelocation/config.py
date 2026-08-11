@@ -40,8 +40,8 @@ PROJECT_DIR = _path_from_env("LEAKRELOCATION_PROJECT_DIR", DEFAULT_PROJECT_DIR)
 LAYER_CACHE_DIR = _path_from_env("LEAKRELOCATION_CACHE_DIR", WORK_ROOT / "layer_cache")
 OUTPUT_DIR = WORK_ROOT / "production_moved_leak_outputs"
 ENRICHMENT_DIR = WORK_ROOT / "assettype_cache_enrichment"
-VIEWER_DIR = OUTPUT_DIR / "local_leaflet_view"
-VIEWER_WITH_PIPES_DIR = OUTPUT_DIR / "local_leaflet_view_with_pipes"
+# No VIEWER_DIR any more: the static viewer that wrote GeoJSON into a folder is
+# gone, and the map is served from the caches instead.
 
 # The GeoPackage is written locally. Writing it straight to the share made every
 # run depend on network write throughput, and a partial write left the shared
@@ -70,6 +70,12 @@ NETWORK_MAIN_SCRIPT = PROJECT_DIR / "Arcpy Code" / "leak reolcation - geopandas.
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REFERENCE_DIR = (REPO_ROOT / "reference" / "mapserver_json"
                  / "NY_DNV_Synergi_RiskResults_Assets_NY")
+
+# Leaflet, committed so the map works with no internet and nothing to build
+# first. scripts/build_leaflet_context.py used to download it into the work root;
+# without a copy in the repo the page falls back to a CDN, and a network that
+# blocks unpkg.com gives a blank map.
+VENDORED_LEAFLET_DIR = REPO_ROOT / "vendor" / "leaflet"
 
 # --- Services ----------------------------------------------------------------
 

@@ -464,20 +464,40 @@ def select_bbox(key, west, south, east, north, simplify, max_features):
 LEAFLET_CDN = "https://unpkg.com/leaflet@1.9.4/dist"
 LEAFLET_FILES = ("leaflet.css", "leaflet.js")
 
+CONTENT_TYPES = {".css": "text/css", ".js": "application/javascript",
+                 ".png": "image/png", ".svg": "image/svg+xml"}
+
+
+def guess_content_type(name):
+    return CONTENT_TYPES.get(os.path.splitext(name)[1].lower(),
+                             "application/octet-stream")
+
+
+def leaflet_dir():
+    """The folder to serve /leaflet/ from, or None.
+
+    The copy committed in the repository is preferred, so the map works with no
+    internet and nothing built first. The work-root copy is still honoured for a
+    machine that already has one.
+    """
+    for candidate in (config.VENDORED_LEAFLET_DIR, VENDOR):
+        if all((candidate / name).exists() for name in LEAFLET_FILES):
+            return candidate
+    return None
+
 
 def leaflet_refs():
     """Where the page should load Leaflet from.
 
-    The vendored copy is served from /leaflet/ when it is present. When it is
-    not, this used to emit /leaflet/leaflet.js anyway, the request 404'd, and the
-    page rendered as an empty white rectangle - the only clue being
-    "L is not defined" in the browser console.
+    When no local copy exists this used to emit /leaflet/leaflet.js anyway, the
+    request 404'd, and the page rendered as an empty white rectangle - the only
+    clue being "L is not defined" in the browser console.
     """
-    if all((VENDOR / name).exists() for name in LEAFLET_FILES):
+    if leaflet_dir():
         return "/leaflet/leaflet.css", "/leaflet/leaflet.js"
-    log(f"WARNING Leaflet is not vendored in {VENDOR}, so the page will load it "
-        f"from unpkg.com. If this network blocks that, the map will be blank. "
-        f"Run: python scripts/build_leaflet_context.py")
+    log(f"WARNING no local Leaflet in {config.VENDORED_LEAFLET_DIR} or {VENDOR}, "
+        f"so the page will load it from unpkg.com. If this network blocks that, "
+        f"the map will be blank.")
     return f"{LEAFLET_CDN}/leaflet.css", f"{LEAFLET_CDN}/leaflet.js"
 
 
@@ -567,15 +587,19 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path in ["/", "/index.html"]:
                 self.send_text(html_page(), "text/html")
             elif parsed.path.startswith("/leaflet/"):
-                name = parsed.path.split("/")[-1]
-                path = VENDOR / name
-                if not path.exists():
+                folder = leaflet_dir()
+                if folder is None:
+                    self.send_error(404, "No local Leaflet")
+                    return
+                # Resolved and checked against the folder, so a crafted path
+                # cannot walk out of it. Subpaths matter: leaflet.css asks for
+                # images/layers.png and images/marker-icon.png.
+                relative = parsed.path[len("/leaflet/"):]
+                path = (folder / relative).resolve()
+                if folder.resolve() not in path.parents or not path.is_file():
                     self.send_error(404, "Missing Leaflet asset")
                     return
-                self.send_bytes(
-                    path.read_bytes(),
-                    "text/css" if name.endswith(".css") else "application/javascript",
-                )
+                self.send_bytes(path.read_bytes(), guess_content_type(path.name))
             elif parsed.path == "/api/layer":
                 q = parse_qs(parsed.query)
                 name = q.get("name", [""])[0]

@@ -168,30 +168,71 @@ class TestThePageUsesOnePalette:
 
 
 class TestLeafletIsAlwaysReferenced:
-    def test_the_vendored_copy_is_used_when_present(self, server, monkeypatch, tmp_path):
-        vendor = tmp_path / "leaflet"
-        vendor.mkdir()
-        for name in server.LEAFLET_FILES:
-            (vendor / name).write_text("/* stub */")
-        monkeypatch.setattr(server, "VENDOR", vendor)
+    """Leaflet is committed under vendor/leaflet, so the map needs no internet and
+    nothing built first. scripts/build_leaflet_context.py used to be the only
+    thing that put it on disk, and it is gone."""
+
+    @staticmethod
+    def no_leaflet_anywhere(server, monkeypatch, tmp_path):
+        monkeypatch.setattr(config, "VENDORED_LEAFLET_DIR", tmp_path / "absent-repo")
+        monkeypatch.setattr(server, "VENDOR", tmp_path / "absent-work")
+
+    def test_the_copy_committed_in_the_repository_is_found(self, server):
+        assert server.leaflet_dir() == config.VENDORED_LEAFLET_DIR
         assert server.leaflet_refs() == ("/leaflet/leaflet.css", "/leaflet/leaflet.js")
 
-    def test_a_missing_vendored_copy_falls_back_to_the_cdn_and_warns(
+    def test_the_committed_copy_is_complete(self):
+        """Both files, plus the images leaflet.css asks for - without those the
+        layers control draws without its icon."""
+        for name in ("leaflet.css", "leaflet.js"):
+            assert (config.VENDORED_LEAFLET_DIR / name).is_file(), name
+        for name in ("layers.png", "layers-2x.png", "marker-icon.png"):
+            assert (config.VENDORED_LEAFLET_DIR / "images" / name).is_file(), name
+
+    def test_the_repository_copy_wins_over_the_work_root_one(
+            self, server, monkeypatch, tmp_path):
+        work = tmp_path / "leaflet"
+        work.mkdir()
+        for name in server.LEAFLET_FILES:
+            (work / name).write_text("/* stub */")
+        monkeypatch.setattr(server, "VENDOR", work)
+        assert server.leaflet_dir() == config.VENDORED_LEAFLET_DIR
+
+    def test_a_work_root_copy_is_still_honoured(self, server, monkeypatch, tmp_path):
+        work = tmp_path / "leaflet"
+        work.mkdir()
+        for name in server.LEAFLET_FILES:
+            (work / name).write_text("/* stub */")
+        monkeypatch.setattr(config, "VENDORED_LEAFLET_DIR", tmp_path / "absent")
+        monkeypatch.setattr(server, "VENDOR", work)
+        assert server.leaflet_dir() == work
+
+    def test_no_local_copy_falls_back_to_the_cdn_and_warns(
             self, server, monkeypatch, tmp_path):
         """It used to emit /leaflet/leaflet.js regardless; the request 404'd and
         the page rendered as an empty white rectangle, with only
         "L is not defined" in the console to say why."""
-        monkeypatch.setattr(server, "VENDOR", tmp_path / "absent")
+        self.no_leaflet_anywhere(server, monkeypatch, tmp_path)
         refs, output = quiet(server.leaflet_refs)
         assert all(ref.startswith(server.LEAFLET_CDN) for ref in refs)
         assert "blank" in output
 
     def test_the_page_never_references_a_missing_local_asset(
             self, server, monkeypatch, tmp_path):
-        monkeypatch.setattr(server, "VENDOR", tmp_path / "absent")
+        self.no_leaflet_anywhere(server, monkeypatch, tmp_path)
         page, _ = quiet(server.html_page)
         assert "/leaflet/leaflet.js" not in page
         assert f"{server.LEAFLET_CDN}/leaflet.js" in page
+
+    @pytest.mark.parametrize(("name", "content_type"), [
+        ("leaflet.css", "text/css"),
+        ("leaflet.js", "application/javascript"),
+        ("layers.png", "image/png"),
+        ("anything.else", "application/octet-stream"),
+    ])
+    def test_assets_are_served_with_a_sensible_content_type(
+            self, server, name, content_type):
+        assert server.guess_content_type(name) == content_type
 
 
 class TestTheServerCanBeStartedByRunPy:

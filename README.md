@@ -24,11 +24,10 @@ assessment.
 | `src/leakrelocation/config.py` | Every path, URL and tuning knob. |
 | `src/leakrelocation/matching.py` | Pure material/diameter matching logic. |
 | `src/leakrelocation/assettype.py` | ASSETGROUP/ASSETTYPE subtype decoding. |
-| `src/leakrelocation/viewer_pane.py` | Attribute table pane shared by the viewers. |
-| `src/leakrelocation/viewer_html.py` | Relocation viewer HTML template. |
-| `scripts/` | Enrichment, audit and viewer-building tools. |
-| `viewer/` | Local map viewer and its server. |
+| `src/leakrelocation/viewer_pane.py` | Attribute table pane docked under the map. |
+| `scripts/` | Sign-in and cache-repair tools. |
 | `reference/` | Service metadata copies the tests check against. |
+| `vendor/leaflet/` | Leaflet, committed so the map needs no internet. |
 | `tests/` | Tests that need no network and no shared drive. |
 
 ### Service metadata reference
@@ -61,12 +60,13 @@ files anything read. Re-copy from the URL above if another layer is ever needed.
 
 | Script | Purpose |
 | --- | --- |
-| `enrich_assettype_cache.py` | Decode ASSETGROUP/ASSETTYPE into the local pipe caches. |
-| `preflight_assettype_cache_check.py` | Confirm the caches are present and enriched. |
-| `audit_production_relocation_match_material.py` | Check relocated output against the pipe caches. |
-| `inspect_production_moved_leaks.py` | Summarise the relocated leaks in the GeoPackage. |
-| `build_local_relocation_viewer.py` | Build the local map of relocated leaks. |
-| `build_leaflet_context.py` | Build the standalone Leaflet context map. |
+| `arcgis_signin.py` | Sign in on its own, inspect or clear the cached token, test the redirect. |
+| `preflight_assettype_cache_check.py` | Report which pipe caches are present. |
+| `enrich_assettype_cache.py` | Repair an existing cache. Not needed for a normal run — `run.py` decodes the material itself. |
+
+The viewer builders, the audit and the inspect scripts are gone: `run.py` serves
+one map that shows everything they reported on, and the material decode moved
+into the workflow.
 
 ## Configuration
 
@@ -174,9 +174,9 @@ The pipe layers are read from the downloaded caches and served by bounding box, 
 capped number of features at a time, re-fetched as the map moves. They are far
 too large to write into a single GeoJSON and hand to a browser.
 
-`scripts/build_local_relocation_viewer.py` still builds a **static** map of the
-relocated leaks and trace lines — a folder that can be zipped and opened without
-Python running. It does not carry the pipe layers, for the reason above.
+Leaflet is committed under `vendor/leaflet/`, so the page has it with no internet
+and nothing to build first. The map falls back to a CDN only if that copy is
+missing, and warns when it does.
 
 There is no longer an enrichment step to remember. The material decode happens
 inside the workflow, which is why the order can no longer be got wrong; it used
@@ -187,18 +187,14 @@ Every stage still runs on its own:
 
 ```bat
 python scripts\arcgis_signin.py --test-query      :: sign in, prove the token works
+python scripts\arcgis_signin.py --check           :: test the redirect only
 python src\leak_relocation_geopandas.py           :: download, decode, match, write
-python scripts\build_local_relocation_viewer.py   :: build the map
-python viewer\serve_viewer.py                     :: serve a built map
+python src\leaflet_bbox_server.py                 :: serve the map on its own
 
 :: diagnostics
 python scripts\preflight_assettype_cache_check.py
 python scripts\enrich_assettype_cache.py          :: repair an existing cache
-python scripts\enrich_assettype_cache.py --workers 1     :: unreliable connection
 python scripts\enrich_assettype_cache.py --dry-run       :: report, write nothing
-python scripts\audit_production_relocation_match_material.py
-python scripts\report_copper_impact.py
-python scripts\build_leaflet_context.py
 ```
 
 ### Attribute pane
@@ -216,10 +212,6 @@ Rendering is capped at 500 rows per view — a production layer holds tens of
 thousands of features and an uncapped table would lock the browser. The row
 count shows `showing N of M` when the cap applies; narrow the set with the
 filter.
-
-`viewer/index_basic.html` is a committed snapshot of the generated viewer.
-`tests/test_viewer.py` re-renders the template and asserts the snapshot still
-matches, so the two cannot drift.
 
 ## Tests
 
