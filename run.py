@@ -2,7 +2,7 @@
 
     python run.py                    everything, then serve the map
     python run.py --no-view          stop after the GeoPackage
-    python run.py --view-only        just rebuild and serve the map
+    python run.py --view-only        just serve the map
     python run.py --refresh          ignore the layer caches
     python run.py --port 8800        serve on another port
 
@@ -14,11 +14,17 @@ order wrong produced a failure that named the next command to run:
 
 The material decode now happens inside the workflow, so there is no order left
 to get wrong. The individual scripts still work on their own - this drives them.
+
+The map is src/leaflet_bbox_server.py, which shows the distribution and service
+pipes coloured by material along with the leaks, the relocated points and the
+trace lines. It used to build a static GeoJSON map instead, and then needed
+--pipes to see the pipes at all - two maps where the second showed everything
+the first did. scripts/build_local_relocation_viewer.py still builds the static
+one, for a folder that can be zipped and opened without Python.
 """
 import argparse
 import os
 import sys
-import webbrowser
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -30,7 +36,7 @@ for folder in ("src", "scripts"):
 from leakrelocation import config
 from leakrelocation.output import fail, log, step, warn
 
-DEFAULT_PORT = 8777
+PIPE_CACHES = ("distribution_pipes", "service_pipes")
 
 
 def parse_args(argv=None):
@@ -39,18 +45,15 @@ def parse_args(argv=None):
     parser.add_argument("--no-view", action="store_true",
                         help="Stop after writing the GeoPackage.")
     parser.add_argument("--view-only", action="store_true",
-                        help="Skip the workflow; rebuild and serve the map.")
+                        help="Skip the workflow and serve the map.")
     parser.add_argument("--refresh", action="store_true",
                         help="Ignore the layer caches and re-download.")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT,
-                        help=f"Port for the map. Default: {DEFAULT_PORT}.")
+    parser.add_argument("--port", type=int, default=None,
+                        help="Port for the map. Default: the map server's own.")
     parser.add_argument("--no-browser", action="store_true",
                         help="Serve the map without opening a browser.")
     parser.add_argument("--skip-signin-check", action="store_true",
                         help="Do not verify the token before the long stages.")
-    parser.add_argument("--pipes", action="store_true",
-                        help="Show the map with distribution and service pipes "
-                             "coloured by material, instead of the static map.")
     return parser.parse_args(argv)
 
 
@@ -88,64 +91,28 @@ def run_workflow(refresh):
     return Path(config.OUTPUT_GPKG)
 
 
-def build_view():
-    step("Building the map")
-    import build_local_relocation_viewer as builder
-
-    index = builder.build()
-    log("To see the distribution and service pipes coloured by material, "
-        "run: python run.py --pipes")
-    return index
+def missing_pipe_caches():
+    """Which pipe caches the map needs and does not have."""
+    return [name for name in PIPE_CACHES
+            if not (config.LAYER_CACHE_DIR / f"{name}.pkl.gz").exists()]
 
 
-def serve_pipe_view(port, open_browser):
-    """Serve the map that carries the pipe layers themselves.
+def serve_map(port, open_browser):
+    """Serve the map: pipes by material, plus the leaks and relocated output.
 
-    The static map holds the relocated leaks and their trace lines. The full
-    distribution and service pipe layers are far too large to write into one
-    GeoJSON and hand to a browser, so they are served by bounding box from the
-    downloaded caches instead, coloured per feature by material.
+    The pipe layers are read from the downloaded caches and served by bounding
+    box, a capped number of features at a time, because they are far too large to
+    write into one GeoJSON and hand to a browser.
     """
-    step("Serving the pipe map")
-    import leaflet_bbox_server as pipe_server
-
-    missing = [name for name in ("distribution_pipes", "service_pipes")
-               if not (config.LAYER_CACHE_DIR / f"{name}.pkl.gz").exists()]
-    if missing:
-        fail(f"No downloaded cache for {missing} in {config.LAYER_CACHE_DIR}. "
-             f"Run: python run.py --no-view")
-
-    # None means "the pipe server's own default", so --port stays meaningful for
-    # both maps without one stealing the other's port.
-    pipe_server.serve(port=port if port else pipe_server.PORT,
-                      open_browser=open_browser)
-
-
-def serve(index_path, port, open_browser):
-    """Serve the viewer folder until interrupted."""
-    import functools
-    import http.server
-
-    directory = str(Path(index_path).parent)
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler,
-                                directory=directory)
     step("Serving the map")
-    try:
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
-    except OSError as exc:
-        fail(f"Could not serve on port {port}: {exc}. "
-             f"Use --port to pick another one.")
+    import leaflet_bbox_server as map_server
 
-    url = f"http://127.0.0.1:{port}/{Path(index_path).name}"
-    with server:
-        log(f"Serving {directory} at {url}")
-        log("Press Ctrl+C to stop.")
-        if open_browser:
-            webbrowser.open(url)
-        try:
-            server.serve_forever()
-        except KeyboardInterrupt:
-            log("Stopped.")
+    missing = missing_pipe_caches()
+    if missing:
+        fail(f"No downloaded cache for {missing} in {config.LAYER_CACHE_DIR}, so "
+             f"the pipes cannot be drawn. Run: python run.py --no-view")
+
+    map_server.serve(port=port or map_server.PORT, open_browser=open_browser)
 
 
 def main(argv=None):
@@ -166,19 +133,14 @@ def main(argv=None):
             fail(f"The workflow finished but {gpkg} is not there.")
     elif not Path(config.OUTPUT_GPKG).exists():
         warn(f"--view-only, but there is no GeoPackage at {config.OUTPUT_GPKG}. "
-             "The map will be built from whatever the builder can find.")
+             "The pipes and leaks will still draw; the relocated points and "
+             "trace lines will be empty until the workflow has run.")
 
     if args.no_view:
-        log("Done. Build the map later with: python run.py --view-only")
+        log("Done. See the map later with: python run.py --view-only")
         return 0
 
-    if args.pipes:
-        serve_pipe_view(args.port if args.port != DEFAULT_PORT else None,
-                        open_browser=not args.no_browser)
-        return 0
-
-    index = build_view()
-    serve(index, args.port, open_browser=not args.no_browser)
+    serve_map(args.port, open_browser=not args.no_browser)
     return 0
 
 

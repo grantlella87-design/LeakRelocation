@@ -196,7 +196,7 @@ class TestLeafletIsAlwaysReferenced:
 
 class TestTheServerCanBeStartedByRunPy:
     def test_serve_is_callable(self, server):
-        """run.py --pipes calls this. It used to exist only as module-level code
+        """run.py calls this. It used to exist only as module-level code
         under __main__, so nothing could start it."""
         assert callable(server.serve)
 
@@ -205,3 +205,66 @@ class TestTheServerCanBeStartedByRunPy:
             "distribution_pipes": config.DISTRIBUTION_PIPE_LAYER_ID,
             "service_pipes": config.SERVICE_PIPE_LAYER_ID,
         }
+
+
+@pytest.fixture(scope="module")
+def run_py():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "run_entry", os.path.join(REPO_ROOT, "run.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestRunPyServesThisMap:
+    """run.py used to build a static GeoJSON map and need --pipes for a second
+    one that showed everything the first did. It now serves this map only."""
+
+    def test_it_serves_the_bbox_map(self, run_py):
+        assert callable(run_py.serve_map)
+        assert not hasattr(run_py, "build_view"), (
+            "the static build is no longer part of this path")
+
+    def test_there_is_no_pipes_flag_left(self, run_py):
+        """The pipes are the default now, so a flag for them would be a lie."""
+        args = run_py.parse_args([])
+        assert not hasattr(args, "pipes")
+
+    def test_opposite_flags_are_rejected(self, run_py):
+        with pytest.raises(RuntimeError, match="opposite"), \
+                redirect_stdout(io.StringIO()):
+            run_py.main(["--no-view", "--view-only"])
+
+    def test_missing_pipe_caches_are_detected(self, run_py, monkeypatch, tmp_path):
+        monkeypatch.setattr(run_py.config, "LAYER_CACHE_DIR", tmp_path)
+        assert run_py.missing_pipe_caches() == list(run_py.PIPE_CACHES)
+
+        (tmp_path / "distribution_pipes.pkl.gz").write_bytes(b"")
+        assert run_py.missing_pipe_caches() == ["service_pipes"]
+
+    def test_serving_without_caches_names_the_command_that_makes_them(
+            self, run_py, monkeypatch, tmp_path):
+        monkeypatch.setattr(run_py.config, "LAYER_CACHE_DIR", tmp_path)
+        with pytest.raises(RuntimeError, match="run.py --no-view"), \
+                redirect_stdout(io.StringIO()):
+            run_py.serve_map(None, open_browser=False)
+
+    def test_the_port_falls_through_to_the_map_servers_own(
+            self, run_py, monkeypatch, tmp_path):
+        for name in run_py.PIPE_CACHES:
+            (tmp_path / f"{name}.pkl.gz").write_bytes(b"")
+        monkeypatch.setattr(run_py.config, "LAYER_CACHE_DIR", tmp_path)
+
+        import leaflet_bbox_server as map_server
+        served = {}
+        monkeypatch.setattr(map_server, "serve",
+                            lambda port, open_browser: served.update(port=port))
+
+        with redirect_stdout(io.StringIO()):
+            run_py.serve_map(None, open_browser=False)
+        assert served["port"] == map_server.PORT
+
+        with redirect_stdout(io.StringIO()):
+            run_py.serve_map(8800, open_browser=False)
+        assert served["port"] == 8800
