@@ -35,6 +35,14 @@ NATIVE_WKT = 'PROJCS["NG_Equidistant_Conic_USft",GEOGCS["GCS_WGS_1984",DATUM["D_
 NATIVE_CRS = CRS.from_wkt(NATIVE_WKT)
 WGS84 = CRS.from_epsg(4326)
 MAX_FEATURES_DEFAULT = 25000
+
+# How far in the map will zoom. Leaflet's own default stops at whatever the tile
+# layers offer, which is 19 - too coarse to separate two service lines on the
+# same frontage. Past each provider's native zoom the last tile is upscaled and
+# looks soft, while the pipes stay sharp because they are drawn as vectors.
+MAX_ZOOM = 22
+OSM_MAX_NATIVE_ZOOM = 19
+ESRI_MAX_NATIVE_ZOOM = 19
 SIMPLIFY_DEFAULT = 0.000002
 KEEP_TOKENS = [
     "objectid",
@@ -83,7 +91,7 @@ LAYERS = {
         "color": "#202020",
         "radius": 0,
         "weight": 2,
-        "default": False,
+        "default": True,
     },
     "service_pipes": {
         "label": "Service pipes full - material coded",
@@ -92,7 +100,7 @@ LAYERS = {
         "color": "#ff8c00",
         "radius": 0,
         "weight": 2,
-        "default": False,
+        "default": True,
     },
     "relocated_leaks": {
         "label": "Relocated leak points",
@@ -507,15 +515,28 @@ def html_page():
         # pipes, and it still held the old values.
         "const MATERIAL_COLORS=" + json.dumps(MATERIAL_COLORS) + ";"
     )
-    parts.append("const map=L.map('map',{preferCanvas:true});")
+    # Zoom past the tile providers' own limit. maxNativeZoom is the deepest zoom
+    # each provider actually has tiles for; beyond it Leaflet upscales the last
+    # tile it has instead of refusing to zoom, so the pipes keep separating on
+    # screen. Without maxNativeZoom, map maxZoom is capped by the tile layers and
+    # zooming simply stops at 19 - which is not far enough to tell two services
+    # apart in a dense street.
     parts.append(
-        "const osm=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'});"
+        f"const map=L.map('map',{{preferCanvas:true,maxZoom:{MAX_ZOOM}}});")
+    parts.append(
+        "const osm=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',"
+        f"{{maxZoom:{MAX_ZOOM},maxNativeZoom:{OSM_MAX_NATIVE_ZOOM},"
+        "attribution:'&copy; OpenStreetMap contributors'});"
     )
     parts.append(
-        "const esriImagery=L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Tiles &copy; Esri'});"
+        "const esriImagery=L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',"
+        f"{{maxZoom:{MAX_ZOOM},maxNativeZoom:{ESRI_MAX_NATIVE_ZOOM},"
+        "attribution:'Tiles &copy; Esri'});"
     )
     parts.append(
-        "const esriTopo=L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Tiles &copy; Esri'});"
+        "const esriTopo=L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',"
+        f"{{maxZoom:{MAX_ZOOM},maxNativeZoom:{ESRI_MAX_NATIVE_ZOOM},"
+        "attribution:'Tiles &copy; Esri'});"
     )
     parts.append(
         "osm.addTo(map); const groups={}; const active=new Set(); const status={};"

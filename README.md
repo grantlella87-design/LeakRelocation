@@ -170,9 +170,20 @@ is what the matching uses too, so the map and the match agree. Colours live in
 one place, `MATERIAL_COLORS` in that file; the page's palette is generated from
 it, so editing it changes the map.
 
+Both pipe layers are **on when the page opens**, along with the leaks and the
+relocated output. Every layer can be switched off from the control top right.
+
 The pipe layers are read from the downloaded caches and served by bounding box, a
 capped number of features at a time, re-fetched as the map moves. They are far
-too large to write into a single GeoJSON and hand to a browser.
+too large to write into a single GeoJSON and hand to a browser. With the whole
+state in view the cap is reached and the info box says `TRUNCATED - zoom in`;
+that is the cap, not missing data.
+
+The map zooms to **level 22**. The tile providers only have imagery to level 19,
+so past that the last tile is upscaled and looks soft while the pipes stay sharp,
+because they are drawn as vectors rather than baked into the tiles. Leaflet
+otherwise stops at whatever the tiles offer, which is not close enough to tell
+two services on one frontage apart.
 
 `scripts/build_local_relocation_viewer.py` still builds a **static** map of the
 relocated leaks and trace lines — a folder that can be zipped and opened without
@@ -244,9 +255,8 @@ diff before.json after.json
 ## Making changes
 
 Edit the source in this repository, run the tests, then deploy. Do **not** edit
-the deployed copy on the shared drive — patching it in place is how the
-workflow ended up with five functions defined twice. See the history section in
-`docs/PROJECT_STATE.md`.
+the deployed copy on the shared drive — patching it in place is how the workflow
+ended up with five functions defined twice.
 
 `src/leak_relocation_geopandas.py` imports the `leakrelocation` package from its
 own directory, so when it is copied to the share the `src/leakrelocation/`
