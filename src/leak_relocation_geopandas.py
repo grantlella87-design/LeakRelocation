@@ -299,11 +299,27 @@ JURISDICTION_CANDIDATES = ["jurisdiction"]
 #
 # The counts in the comments are from that file: 98,464 MA rows.
 #
-# LeakNumber and Name hold the same value on all 98,464 rows, so Name is a
-# duplicate column rather than a fallback. The old list also carried LMSLEAKNUMBER
-# and LEAKNUMBER, which the CSV does not have - and LEAKNUMBER could never have
-# been reached anyway, because resolve_field_name strips case and it is
-# "LeakNumber" in different clothes.
+# The join key is the leak's GlobalID, not its leak number.
+#
+# HistoricalLeaksID holds layer 206's GlobalID - a braced 36-character GUID on
+# every one of the 98,464 rows, and unique on every one of them. LeakNumber is
+# not: 25,733 rows (26.1%) share a number with another row, across 10,990
+# numbers, and 5,364 of those numbers have rows that disagree about the material
+# or the diameter. Keying on the number therefore imported an arbitrary row's
+# attributes for those leaks - one real example being leak 1000001, which has a
+# Cast Iron 8" main row and a Bare Steel 1.25" service row - and dropped 14,743
+# rows outright.
+#
+# Both sides are normalised with normalize_key, which strips the braces and
+# upper-cases, so {abc...} and ABC... join.
+SUPP_GLOBALID_CANDIDATES = ["HistoricalLeaksID"]
+
+# Kept for labelling and the audit table, not for joining. LeakNumber and Name
+# hold the same value on all 98,464 rows, so Name is a duplicate column rather
+# than a fallback. The old list also carried LMSLEAKNUMBER and LEAKNUMBER, which
+# the CSV does not have - and LEAKNUMBER could never have been reached anyway,
+# because resolve_field_name strips case and it is "LeakNumber" in different
+# clothes.
 SUPP_KEY_CANDIDATES = ["LeakNumber", "Name"]
 
 # Diameter is filled on 94.7%. Abdn_Diameter_Main and Abdn_Diameter_Service are
@@ -1285,6 +1301,12 @@ def query_arcgis_layer(session, layer_url, where_clause, layer_name):
 
 
 def load_supplemental():
+    """Read the supplemental CSV, keyed on the leak's GlobalID.
+
+    Keyed on the leak *number* this silently imported the wrong diameter and
+    material: the number is not unique in the file, and where its rows disagree
+    only one of them survived. See SUPP_GLOBALID_CANDIDATES for the counts.
+    """
     step("Loading supplemental CSV")
     log(f"Supplemental CSV: {SUPPLEMENTAL_CSV}")
     if not os.path.isfile(SUPPLEMENTAL_CSV):
@@ -1293,8 +1315,14 @@ def load_supplemental():
         SUPPLEMENTAL_CSV, dtype=str, encoding="utf-8-sig", keep_default_na=False
     )
     log(f"Supplemental rows: {len(df):,}")
-    key_field = resolved_field(
-        df.columns, SUPP_KEY_CANDIDATES, True, "supplemental leak key"
+    # Required: this is the join key. Falling back to the leak number would
+    # reintroduce exactly the wrong-attribute bug this replaced, and silently.
+    globalid_field = resolved_field(
+        df.columns, SUPP_GLOBALID_CANDIDATES, True, "supplemental leak GlobalID"
+    )
+    # Carried for labelling and the audit, not used to join.
+    number_field = resolved_field(
+        df.columns, SUPP_KEY_CANDIDATES, False, "supplemental leak number"
     )
     diameter_field = resolved_field(
         df.columns, SUPP_DIAMETER_CANDIDATES, False, "supplemental diameter"
@@ -1310,19 +1338,26 @@ def load_supplemental():
     )
     records = {}
     skipped_no_key = 0
-    duplicate_keys = 0
+    duplicate_globalids = 0
+    shared_numbers = set()
+    seen_numbers = set()
     for _, row in df.iterrows():
-        leak_key = normalize_key(row.get(key_field))
-        if not leak_key:
+        leak_globalid = normalize_key(row.get(globalid_field))
+        if not leak_globalid:
             skipped_no_key += 1
             continue
-        if leak_key in records:
-            # Later rows win, which is the behaviour this has always had. The
-            # committed file has 98,464 rows and 83,721 distinct leak numbers, so
-            # this is not an edge case: without the count it looks as though the
-            # CSV holds one row per leak.
-            duplicate_keys += 1
-        records[leak_key] = {
+        if leak_globalid in records:
+            # Should not happen: the GlobalID is unique on every row of the
+            # committed file. If it ever does, the count says so rather than the
+            # last row quietly winning.
+            duplicate_globalids += 1
+        leak_number = normalize_key(row.get(number_field)) if number_field else ""
+        if leak_number:
+            if leak_number in seen_numbers:
+                shared_numbers.add(leak_number)
+            seen_numbers.add(leak_number)
+        records[leak_globalid] = {
+            "leak_number": leak_number,
             "diameter": parse_number(row.get(diameter_field))
             if diameter_field
             else None,
@@ -1330,12 +1365,18 @@ def load_supplemental():
             "pressure": clean(row.get(pressure_field)) if pressure_field else "",
             "facility": clean(row.get(facility_field)) if facility_field else "",
         }
-    log(f"Supplemental records keyed: {len(records):,}")
+    log(f"Supplemental records keyed by GlobalID: {len(records):,}")
     if skipped_no_key:
-        warn(f"Supplemental rows skipped, missing key: {skipped_no_key:,}")
-    if duplicate_keys:
-        warn(f"Supplemental rows sharing a leak number: {duplicate_keys:,}. "
-             f"The last row for each key is the one used.")
+        warn(f"Supplemental rows skipped, no GlobalID: {skipped_no_key:,}")
+    if duplicate_globalids:
+        warn(f"Supplemental rows sharing a GlobalID: {duplicate_globalids:,}. "
+             f"The last row for each is the one used.")
+    if shared_numbers:
+        # Not a problem any more, but worth stating: it is the reason the join is
+        # on the GlobalID. Keyed on the number, these leaks took an arbitrary
+        # row's diameter and material.
+        log(f"Leak numbers appearing on more than one row: {len(shared_numbers):,}. "
+            f"They are kept apart because the join is on the GlobalID.")
     if REQUIRE_PRESSURE_MATCH and not pressure_field:
         fail(
             "REQUIRE_PRESSURE_MATCH is True but no supplemental pressure field was resolved."
@@ -1397,8 +1438,11 @@ def prepare_leaks(leaks_gdf, supplemental):
     leak_key_field = resolved_field(
         leaks_gdf.columns, LEAK_KEY_CANDIDATES, True, "leak key"
     )
+    # Required: the supplemental join is on the GlobalID. The leak number is not
+    # unique in the supplemental file, so joining on it took an arbitrary row's
+    # diameter and material for 5,364 leak numbers.
     leak_globalid_field = resolved_field(
-        leaks_gdf.columns, GLOBALID_CANDIDATES, False, "leak GlobalID"
+        leaks_gdf.columns, GLOBALID_CANDIDATES, True, "leak GlobalID"
     )
     # Optional for the same reason as the date: a cache written before the field
     # was requested has no such column. The address identifies the leak, it is
@@ -1423,7 +1467,14 @@ def prepare_leaks(leaks_gdf, supplemental):
         counters["leaks_read"] += 1
         leak_oid = int(row[leak_oid_field])
         leak_number = normalize_key(row.get(leak_key_field))
-        leak_info = supplemental.get(leak_number)
+        leak_globalid = normalize_key(row.get(leak_globalid_field))
+        if not leak_globalid:
+            # No key, so no supplemental row can be found for it. Counted rather
+            # than falling back to the leak number, which would import another
+            # leak's diameter and material.
+            counters["unmatched_no_globalid"] += 1
+            continue
+        leak_info = supplemental.get(leak_globalid)
         if not leak_info:
             counters["unmatched_missing_supplemental"] += 1
             continue
@@ -1438,9 +1489,9 @@ def prepare_leaks(leaks_gdf, supplemental):
             {
                 "leak_oid": leak_oid,
                 "leak_number": leak_number,
-                "leak_globalid": clean(row.get(leak_globalid_field))
-                if leak_globalid_field
-                else "",
+                # No longer conditional: the GlobalID is the supplemental join
+                # key, so a leak without one never reaches this point.
+                "leak_globalid": clean(row.get(leak_globalid_field)),
                 "leak_address": clean(row.get(leak_address_field))
                 if leak_address_field
                 else "",
