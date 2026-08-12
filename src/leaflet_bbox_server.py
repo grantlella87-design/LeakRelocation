@@ -21,6 +21,7 @@ if _SCRIPT_DIR not in sys.path:
 from leakrelocation import assettype, config, schema
 from leakrelocation.assettype import decoder_for_layer, norm_code
 from leakrelocation.assettype import family_from_assettype as material_family
+from leakrelocation.matching import route_layers
 from leakrelocation.viewer_pane import PANE_CSS, PANE_HTML, PANE_JS
 
 HOST = "127.0.0.1"
@@ -75,69 +76,91 @@ MATERIAL_COLORS = {
     "UNKNOWN": "#D30FFAEB",
     "OTHER": "#7b68ee",
 }
+# Two parent groups, each carrying the four things that belong to one kind of
+# leak: the pipe it sits on, where the leak was recorded, where it was relocated
+# to, and the line joining those two points.
+#
+# Several map layers read the same source frame - the relocated points are one
+# GeoPackage layer split by LinkedLayer, and the original leaks are one cache
+# split by facility type - so "cache"/"layer" names the source and "linked" or
+# "facility" is the slice taken from it.
+GROUPS = {
+    "mains": {"label": "MAINS", "match": "distribution"},
+    "services": {"label": "SERVICES", "match": "service"},
+    "other": {"label": "OTHER", "match": None},
+}
+
 LAYERS = {
-    "historic_leaks": {
-        "label": "Historic leaks original",
-        "source": "cache",
-        "kind": "leak_point",
-        "color": "#0066cc",
-        "radius": 3,
-        "weight": 1,
+    # --- MAINS ---------------------------------------------------------------
+    "main_lines": {
+        "label": "Main lines - material coded",
+        "group": "mains",
+        "source": "cache", "cache": "distribution_pipes",
+        "kind": "pipe_line", "color": "#202020", "radius": 0, "weight": 2,
         "default": True,
     },
-    "distribution_pipes": {
-        "label": "Distribution pipes full - material coded",
-        "source": "cache",
-        "kind": "pipe_line",
-        "color": "#202020",
-        "radius": 0,
-        "weight": 2,
+    "main_leaks_original": {
+        "label": "Main leaks - original location",
+        "group": "mains",
+        "source": "cache", "cache": "historic_leaks", "facility": "distribution",
+        "kind": "leak_point", "color": "#0066cc", "radius": 3, "weight": 1,
         "default": True,
     },
-    "service_pipes": {
-        "label": "Service pipes full - material coded",
-        "source": "cache",
-        "kind": "pipe_line",
-        "color": "#ff8c00",
-        "radius": 0,
-        "weight": 2,
+    "main_leaks_relocated": {
+        "label": "Main leaks - relocated location",
+        "group": "mains",
+        "source": "gpkg", "layer": "relocated_leaks", "linked": "distribution",
+        "kind": "relocated_point", "color": "#00a651", "radius": 4, "weight": 1,
         "default": True,
     },
-    # The retired/abandoned pipe layer, downloaded by the workflow into
-    # retired_pipes.pkl.gz. Optional: that cache only exists once the workflow has
-    # loaded layer 62, and a map that refuses to start without it would be worse
-    # than one that opens and says the layer is not there.
+    "main_connectors": {
+        "label": "Main leaks - connecting line",
+        "group": "mains",
+        "source": "gpkg", "layer": "relocated_leak_offset_lines",
+        "linked": "distribution",
+        "kind": "trace_line", "color": "#d40000", "radius": 0, "weight": 2,
+        "default": True,
+    },
+    # --- SERVICES ------------------------------------------------------------
+    "service_lines": {
+        "label": "Service lines - material coded",
+        "group": "services",
+        "source": "cache", "cache": "service_pipes",
+        "kind": "pipe_line", "color": "#ff8c00", "radius": 0, "weight": 2,
+        "default": True,
+    },
+    "service_leaks_original": {
+        "label": "Service leaks - original location",
+        "group": "services",
+        "source": "cache", "cache": "historic_leaks", "facility": "service",
+        "kind": "leak_point", "color": "#0066cc", "radius": 3, "weight": 1,
+        "default": True,
+    },
+    "service_leaks_relocated": {
+        "label": "Service leaks - relocated location",
+        "group": "services",
+        "source": "gpkg", "layer": "relocated_leaks", "linked": "service",
+        "kind": "relocated_point", "color": "#00a651", "radius": 4, "weight": 1,
+        "default": True,
+    },
+    "service_connectors": {
+        "label": "Service leaks - connecting line",
+        "group": "services",
+        "source": "gpkg", "layer": "relocated_leak_offset_lines",
+        "linked": "service",
+        "kind": "trace_line", "color": "#d40000", "radius": 0, "weight": 2,
+        "default": True,
+    },
+    # --- OTHER ---------------------------------------------------------------
     "retired_pipes": {
         "label": "Abandoned / retired pipe - material coded",
-        "source": "cache",
-        "kind": "pipe_line",
-        "color": "#7b68ee",
-        "radius": 0,
-        "weight": 3,
-        "default": True,
-        "optional": True,
-    },
-    "relocated_leaks": {
-        "label": "Relocated leak points",
-        "source": "gpkg",
-        "layer": "relocated_leaks",
-        "kind": "relocated_point",
-        "color": "#00a651",
-        "radius": 4,
-        "weight": 1,
-        "default": True,
-    },
-    "relocated_trace_lines": {
-        "label": "Original to relocated trace lines",
-        "source": "gpkg",
-        "layer": "relocated_leak_offset_lines",
-        "kind": "trace_line",
-        "color": "#d40000",
-        "radius": 0,
-        "weight": 2,
-        "default": True,
+        "group": "other",
+        "source": "cache", "cache": "retired_pipes",
+        "kind": "pipe_line", "color": "#7b68ee", "radius": 0, "weight": 3,
+        "default": True, "optional": True,
     },
 }
+
 DATA = {}
 BOUNDS = None
 LOCK = threading.Lock()
@@ -299,6 +322,10 @@ PIPE_LAYER_IDS_BY_KEY = {
     "retired_pipes": config.RETIRED_PIPE_LAYER_ID,
 }
 
+# Which cache each map layer reads, for the decode above.
+def cache_name_for(key):
+    return LAYERS.get(key, {}).get("cache") or key
+
 
 def add_pipe_material_fields(gdf, layer_name="pipes"):
     if len(gdf) == 0:
@@ -405,7 +432,7 @@ def read_cache(key):
     gdf = gdf.set_crs(NATIVE_CRS, allow_override=True).to_crs(WGS84)
     if key == "historic_leaks":
         gdf = enrich_historic_leaks(gdf)
-    if key in ["distribution_pipes", "service_pipes"]:
+    if key in PIPE_LAYER_IDS_BY_KEY:
         gdf = add_pipe_material_fields(gdf, key)
     return limit_columns(gdf)
 
@@ -426,18 +453,69 @@ def read_gpkg(layer):
     return limit_columns(gdf)
 
 
+def leak_belongs_to(gdf, group_match):
+    """Rows of the historic leak frame that belong to mains or to services.
+
+    Uses the same routing the matcher uses, so the map splits the leaks exactly
+    where the workflow did: a facility type naming a service goes to services, one
+    naming a main or distribution goes to mains, and anything unrecognised is
+    searched against both and so appears under both.
+    """
+    facility_col = find_col(gdf.columns, ["SuppFacilityType", "FacilityType",
+                                          "PipeType"])
+    if not facility_col:
+        log("WARNING no facility type on the leak frame, so the original leaks "
+            "cannot be split between mains and services; both groups show all of "
+            "them. The supplemental CSV supplies that column.")
+        return gdf
+    keep = gdf[facility_col].map(lambda value: group_match in route_layers(value))
+    return gdf[keep.fillna(value=False)].copy()
+
+
+def slice_for(key, cfg, base):
+    """The part of a source frame that belongs to one map layer."""
+    if base is None or not len(base):
+        return gpd.GeoDataFrame(geometry=[], crs=WGS84)
+
+    linked = cfg.get("linked")
+    if linked:
+        column = find_col(base.columns, ["LinkedLayer"])
+        if not column:
+            log(f"WARNING {key}: no LinkedLayer column, so main and service "
+                f"relocations cannot be separated; showing all of them.")
+            return base
+        return base[base[column].astype(str).str.lower() == linked].copy()
+
+    facility = cfg.get("facility")
+    if facility:
+        return leak_belongs_to(base, facility)
+    return base
+
+
+def source_frame(key, cfg, cache):
+    """Load a layer's source, reusing one already read for another layer."""
+    name = cfg.get("cache") if cfg["source"] == "cache" else cfg.get("layer")
+    if name in cache:
+        return cache[name]
+    try:
+        frame = read_cache(name) if cfg["source"] == "cache" else read_gpkg(name)
+    except RuntimeError as ex:
+        if not cfg.get("optional"):
+            raise
+        log(f"WARNING {key} is not available, so that layer will be empty: {ex}")
+        frame = gpd.GeoDataFrame(geometry=[], crs=WGS84)
+    cache[name] = frame
+    return frame
+
+
 def load_all():
     global BOUNDS
     all_bounds = []
+    # Eight map layers come from four sources, so each source is read once.
+    sources = {}
     for key, cfg in LAYERS.items():
         log(f"Loading layer: {key}")
-        try:
-            gdf = read_cache(key) if cfg["source"] == "cache" else read_gpkg(cfg["layer"])
-        except RuntimeError as ex:
-            if not cfg.get("optional"):
-                raise
-            log(f"WARNING {key} is not available, so that layer will be empty: {ex}")
-            gdf = gpd.GeoDataFrame(geometry=[], crs=WGS84)
+        gdf = slice_for(key, cfg, source_frame(key, cfg, sources))
         if len(gdf):
             _ = gdf.sindex
             all_bounds.append(gdf.total_bounds)
@@ -531,6 +609,36 @@ def leaflet_refs():
     return f"{LEAFLET_CDN}/leaflet.css", f"{LEAFLET_CDN}/leaflet.js"
 
 
+def grouped_control_html():
+    """The layer control's markup: a parent checkbox per group, then its children.
+
+    Built here rather than in the page's JavaScript. Writing it there meant HTML
+    quotes inside a JS string inside a Python string - three levels of escaping,
+    and the middle one was lost, so the control rendered as nothing at all.
+    """
+    from html import escape
+
+    parts = []
+    for group_key, group in GROUPS.items():
+        children = [(key, cfg) for key, cfg in LAYERS.items()
+                    if cfg.get("group") == group_key]
+        if not children:
+            continue
+        parts.append('<div class="group">')
+        parts.append(
+            f'<label class="parent"><input type="checkbox" '
+            f'data-group="{escape(group_key)}" checked/> '
+            f'<b>{escape(group["label"])}</b></label>')
+        for key, cfg in children:
+            checked = " checked" if cfg.get("default") else ""
+            parts.append(
+                f'<label class="child"><input type="checkbox" '
+                f'data-layer="{escape(key)}"{checked}/> '
+                f'{escape(cfg["label"])}</label>')
+        parts.append("</div>")
+    return "".join(parts)
+
+
 def html_page():
     cfg_json = json.dumps(LAYERS)
     bounds_json = json.dumps(BOUNDS)
@@ -540,13 +648,14 @@ def html_page():
     css_ref, js_ref = leaflet_refs()
     parts.append(f'<link rel="stylesheet" href="{css_ref}"/>')
     parts.append(
-        "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}" + PANE_CSS + "</style>"
+        "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}.grouped-layers{padding:6px 10px;background:#fff;max-height:72vh;overflow:auto;font-size:12px}.grouped-layers .group{margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #ddd}.grouped-layers label{display:block;white-space:nowrap}.grouped-layers .child{padding-left:16px}" + PANE_CSS + "</style>"
     )
     parts.append(
         '</head><body><div id="map"></div>' + PANE_HTML
         + f'<script src="{js_ref}"></script><script>' + PANE_JS
     )
     parts.append("const LAYER_CONFIG = " + cfg_json + ";")
+    parts.append("const GROUP_CONFIG = " + json.dumps(GROUPS) + ";")
     parts.append("const DATA_BOUNDS = " + bounds_json + ";")
     parts.append("const MAX_FEATURES=25000; const SIMPLIFY=0.000002;")
     parts.append(
@@ -602,7 +711,47 @@ def html_page():
         "const extentBox=L.rectangle([[DATA_BOUNDS.south,DATA_BOUNDS.west],[DATA_BOUNDS.north,DATA_BOUNDS.east]],{color:'#d40000',weight:2,fill:false,dashArray:'8,6'}).addTo(map); const centerMarker=L.marker([DATA_BOUNDS.center_lat,DATA_BOUNDS.center_lon]).addTo(map);"
     )
     parts.append(
-        "const baseMaps={'OpenStreetMap street map':osm,'Esri World Imagery':esriImagery,'Esri World Topographic':esriTopo}; const overlays={}; for(const key of Object.keys(LAYER_CONFIG))overlays[LAYER_CONFIG[key].label]=groups[key]; overlays['Red data extent box']=extentBox; overlays['Extent center marker']=centerMarker; L.control.layers(baseMaps,overlays,{collapsed:false}).addTo(map); L.control.scale({imperial:true,metric:true}).addTo(map);"
+        # Base maps and the two reference shapes stay in Leaflet's own control.
+        "const baseMaps={'OpenStreetMap street map':osm,'Esri World Imagery':esriImagery,'Esri World Topographic':esriTopo};"
+        " L.control.layers(baseMaps,{'Red data extent box':extentBox,'Extent center marker':centerMarker},{collapsed:false}).addTo(map);"
+        " L.control.scale({imperial:true,metric:true}).addTo(map);"
+        # The data layers get a grouped control instead. Leaflet's own control is
+        # a flat list, so MAINS and SERVICES could not be parents of anything:
+        # a child added to the map through a parent group is not on the map as
+        # itself, and its checkbox then contradicts what is drawn.
+        "const GROUP_CONTROL_HTML=" + json.dumps(grouped_control_html()) + ";"
+        "const groupControl=L.control({position:'topright'});"
+        "groupControl.onAdd=function(){"
+        " const div=L.DomUtil.create('div','leaflet-control-layers grouped-layers');"
+        " L.DomEvent.disableClickPropagation(div); L.DomEvent.disableScrollPropagation(div);"
+        " div.innerHTML=GROUP_CONTROL_HTML;"
+        " div.querySelectorAll('input[data-layer]').forEach(function(box){"
+        "  box.addEventListener('change',function(){setLayer(box.dataset.layer,box.checked); syncParents(div);});"
+        " });"
+        # A parent switches every child it owns, which is what "toggle mains off"
+        # has to mean while the children stay individually switchable.
+        " div.querySelectorAll('input[data-group]').forEach(function(box){"
+        "  box.addEventListener('change',function(){"
+        "   div.querySelectorAll('input[data-layer]').forEach(function(child){"
+        "    if(LAYER_CONFIG[child.dataset.layer].group!==box.dataset.group)return;"
+        "    child.checked=box.checked; setLayer(child.dataset.layer,box.checked);"
+        "   });"
+        "   box.indeterminate=false;"
+        "  });"
+        " });"
+        " return div;"
+        "};"
+        "groupControl.addTo(map);"
+        # A parent is checked when any child is, so unticking the last child
+        # unticks the parent instead of leaving it claiming to be on.
+        "function syncParents(div){"
+        " for(const gk of Object.keys(GROUP_CONFIG)){"
+        "  const kids=[...div.querySelectorAll('input[data-layer]')].filter(c=>LAYER_CONFIG[c.dataset.layer].group===gk);"
+        "  const parent=div.querySelector('input[data-group=\"'+gk+'\"]');"
+        "  if(parent&&kids.length){parent.checked=kids.some(c=>c.checked);"
+        "   parent.indeterminate=parent.checked&&!kids.every(c=>c.checked);}"
+        " }"
+        "}"
     )
     parts.append(
         "map.fitBounds([[DATA_BOUNDS.south,DATA_BOUNDS.west],[DATA_BOUNDS.north,DATA_BOUNDS.east]],{padding:[24,24]});"
@@ -629,7 +778,17 @@ def html_page():
         " updateInfo(); AttributePane.build();}"
     )
     parts.append(
-        "function refreshActive(){for(const key of Array.from(active))refreshLayer(key)} map.on('overlayadd',function(e){for(const key of Object.keys(groups)){if(groups[key]===e.layer){active.add(key);refreshLayer(key)}}}); map.on('overlayremove',function(e){for(const key of Object.keys(groups)){if(groups[key]===e.layer){active.delete(key);groups[key].clearLayers();delete status[key];updateInfo();AttributePane.build()}}}); map.on('moveend zoomend',refreshActive);"
+        "function refreshActive(){for(const key of Array.from(active))refreshLayer(key)}"
+        # The grouped control calls this instead of Leaflet raising overlayadd and
+        # overlayremove, because the data layers are no longer in Leaflet's control.
+        "function setLayer(key,on){"
+        " if(on){ if(!map.hasLayer(groups[key]))groups[key].addTo(map);"
+        "  active.add(key); refreshLayer(key); }"
+        " else { active.delete(key); groups[key].clearLayers();"
+        "  if(map.hasLayer(groups[key]))map.removeLayer(groups[key]);"
+        "  delete status[key]; delete loadErrors[key]; updateInfo(); AttributePane.build(); }"
+        "}"
+        "map.on('moveend zoomend',refreshActive);"
     )
     parts.append(
         "const info=L.control({position:'bottomleft'}); info.onAdd=function(){const div=L.DomUtil.create('div','info');div.id='infoBox';return div}; info.addTo(map);"

@@ -318,7 +318,7 @@ class TestBothPipeLayersAreOnAtStartup:
     """They used to be off, so the map opened with no pipes on it and the two
     layers the whole thing is about had to be found in the control first."""
 
-    @pytest.mark.parametrize("key", ["distribution_pipes", "service_pipes"])
+    @pytest.mark.parametrize("key", ["main_lines", "service_lines"])
     def test_the_pipe_layer_is_a_default(self, server, key):
         assert server.LAYERS[key]["default"] is True
 
@@ -350,3 +350,83 @@ class TestTheMapZoomsFurtherThanTheTiles:
     def test_no_tile_layer_still_caps_the_map_at_its_own_zoom(self, server):
         page = server.html_page()
         assert f"maxZoom:{server.OSM_MAX_NATIVE_ZOOM}," not in page
+
+
+class TestMainsAndServicesAreParentGroups:
+    """Each parent carries the four things belonging to one kind of leak: the
+    pipe, the original location, the relocated location and the line joining
+    them. Leaflet's own control is a flat list, so the control is built here."""
+
+    def test_each_parent_has_its_four_children(self, server):
+        for group, expected in [("mains", ["main_lines", "main_leaks_original",
+                                           "main_leaks_relocated", "main_connectors"]),
+                                ("services", ["service_lines", "service_leaks_original",
+                                              "service_leaks_relocated",
+                                              "service_connectors"])]:
+            children = [k for k, v in server.LAYERS.items() if v["group"] == group]
+            assert children == expected
+
+    def test_the_pipe_layers_read_the_downloaded_caches(self, server):
+        assert server.LAYERS["main_lines"]["cache"] == "distribution_pipes"
+        assert server.LAYERS["service_lines"]["cache"] == "service_pipes"
+
+    def test_the_relocated_layers_are_one_source_split_by_linkedlayer(self, server):
+        assert server.LAYERS["main_leaks_relocated"]["linked"] == "distribution"
+        assert server.LAYERS["service_leaks_relocated"]["linked"] == "service"
+        assert (server.LAYERS["main_leaks_relocated"]["layer"]
+                == server.LAYERS["service_leaks_relocated"]["layer"])
+
+    def test_the_original_leaks_are_split_by_facility(self, server):
+        assert server.LAYERS["main_leaks_original"]["facility"] == "distribution"
+        assert server.LAYERS["service_leaks_original"]["facility"] == "service"
+
+    def test_the_control_markup_has_a_parent_and_children_per_group(self, server):
+        html = server.grouped_control_html()
+        assert html.count('class="parent"') == len(server.GROUPS)
+        assert html.count('class="child"') == len(server.LAYERS)
+        for group in server.GROUPS:
+            assert f'data-group="{group}"' in html
+        for key in server.LAYERS:
+            assert f'data-layer="{key}"' in html
+
+    def test_the_page_carries_the_markup_and_the_toggle(self, server):
+        page = server.html_page()
+        assert "GROUP_CONTROL_HTML" in page
+        assert "function setLayer" in page
+        # A parent switching its children, and children updating their parent.
+        assert "box.dataset.group" in page
+        assert "function syncParents" in page
+
+    def test_the_data_layers_are_not_in_leaflets_own_control(self, server):
+        """A child added to the map through a parent is not on the map as itself,
+        so Leaflet's checkbox would contradict what is drawn."""
+        page = server.html_page()
+        assert "L.control.layers(baseMaps,{'Red data extent box'" in page
+
+    @pytest.mark.parametrize(("facility", "group"), [
+        ("Main", "distribution"), ("Distribution", "distribution"),
+        ("Service", "service"), ("Service Line", "service"),
+    ])
+    def test_leaks_are_split_the_way_the_matcher_routed_them(
+            self, server, facility, group):
+        """Same routing the workflow used, so the map agrees with the output."""
+        gpd = pytest.importorskip("geopandas")
+        from shapely.geometry import Point
+        frame = gpd.GeoDataFrame({"SuppFacilityType": [facility],
+                                  "geometry": [Point(0, 0)]}, crs="EPSG:4326")
+        kept, _ = quiet(server.leak_belongs_to, frame, group)
+        assert len(kept) == 1
+        other = "service" if group == "distribution" else "distribution"
+        kept_other, _ = quiet(server.leak_belongs_to, frame, other)
+        assert len(kept_other) == 0
+
+    def test_an_unrecognised_facility_appears_under_both(self, server):
+        """route_layers searches both when it cannot tell, so the map shows it in
+        both rather than hiding it from one."""
+        gpd = pytest.importorskip("geopandas")
+        from shapely.geometry import Point
+        frame = gpd.GeoDataFrame({"SuppFacilityType": ["something else"],
+                                  "geometry": [Point(0, 0)]}, crs="EPSG:4326")
+        for group in ("distribution", "service"):
+            kept, _ = quiet(server.leak_belongs_to, frame, group)
+            assert len(kept) == 1
