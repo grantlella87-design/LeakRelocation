@@ -7,6 +7,7 @@ and writes a GeoPackage with relocated points, offset guide lines, and an audit 
 """
 
 import datetime as dt
+import hashlib
 import json
 import math
 import numbers
@@ -228,6 +229,12 @@ MODIFIED_FIELD_CANDIDATES = ["LASTUPDATE"]
 # LMSLEAKNUMBER is the leak key; LEAKNUMBER also exists on layer 206 and is
 # kept as the fallback.
 LEAK_KEY_CANDIDATES = ["LMSLEAKNUMBER", "LEAKNUMBER"]
+
+# The street address of the leak, read out of layer 206's metadata: ADDRESS,
+# esriFieldTypeString, alias "Address", 100 characters, no domain. It is not used
+# by the matching - it is carried through so a leak can be identified on the map
+# and in the audit by where it is rather than only by its number.
+LEAK_ADDRESS_CANDIDATES = ["ADDRESS"]
 
 PIPE_DIAMETER_CANDIDATES = ["nominaldiameter", "outsidediameter"]
 
@@ -676,6 +683,8 @@ def build_out_fields(meta, layer_name):
             JURISDICTION_CANDIDATES,
             # The date the relocation window is measured from.
             LEAK_DATE_CANDIDATES,
+            # Carried for identification, not used by the matching.
+            LEAK_ADDRESS_CANDIDATES,
         ]
     else:
         candidate_groups = [
@@ -828,6 +837,41 @@ def build_delta_where(base_where, modified_field, last_epoch_ms):
     return f"({base_where}) AND {modified_field} > {epoch_ms_to_sql_timestamp(last_epoch_ms)}"
 
 
+def out_field_request_signature():
+    """A digest of the fields this code asks the service for.
+
+    A cache holds the columns that were requested when it was written. Adding a
+    field to the lists above does not change the cache, and the delta refresh
+    only re-downloads rows whose LASTUPDATE moved - so a new field would arrive
+    for a handful of changed records and be blank for the rest, which looks like
+    a service that has stopped populating it rather than a stale cache.
+
+    The signature is stored with the cache and compared on read. It is built from
+    the request configuration alone, so it can be computed without contacting the
+    service, and it changes only when the set of requested names changes.
+    """
+    groups = [
+        MODIFIED_FIELD_CANDIDATES,
+        LEAK_KEY_CANDIDATES,
+        LEAK_ADDRESS_CANDIDATES,
+        LEAK_DATE_CANDIDATES,
+        PIPE_DIAMETER_CANDIDATES,
+        PIPE_PRESSURE_CANDIDATES,
+        PIPE_MATERIAL_FIELDS,
+        PIPE_CREATED_CANDIDATES,
+        PIPE_RETIRED_CANDIDATES,
+        GLOBALID_CANDIDATES,
+        OBJECTID_CANDIDATES,
+        JURISDICTION_CANDIDATES,
+    ]
+    # Case and order within a group are irrelevant to what comes back, so they
+    # are normalised out: a rename that the resolver would treat as the same
+    # name must not invalidate every cache.
+    canonical = [sorted(name.lower() for name in group) for group in groups]
+    payload = json.dumps(canonical, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:16]
+
+
 def read_layer_cache(layer_name, layer_url, where_clause):
     if not USE_LAYER_CACHE or FORCE_LAYER_REFRESH:
         return None, None
@@ -843,6 +887,16 @@ def read_layer_cache(layer_name, layer_url, where_clause):
             return None, None
         if meta.get("where_clause") != where_clause:
             log(f"{layer_name}: cache WHERE changed. Refreshing layer.")
+            return None, None
+        signature = out_field_request_signature()
+        if meta.get("out_field_signature") != signature:
+            # Returning None here sends the caller down the full-download path,
+            # which is the only one that can bring a new column in for every
+            # record. A cache written before this check existed has no signature
+            # at all and is refreshed once.
+            log(f"{layer_name}: the requested fields have changed since this "
+                f"cache was written. Refreshing the layer in full so the new "
+                f"fields are populated for every record.")
             return None, None
         gdf = pd.read_pickle(data_path, compression="gzip")
         log(f"{layer_name}: loaded {len(gdf):,} records from local cache: {data_path}")
@@ -879,6 +933,7 @@ def write_layer_cache(
             else None,
             "cached_utc": dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z"),
             "record_count_written": len(gdf),
+            "out_field_signature": out_field_request_signature(),
         }
         with open(meta_path, "w", encoding="utf-8") as handle:
             json.dump(meta, handle, indent=2)
@@ -1306,6 +1361,15 @@ def prepare_leaks(leaks_gdf, supplemental):
     leak_globalid_field = resolved_field(
         leaks_gdf.columns, GLOBALID_CANDIDATES, False, "leak GlobalID"
     )
+    # Optional for the same reason as the date: a cache written before the field
+    # was requested has no such column. The address identifies the leak, it is
+    # not matched on, so a run without it is still a correct run.
+    leak_address_field = resolved_field(
+        leaks_gdf.columns, LEAK_ADDRESS_CANDIDATES, False, "leak address"
+    )
+    if not leak_address_field:
+        warn("No leak address column. Re-download the leak layer to include it: "
+             "python run.py --refresh")
     # Optional: a cache downloaded before the date rule existed has no such
     # column, and every leak then matches unfiltered rather than not at all.
     leak_date_field = resolved_field(
@@ -1337,6 +1401,9 @@ def prepare_leaks(leaks_gdf, supplemental):
                 "leak_number": leak_number,
                 "leak_globalid": clean(row.get(leak_globalid_field))
                 if leak_globalid_field
+                else "",
+                "leak_address": clean(row.get(leak_address_field))
+                if leak_address_field
                 else "",
                 "leak_info": leak_info,
                 "leak_date_ms": leak_date_ms,
@@ -1658,6 +1725,7 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
         leak_oid = task["leak_oid"]
         leak_number = task["leak_number"]
         leak_globalid = task["leak_globalid"]
+        leak_address = task.get("leak_address", "")
         leak_info = task["leak_info"]
         original_geometry = task["geometry"]
         original_point = (
@@ -1672,6 +1740,7 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
                     "LeakOID": leak_oid,
                     "LeakKey": leak_number,
                     "LeakGlobalID": leak_globalid,
+                    "LeakAddress": leak_address,
                     "LeakMaterial": leak_info["material"],
                     "LeakDiameter": leak_info["diameter"],
                     "LeakPressure": leak_info["pressure"],
@@ -1704,6 +1773,7 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
             {
                 "OrigLeakOID": leak_oid,
                 "LeakKey": leak_number,
+                "LeakAddress": leak_address,
                 "LinkedLayer": result["layer"],
                 "MatchedPipeOID": result["pipe_oid"],
                 "MatchedPipeGID": pipe["globalid"],
@@ -1733,6 +1803,7 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
                 "LeakOID": leak_oid,
                 "LeakKey": leak_number,
                 "LeakGlobalID": leak_globalid,
+                "LeakAddress": leak_address,
                 "LeakMaterial": leak_info["material"],
                 "LeakDiameter": leak_info["diameter"],
                 "LeakPressure": leak_info["pressure"],

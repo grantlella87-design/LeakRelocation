@@ -67,7 +67,7 @@ Only the layers this project reads are kept:
 | --- | --- |
 | `layer_006_Distribution_Pipe.json` | Distribution pipes, with the ASSETTYPE subtype domains. |
 | `layer_007_Service_Pipe.json` | Service pipes, same domains. |
-| `layer_206_Hist_GasLeak.json` | Historic leaks. Carries no material or diameter field, which is why both come from the supplemental CSV. |
+| `layer_206_Hist_GasLeak.json` | Historic leaks. Carries no material or diameter field, which is why both come from the supplemental CSV. `ADDRESS` and `REVISEDLEAKDATE` are read from it. |
 | `manifest.json` | Every layer id on the service and its source URL. |
 | `service.json` | Service-level metadata. |
 
@@ -133,6 +133,25 @@ A token is cached in Windows Credential Manager, and a cache younger than
 `LEAKRELOCATION_CACHE_FRESH_SECONDS` skips the server check entirely, so most
 repeat runs need no sign-in at all.
 
+### The layer cache and newly requested fields
+
+A cache holds the columns that were requested when it was written, and the
+refresh is a delta: only records whose `LASTUPDATE` moved are downloaded again.
+So adding a field to the request lists does not bring it into an existing cache —
+it would arrive for a handful of changed records and be blank for the rest, which
+reads like a service that has stopped populating the field.
+
+Each cache therefore stores a signature of the fields the code asked for. When
+that signature does not match, the layer is downloaded in full instead, once, and
+the run says so:
+
+    historic leaks: the requested fields have changed since this cache was
+    written. Refreshing the layer in full so the new fields are populated for
+    every record.
+
+Adding `ADDRESS` changed the signature, so the first run after it re-downloads
+the three layers. Later runs use the cache as before.
+
 ### If a run is slow
 
 ```bash
@@ -184,6 +203,11 @@ python run.py
 - **abandoned / retired pipe**, the same colouring, as its own switchable layer;
 - the historic leaks in their original positions;
 - the relocated leak points and the trace lines back to where each leak was.
+
+Each leak carries its street `ADDRESS` from layer 206, in the attribute table and
+in the popup below the leak number. The relocated points and the audit table
+carry the same value as `LeakAddress`. Nothing matches on it — it is there so a
+leak can be identified by where it is and not only by its number.
 
 The abandoned layer reads `retired_pipes.pkl.gz`, which the workflow writes when
 it loads layer 62. Until that cache exists the layer appears and reports itself

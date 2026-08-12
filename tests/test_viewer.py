@@ -177,3 +177,58 @@ class TestBboxServerMaterialColumns:
             "center_lat": 42.5, "center_lon": -71.5,
         })
         assert "PipeMaterialDomain" in server.html_page()
+
+
+class TestLeakAddressReachesTheMap:
+    """ADDRESS is on layer 206 and is carried through for identification. It is
+    matched on by nothing, so an empty column is the only symptom of losing it."""
+
+    @pytest.fixture
+    def server(self):
+        pytest.importorskip("geopandas")
+        sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+        import leaflet_bbox_server
+        return leaflet_bbox_server
+
+    def leak_frame(self, **columns):
+        import geopandas as gpd
+        from shapely.geometry import Point
+        rows = len(next(iter(columns.values())))
+        columns["geometry"] = [Point(-71 - i * 0.01, 42) for i in range(rows)]
+        return gpd.GeoDataFrame(columns, crs="EPSG:4326")
+
+    def test_limit_columns_keeps_the_address(self, server):
+        """limit_columns keeps a column only if it matches a token, and none of
+        the others match "ADDRESS" - so it was downloaded and then dropped one
+        step before the page."""
+        gdf = self.leak_frame(
+            OBJECTID=[1, 2],
+            LMSLEAKNUMBER=["A1", "A2"],
+            ADDRESS=["12 Elm St", "3 Oak Ave"],
+        )
+        out = server.limit_columns(gdf)
+        assert "ADDRESS" in out.columns
+        assert out["ADDRESS"].tolist() == ["12 Elm St", "3 Oak Ave"]
+
+    def test_limit_columns_keeps_the_relocated_address(self, server):
+        """The relocated points carry it as LeakAddress."""
+        gdf = self.leak_frame(OrigLeakOID=[1], LeakAddress=["12 Elm St"])
+        assert "LeakAddress" in server.limit_columns(gdf).columns
+
+    def test_a_column_matching_nothing_is_still_dropped(self, server):
+        """Guards the test above: it passes because of the token, not because
+        limit_columns keeps everything."""
+        gdf = self.leak_frame(OBJECTID=[1], ADDRESS=["12 Elm St"],
+                              SOMETHINGELSE=["x"])
+        assert "SOMETHINGELSE" not in server.limit_columns(gdf).columns
+
+    def test_the_popup_lists_the_address_near_the_top(self, server, monkeypatch):
+        monkeypatch.setattr(server, "BOUNDS", {
+            "west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
+            "center_lat": 42.5, "center_lon": -71.5,
+        })
+        page = server.html_page()
+        assert "'ADDRESS'" in page
+        assert "'LeakAddress'" in page
+        # Ordered above the supplemental attributes: it identifies the leak.
+        assert page.index("'ADDRESS'") < page.index("'SuppLeakMaterialType'")
