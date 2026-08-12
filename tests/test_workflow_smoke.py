@@ -98,11 +98,21 @@ class TestCandidateGroupsExist:
         "SUPP_KEY_CANDIDATES",
         "SUPP_DIAMETER_CANDIDATES",
         "SUPP_MATERIAL_CANDIDATES",
-        "SUPP_PRESSURE_CANDIDATES",
         "SUPP_FACILITY_CANDIDATES",
     ])
     def test_defined_and_non_empty(self, lr, name):
         assert getattr(lr, name), name
+
+    def test_the_pressure_list_is_defined_and_deliberately_empty(self, lr):
+        """The supplemental CSV has no pressure column of any kind, so there is no
+        honest name to put here. It still has to exist: load_supplemental reads it
+        by name, and an absent attribute is a NameError mid-run.
+
+        tests/test_supplemental_csv.py checks the emptiness against the committed
+        file rather than against this comment.
+        """
+        assert isinstance(lr.SUPP_PRESSURE_CANDIDATES, list)
+        assert lr.SUPP_PRESSURE_CANDIDATES == []
 
 
 class TestPreparePipesReadsSchemaMaterial:

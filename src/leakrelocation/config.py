@@ -4,29 +4,30 @@ Before this module existed the production UNC share was hard-coded in 22 of
 the repository's 30 files and the local working root in 15, so relocating
 either meant a find-and-replace across the whole tree.
 
-Every value can be overridden with an environment variable, which is what
-makes the workflow runnable off one person's workstation (and testable on a
-machine that has neither the share nor the GIS portal). The defaults
-reproduce the previous hard-coded values exactly, so behaviour is unchanged
-when nothing is set.
+Nothing reads the share any more. The supplemental leak data is committed under
+input/, so a clone plus a token is the whole of what a run needs: no mapped
+drive, no VPN, no shared folder that has to be found first. Everything that is
+written goes under the local work root.
 
-    LEAKRELOCATION_WORK_ROOT     local scratch/cache root
-    LEAKRELOCATION_PROJECT_DIR   shared network project folder
-    LEAKRELOCATION_CACHE_DIR     layer cache (defaults under work root)
-    LEAKRELOCATION_OUTPUT_GPKG   production GeoPackage
-    LEAKRELOCATION_GIS_ROOT      ArcGIS server root
-    LEAKRELOCATION_PORTAL_ROOT   ArcGIS portal root
+Every value can be overridden with an environment variable, which is what makes
+the workflow runnable off one person's workstation, and testable on a machine
+with no GIS portal at all.
+
+    LEAKRELOCATION_WORK_ROOT           local scratch/cache root
+    LEAKRELOCATION_CACHE_DIR           layer cache (defaults under work root)
+    LEAKRELOCATION_OUTPUT_GPKG         production GeoPackage
+    LEAKRELOCATION_SUPPLEMENTAL_CSV    supplemental leak CSV (defaults to input/)
+    LEAKRELOCATION_GIS_ROOT            ArcGIS server root
+    LEAKRELOCATION_PORTAL_ROOT         ArcGIS portal root
 """
 import os
 from pathlib import Path
 
 # --- Locations ---------------------------------------------------------------
 
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
 DEFAULT_WORK_ROOT = Path.home() / "Downloads" / "LeakRelocation-GeoPandas"
-DEFAULT_PROJECT_DIR = Path(
-    r"\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team"
-    r"\GIS AutoPrint\Distribution Leak Relocation"
-)
 
 
 def _path_from_env(name, default):
@@ -35,7 +36,6 @@ def _path_from_env(name, default):
 
 
 WORK_ROOT = _path_from_env("LEAKRELOCATION_WORK_ROOT", DEFAULT_WORK_ROOT)
-PROJECT_DIR = _path_from_env("LEAKRELOCATION_PROJECT_DIR", DEFAULT_PROJECT_DIR)
 
 LAYER_CACHE_DIR = _path_from_env("LEAKRELOCATION_CACHE_DIR", WORK_ROOT / "layer_cache")
 OUTPUT_DIR = WORK_ROOT / "production_moved_leak_outputs"
@@ -43,31 +43,29 @@ ENRICHMENT_DIR = WORK_ROOT / "assettype_cache_enrichment"
 # No VIEWER_DIR any more: the static viewer that wrote GeoJSON into a folder is
 # gone, and the map is served from the caches instead.
 
-# The GeoPackage is written locally. Writing it straight to the share made every
-# run depend on network write throughput, and a partial write left the shared
-# copy broken. Publish it deliberately when a run looks good, or point
-# LEAKRELOCATION_OUTPUT_GPKG at the share to restore the old behaviour.
+# The GeoPackage is written locally, under the work root. Writing it to a network
+# location made every run depend on network write throughput, and a partial write
+# left the shared copy broken. Point LEAKRELOCATION_OUTPUT_GPKG somewhere else to
+# publish deliberately.
 OUTPUT_GPKG = _path_from_env(
     "LEAKRELOCATION_OUTPUT_GPKG", OUTPUT_DIR / "HistoricLeakRelocation.gpkg")
 
-# Where the shared copy lives, for publishing and for tools that read it.
-PUBLISHED_OUTPUT_GPKG = PROJECT_DIR / "HistoricLeakRelocation.gpkg"
+# Inputs that travel with the repository. The supplemental leak data used to be
+# read off a shared network folder, which made a run depend on being on the
+# network, on the folder not having been reorganised, and on whichever copy of
+# the file happened to be there. It is committed here instead, so a checkout is
+# reproducible on its own.
+INPUT_DIR = REPO_ROOT / "input"
 
 SUPPLEMENTAL_CSV = _path_from_env(
-    "LEAKRELOCATION_SUPPLEMENTAL_CSV", PROJECT_DIR / "HL_SupplementalData.csv")
+    "LEAKRELOCATION_SUPPLEMENTAL_CSV", INPUT_DIR / "HL_SupplementalData.csv")
 
-# The workflow module in this repository. Scripts that reuse its session and
-# request helpers should load this, not the copy on the share - that one is
-# whatever was last deployed or patched.
+# The workflow module in this repository.
 WORKFLOW_SCRIPT = Path(__file__).resolve().parent.parent / "leak_relocation_geopandas.py"
-
-# The ArcPy-era copy that still runs from the share, kept for reference.
-NETWORK_MAIN_SCRIPT = PROJECT_DIR / "Arcpy Code" / "leak reolcation - geopandas.py"
 
 # Committed point-in-time copy of the DNV service metadata. It carries the
 # ASSETTYPE subtype domains, which is what makes a material decode possible
 # without a token - see assettype.decoder_for_layer.
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REFERENCE_DIR = (REPO_ROOT / "reference" / "mapserver_json"
                  / "NY_DNV_Synergi_RiskResults_Assets_NY")
 
@@ -216,7 +214,8 @@ def describe():
     """Return the resolved configuration, for logging at startup."""
     return {
         "work_root": str(WORK_ROOT),
-        "project_dir": str(PROJECT_DIR),
+        "input_dir": str(INPUT_DIR),
+        "supplemental_csv": str(SUPPLEMENTAL_CSV),
         "layer_cache_dir": str(LAYER_CACHE_DIR),
         "output_gpkg": str(OUTPUT_GPKG),
         "gis_root": GIS_ROOT,
