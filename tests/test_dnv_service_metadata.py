@@ -102,6 +102,30 @@ class TestFieldNamesUsedByTheWorkflow:
         assert self.resolved(workflow, leaks,
                              workflow.LEAK_KEY_CANDIDATES) == "LMSLEAKNUMBER"
 
+    def test_leak_address(self, workflow, leaks):
+        assert self.resolved(workflow, leaks,
+                             workflow.LEAK_ADDRESS_CANDIDATES) == "ADDRESS"
+
+    def test_leak_address_is_a_string_field(self, leaks):
+        """A 100 character string with no domain, so it needs no decoding - the
+        value that comes back is the address."""
+        field = next(f for f in leaks["fields"] if f["name"] == "ADDRESS")
+        assert field["type"] == "esriFieldTypeString"
+        assert field.get("domain") is None
+        assert field["length"] == 100
+
+    def test_the_pipe_layers_address_field_is_a_different_field(
+            self, workflow, distribution, service):
+        """The pipe layers carry ng_formattedaddress, not ADDRESS. The single
+        candidate must not reach it: the resolver strips case and punctuation, so
+        a candidate named "ADDRESS" resolves on layer 206 and nowhere else, and
+        the pipe queries stay free of a field the leak layer owns."""
+        for layer in (distribution, service):
+            assert [n for n in names(layer) if "address" in n.lower()] == \
+                ["ng_formattedaddress"]
+            assert self.resolved(workflow, layer,
+                                 workflow.LEAK_ADDRESS_CANDIDATES) is None
+
     def test_pipe_diameter(self, workflow, distribution, service):
         for layer in (distribution, service):
             assert self.resolved(workflow, layer,
@@ -152,6 +176,7 @@ class TestFieldNamesUsedByTheWorkflow:
     @pytest.mark.parametrize("attribute", [
         "MODIFIED_FIELD_CANDIDATES",
         "LEAK_KEY_CANDIDATES",
+        "LEAK_ADDRESS_CANDIDATES",
         "PIPE_DIAMETER_CANDIDATES",
         "PIPE_PRESSURE_CANDIDATES",
         "GLOBALID_CANDIDATES",
@@ -171,6 +196,7 @@ class TestFieldNamesUsedByTheWorkflow:
     @pytest.mark.parametrize("attribute", [
         "MODIFIED_FIELD_CANDIDATES",
         "LEAK_KEY_CANDIDATES",
+        "LEAK_ADDRESS_CANDIDATES",
         "PIPE_DIAMETER_CANDIDATES",
         "PIPE_PRESSURE_CANDIDATES",
         "GLOBALID_CANDIDATES",

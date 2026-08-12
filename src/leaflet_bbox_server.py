@@ -51,6 +51,9 @@ KEEP_TOKENS = [
     "globalid",
     "lms",
     "leak",
+    # ADDRESS on layer 206. Nothing else here matches it, so without this token
+    # the column is downloaded and then dropped before it reaches the page.
+    "address",
     "diam",
     "material",
     "facility",
@@ -696,7 +699,7 @@ def html_page():
         "function esc(v){if(v===null||v===undefined)return '';return String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}"
     )
     parts.append(
-        "function bindPopup(feature,layer){const props=feature.properties||{};const ordered=['LMSLEAKNUMBER','LeakNumber','SuppLeakMaterialType','SuppDiameter','SuppFacilityType','SuppPipeCondition','SuppMaterialFamily','PipeMaterialDomain','PipeMaterialRaw','PipeMaterialFamily','PipeDiameter','OBJECTID','GlobalID','GLOBALID','DistanceToPipe','ConfidenceLevel','LinkedLayer','NearestPipeID','NearestPipeGlobalID'];let keys=[];for(const k of ordered){if(Object.prototype.hasOwnProperty.call(props,k))keys.push(k)}for(const k of Object.keys(props)){if(!keys.includes(k)&&keys.length<18)keys.push(k)}let rows='';for(const k of keys)rows+='<tr><th>'+esc(k)+'</th><td>'+esc(props[k])+'</td></tr>';if(!rows)rows='<tr><td>No attributes</td></tr>';layer.bindPopup('<table>'+rows+'</table>');layer.on('click',function(){AttributePane.selectFromMap(layer)})}"
+        "function bindPopup(feature,layer){const props=feature.properties||{};const ordered=['LMSLEAKNUMBER','LeakNumber','ADDRESS','LeakAddress','SuppLeakMaterialType','SuppDiameter','SuppFacilityType','SuppPipeCondition','SuppMaterialFamily','PipeMaterialDomain','PipeMaterialRaw','PipeMaterialFamily','PipeDiameter','OBJECTID','GlobalID','GLOBALID','DistanceToPipe','ConfidenceLevel','LinkedLayer','NearestPipeID','NearestPipeGlobalID'];let keys=[];for(const k of ordered){if(Object.prototype.hasOwnProperty.call(props,k))keys.push(k)}for(const k of Object.keys(props)){if(!keys.includes(k)&&keys.length<18)keys.push(k)}let rows='';for(const k of keys)rows+='<tr><th>'+esc(k)+'</th><td>'+esc(props[k])+'</td></tr>';if(!rows)rows='<tr><td>No attributes</td></tr>';layer.bindPopup('<table>'+rows+'</table>');layer.on('click',function(){AttributePane.selectFromMap(layer)})}"
     )
     parts.append(
         "function styleFor(k,feature){const c=LAYER_CONFIG[k];const p=(feature&&feature.properties)||{};if(c.kind==='pipe_line'){const fam=p.PipeMaterialFamily||'OTHER';return {color:MATERIAL_COLORS[fam]||MATERIAL_COLORS.OTHER,weight:c.weight||2,opacity:.82}}return {color:c.color,weight:c.weight||1,opacity:.75}}"
