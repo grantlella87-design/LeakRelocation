@@ -96,7 +96,12 @@ def missing_pipe_caches():
 
 
 def serve_map(port, open_browser):
-    """Serve the map: pipes by material, plus the leaks and relocated output.
+    """Serve the map with src/leaflet_bbox_server.py.
+
+    That module is the map viewer, and this always runs it. It used to refuse when
+    a pipe cache was missing, which on a fresh checkout - which has no caches -
+    meant no map at all, and a traceback instead of a viewer. A layer with no
+    source is empty now and says why, both here and on the page itself.
 
     The pipe layers are read from the downloaded caches and served by bounding
     box, a capped number of features at a time, because they are far too large to
@@ -107,8 +112,9 @@ def serve_map(port, open_browser):
 
     missing = missing_pipe_caches()
     if missing:
-        fail(f"No downloaded cache for {missing} in {config.LAYER_CACHE_DIR}, so "
-             f"the pipes cannot be drawn. Run: python run.py --no-view")
+        warn(f"No downloaded cache for {missing} in {config.LAYER_CACHE_DIR}, so "
+             f"those pipe layers will be empty. Everything else still draws. "
+             f"To fill them: python run.py --no-view")
 
     map_server.serve(port=port or map_server.PORT, open_browser=open_browser)
 
