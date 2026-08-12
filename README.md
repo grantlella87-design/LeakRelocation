@@ -3,10 +3,13 @@
 Historic leak relocation workflow for DNV / GeoPandas production processing.
 
 Reads MA historic leaks, MA distribution pipes and MA service pipes from the
-ArcGIS REST services, supplements leak attributes from the shared CSV, matches
-each leak to the nearest pipe with an exact diameter and material/family match,
-snaps the leak to that pipe, and writes a GeoPackage with relocated points,
-offset guide lines and an audit table.
+ArcGIS REST services, supplements leak attributes from the CSV committed under
+`input/`, matches each leak to the nearest pipe with an exact diameter and
+material/family match, snaps the leak to that pipe, and writes a GeoPackage with
+relocated points, offset guide lines and an audit table.
+
+A clone and a GIS token are the whole of what a run needs. Nothing reads a shared
+network folder any more.
 
 ## Key rules
 
@@ -44,9 +47,42 @@ leak fails the check even though the pipe was in the ground.
 | `src/leakrelocation/assettype.py` | ASSETGROUP/ASSETTYPE subtype decoding. |
 | `src/leakrelocation/viewer_pane.py` | Attribute table pane docked under the map. |
 | `scripts/` | Sign-in and cache-repair tools. |
+| `input/` | The supplemental leak CSV. Committed, so a run needs no share. |
 | `reference/` | Service metadata copies the tests check against. |
 | `vendor/leaflet/` | Leaflet, committed so the map needs no internet. |
 | `tests/` | Tests that need no network and no shared drive. |
+
+### Supplemental leak data
+
+`input/HL_SupplementalData.csv` is the leak attribute file, committed so a run does
+not depend on a mapped drive, a VPN, or a shared folder that has been reorganised.
+It carries **98,464 MA rows** across 33 columns.
+
+It is the only source of leak **material** and **diameter** — layer 206 has
+neither, which is why the match cannot be made from the service alone.
+
+Because the file travels with the repository, the header names in the workflow are
+now facts rather than guesses, and `tests/test_supplemental_csv.py` checks them
+against it offline. What that turned up:
+
+| Field | Column | Notes |
+| --- | --- | --- |
+| leak key | `LeakNumber` | `Name` holds the same value on all 98,464 rows. `LMSLEAKNUMBER` and `LEAKNUMBER` were guesses; the file has neither. |
+| diameter | `Diameter` | Filled on 94.7%. `Abdn_Diameter_Main` and `Abdn_Diameter_Service` are different measurements, not fallbacks. |
+| material | `LeakMaterialType` | Filled on 95.8%. The `Abdn_Material*` columns are far sparser and sat behind a name that always resolves. |
+| facility | `FacilityType` | `Distribution Main` or `Service`, which is what decides the pipe layers a leak may relocate onto. |
+| pressure | — | **There is no pressure column of any kind.** Five names used to be guessed for one. |
+
+98,464 rows key to **83,721 distinct leak numbers**, so 14,743 rows share a number
+with another. The last row for a number is the one used — the behaviour this has
+always had — and the run now reports the count instead of leaving the file looking
+like one row per leak.
+
+The eight material values are `Cast Iron`, `Bare Steel`, `Plastic - MD`, `Coated
+Steel`, `Copper`, `Plastic - HD`, `Wrought Iron` and blank. Note that
+`Plastic - MD` and `Plastic - HD` are **not** DNV ASSETTYPE domain labels: they
+reach a pipe through the material family, so the 15,313 leaks carrying them depend
+on `ALLOW_MATERIAL_FAMILY_FALLBACK` being on.
 
 ### Service metadata reference
 
@@ -67,7 +103,7 @@ Only the layers this project reads are kept:
 | --- | --- |
 | `layer_006_Distribution_Pipe.json` | Distribution pipes, with the ASSETTYPE subtype domains. |
 | `layer_007_Service_Pipe.json` | Service pipes, same domains. |
-| `layer_206_Hist_GasLeak.json` | Historic leaks. Carries no material or diameter field, which is why both come from the supplemental CSV. |
+| `layer_206_Hist_GasLeak.json` | Historic leaks. Carries no material or diameter field, which is why both come from the supplemental CSV. `ADDRESS` and `REVISEDLEAKDATE` are read from it. |
 | `manifest.json` | Every layer id on the service and its source URL. |
 | `service.json` | Service-level metadata. |
 
@@ -97,10 +133,9 @@ set to run as before.
 | Variable | Default |
 | --- | --- |
 | `LEAKRELOCATION_WORK_ROOT` | `~/Downloads/LeakRelocation-GeoPandas` |
-| `LEAKRELOCATION_PROJECT_DIR` | the `\\ngusnasnwh001\...` share |
 | `LEAKRELOCATION_CACHE_DIR` | `<work root>/layer_cache` |
 | `LEAKRELOCATION_OUTPUT_GPKG` | `<work root>/production_moved_leak_outputs/HistoricLeakRelocation.gpkg` |
-| `LEAKRELOCATION_SUPPLEMENTAL_CSV` | `<project dir>/HL_SupplementalData.csv` |
+| `LEAKRELOCATION_SUPPLEMENTAL_CSV` | `input/HL_SupplementalData.csv`, in the repository |
 | `LEAKRELOCATION_GIS_ROOT` | `https://gis.nationalgrid.com` |
 | `LEAKRELOCATION_VERBOSE` | `0` — set to `1` for field resolution and setup detail |
 | `LEAKRELOCATION_TIMINGS` | `0` — set to `1` for per-stage elapsed times |
@@ -112,10 +147,10 @@ set to run as before.
 ### Output location
 
 The GeoPackage is written **locally**, under
-`<work root>/production_moved_leak_outputs/`. Writing straight to the share made
-every run depend on network write throughput, and a partial write left the
-shared copy broken. Publish it deliberately when a run looks good, or set
-`LEAKRELOCATION_OUTPUT_GPKG` to the share path to restore the old behaviour.
+`<work root>/production_moved_leak_outputs/`. Writing straight to a network
+location made every run depend on network write throughput, and a partial write
+left the shared copy broken. Set `LEAKRELOCATION_OUTPUT_GPKG` to publish
+deliberately when a run looks good.
 
 ### Signing in
 
@@ -132,6 +167,25 @@ process.
 A token is cached in Windows Credential Manager, and a cache younger than
 `LEAKRELOCATION_CACHE_FRESH_SECONDS` skips the server check entirely, so most
 repeat runs need no sign-in at all.
+
+### The layer cache and newly requested fields
+
+A cache holds the columns that were requested when it was written, and the
+refresh is a delta: only records whose `LASTUPDATE` moved are downloaded again.
+So adding a field to the request lists does not bring it into an existing cache —
+it would arrive for a handful of changed records and be blank for the rest, which
+reads like a service that has stopped populating the field.
+
+Each cache therefore stores a signature of the fields the code asked for. When
+that signature does not match, the layer is downloaded in full instead, once, and
+the run says so:
+
+    historic leaks: the requested fields have changed since this cache was
+    written. Refreshing the layer in full so the new fields are populated for
+    every record.
+
+Adding `ADDRESS` changed the signature, so the first run after it re-downloads
+the three layers. Later runs use the cache as before.
 
 ### If a run is slow
 
@@ -202,6 +256,11 @@ Leaflet's own layer control is a flat list and cannot express a parent, so the
 data layers use a small grouped control instead; the basemaps and the two
 reference shapes stay in Leaflet's.
 
+Each leak carries its street `ADDRESS` from layer 206, in the attribute table and
+in the popup below the leak number. The relocated points and the audit table
+carry the same value as `LeakAddress`. Nothing matches on it — it is there so a
+leak can be identified by where it is and not only by its number.
+
 `run.py` always runs it. **Every** layer degrades on its own: a layer whose cache
 or GeoPackage is not there is empty and says why, in the terminal and in the info
 box on the page — `Main lines - material coded: not available - Missing cache
@@ -219,6 +278,11 @@ Clicking a row in the attribute table shows that feature's attributes on the map
 and leaves the row highlighted, and both survive the layer reload that a pan or
 zoom triggers. The selection is remembered by OBJECTID rather than by the table
 row or the Leaflet layer, because the map throws both away every time it moves.
+
+Clicking anywhere that is not a row and not a feature — the map background, or
+the empty space in the pane below the last row — drops the highlight and closes
+the popup. Sorting and clicking inside an open popup are not outside clicks and
+keep the selection.
 
 Material comes from the decoded `ASSETGROUP + ASSETTYPE` subtype domains, which
 is what the matching uses too, so the map and the match agree. Colours live in
@@ -272,6 +336,7 @@ layer:
 
 - Click a row to zoom to that feature and open its popup.
 - Click a feature on the map to select and scroll to its row.
+- Click the map background, or the pane below the rows, to clear the selection.
 - Click a column header to sort; numeric columns sort numerically.
 - Filter rows with the search box (matches any attribute value).
 - **Hide** collapses the pane and gives the space back to the map.
@@ -303,23 +368,15 @@ diff before.json after.json
 
 ## Making changes
 
-Edit the source in this repository, run the tests, then deploy. Do **not** edit
-the deployed copy on the shared drive — patching it in place is how the workflow
-ended up with five functions defined twice.
-
-`src/leak_relocation_geopandas.py` imports the `leakrelocation` package from its
-own directory, so when it is copied to the share the `src/leakrelocation/`
-folder must be copied alongside it.
+Edit the source in this repository and run the tests. There is no deployed copy to
+keep in step: patching one in place is how this workflow ended up with five
+functions defined twice.
 
 ## Local workflow
 
-Working data lives in:
-
-- `~/Downloads/LeakRelocation-GeoPandas` (caches and generated output)
-- `\\ngusnasnwh001\gasne\GasNE Shared\Shared\ENG\Complex Team\GIS AutoPrint\Distribution Leak Relocation` (shared inputs and the production GeoPackage)
-
-Both are overridable via `LEAKRELOCATION_WORK_ROOT` and
-`LEAKRELOCATION_PROJECT_DIR`.
+The repository holds everything a run reads. The only thing written outside it is
+the working data, under `~/Downloads/LeakRelocation-GeoPandas` — caches and the
+output GeoPackage — overridable with `LEAKRELOCATION_WORK_ROOT`.
 
 Changes reach the repository through git directly. The previous
 `Sync-LeakRelocation-ToGit.ps1` copy-and-commit step has been removed: it

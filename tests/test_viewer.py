@@ -104,6 +104,54 @@ class TestAttributePane:
         assert js is viewer_pane.PANE_JS
 
 
+class TestSelectionClearsOnAnOutsideClick:
+    """Clicking away from the rows drops the highlight and the popup."""
+
+    def test_clear_is_part_of_the_public_api(self):
+        assert "clearSelection:" in viewer_pane.PANE_JS
+
+    def test_clearing_drops_the_identity_not_just_the_row(self):
+        """renderTable re-applies the highlight from selectedLayerKey and
+        selectedFeatureId after every map move, so stripping the class alone
+        would let the highlight come back on the next pan."""
+        body = viewer_pane.PANE_JS.split("function clearSelection()")[1]
+        body = body.split("\n  }")[0]
+        assert "selectedLayerKey = null" in body
+        assert "selectedFeatureId = null" in body
+        assert "classList.remove('selected')" in body
+        assert "map.closePopup()" in body
+        # A popup whose layer was destroyed by clearLayers() is no longer a map
+        # layer, so only the DOM node can be removed.
+        assert ".leaflet-popup" in body
+
+    def test_the_map_background_clears(self):
+        assert "map.on('click'" in viewer_pane.PANE_JS
+
+    def test_selecting_a_feature_does_not_clear_itself(self):
+        """A click on a feature also reaches the map's own click handler. Without
+        the mark, the map handler would wipe the selection just made."""
+        assert "selectionJustHappened" in viewer_pane.PANE_JS
+        assert "if (selectionJustHappened) return;" in viewer_pane.PANE_JS
+        # Released on the next turn of the event loop, not after a delay, so it
+        # cannot swallow a later click on the background.
+        assert "setTimeout(function () { selectionJustHappened = false; }, 0);" \
+            in viewer_pane.PANE_JS
+
+    def test_row_and_header_clicks_are_not_outside_clicks(self):
+        """Rows have their own handler, and sorting is a table operation - the
+        highlight is meant to survive the re-render it causes."""
+        assert "closest('#attrTable tbody tr')) return;" in viewer_pane.PANE_JS
+        assert "closest('#attrTable thead')) return;" in viewer_pane.PANE_JS
+
+    def test_the_clear_handlers_are_wired_once(self):
+        """build() runs after every reload of the layers, so an unguarded
+        addEventListener would stack a handler per pan."""
+        assert "!build.wiredMapClear" in viewer_pane.PANE_JS
+        assert "build.wiredMapClear = true" in viewer_pane.PANE_JS
+        assert "!paneBody.dataset.wiredClear" in viewer_pane.PANE_JS
+        assert "paneBody.dataset.wiredClear = '1'" in viewer_pane.PANE_JS
+
+
 class TestBboxServerMaterialColumns:
     """Pipe material comes from ASSETTYPE. The raw subtype code and its domain
     value are different things and must not be conflated: classifying the code
@@ -177,6 +225,61 @@ class TestBboxServerMaterialColumns:
             "center_lat": 42.5, "center_lon": -71.5,
         })
         assert "PipeMaterialDomain" in server.html_page()
+
+
+class TestLeakAddressReachesTheMap:
+    """ADDRESS is on layer 206 and is carried through for identification. It is
+    matched on by nothing, so an empty column is the only symptom of losing it."""
+
+    @pytest.fixture
+    def server(self):
+        pytest.importorskip("geopandas")
+        sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+        import leaflet_bbox_server
+        return leaflet_bbox_server
+
+    def leak_frame(self, **columns):
+        import geopandas as gpd
+        from shapely.geometry import Point
+        rows = len(next(iter(columns.values())))
+        columns["geometry"] = [Point(-71 - i * 0.01, 42) for i in range(rows)]
+        return gpd.GeoDataFrame(columns, crs="EPSG:4326")
+
+    def test_limit_columns_keeps_the_address(self, server):
+        """limit_columns keeps a column only if it matches a token, and none of
+        the others match "ADDRESS" - so it was downloaded and then dropped one
+        step before the page."""
+        gdf = self.leak_frame(
+            OBJECTID=[1, 2],
+            LMSLEAKNUMBER=["A1", "A2"],
+            ADDRESS=["12 Elm St", "3 Oak Ave"],
+        )
+        out = server.limit_columns(gdf)
+        assert "ADDRESS" in out.columns
+        assert out["ADDRESS"].tolist() == ["12 Elm St", "3 Oak Ave"]
+
+    def test_limit_columns_keeps_the_relocated_address(self, server):
+        """The relocated points carry it as LeakAddress."""
+        gdf = self.leak_frame(OrigLeakOID=[1], LeakAddress=["12 Elm St"])
+        assert "LeakAddress" in server.limit_columns(gdf).columns
+
+    def test_a_column_matching_nothing_is_still_dropped(self, server):
+        """Guards the test above: it passes because of the token, not because
+        limit_columns keeps everything."""
+        gdf = self.leak_frame(OBJECTID=[1], ADDRESS=["12 Elm St"],
+                              SOMETHINGELSE=["x"])
+        assert "SOMETHINGELSE" not in server.limit_columns(gdf).columns
+
+    def test_the_popup_lists_the_address_near_the_top(self, server, monkeypatch):
+        monkeypatch.setattr(server, "BOUNDS", {
+            "west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
+            "center_lat": 42.5, "center_lon": -71.5,
+        })
+        page = server.html_page()
+        assert "'ADDRESS'" in page
+        assert "'LeakAddress'" in page
+        # Ordered above the supplemental attributes: it identifies the leak.
+        assert page.index("'ADDRESS'") < page.index("'SuppLeakMaterialType'")
 
 
 class TestTheMapOpensWithoutItsSources:

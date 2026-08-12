@@ -41,6 +41,7 @@ PIPE_META = {"fields": [{"name": name} for name in [
 
 LEAK_META = {"fields": [{"name": name} for name in [
     "OBJECTID", "GlobalID", "LASTUPDATE", "LMSLEAKNUMBER", "jurisdiction",
+    "ADDRESS", "REVISEDLEAKDATE",
 ]]}
 
 
@@ -66,6 +67,20 @@ class TestBuildOutFields:
             out_fields = lr.build_out_fields(LEAK_META, "historic leaks")
         assert "LMSLEAKNUMBER" in out_fields
         assert "jurisdiction" in out_fields
+
+    def test_the_leak_address_is_requested(self, lr):
+        """It is not matched on, so nothing else in the run would notice it
+        missing - the column would just be empty on the map."""
+        with redirect_stdout(io.StringIO()):
+            out_fields = lr.build_out_fields(LEAK_META, "historic leaks")
+        assert "ADDRESS" in out_fields
+
+    def test_the_address_is_not_asked_of_a_pipe_layer(self, lr):
+        """The pipe layers have no address field, and asking for a field a layer
+        does not have makes the service reject the whole query."""
+        with redirect_stdout(io.StringIO()):
+            out_fields = lr.build_out_fields(PIPE_META, "distribution pipes")
+        assert "ADDRESS" not in out_fields.upper()
 
     def test_a_pipe_layer_without_assettype_fails_loudly(self, lr):
         """ASSETTYPE is the material type, so a pipe layer that does not have it
@@ -98,11 +113,126 @@ class TestCandidateGroupsExist:
         "SUPP_KEY_CANDIDATES",
         "SUPP_DIAMETER_CANDIDATES",
         "SUPP_MATERIAL_CANDIDATES",
-        "SUPP_PRESSURE_CANDIDATES",
         "SUPP_FACILITY_CANDIDATES",
+        "LEAK_ADDRESS_CANDIDATES",
     ])
     def test_defined_and_non_empty(self, lr, name):
         assert getattr(lr, name), name
+
+    def test_the_pressure_list_is_defined_and_deliberately_empty(self, lr):
+        """The supplemental CSV has no pressure column of any kind, so there is no
+        honest name to put here. It still has to exist: load_supplemental reads it
+        by name, and an absent attribute is a NameError mid-run.
+
+        tests/test_supplemental_csv.py checks the emptiness against the committed
+        file rather than against this comment.
+        """
+        assert isinstance(lr.SUPP_PRESSURE_CANDIDATES, list)
+        assert lr.SUPP_PRESSURE_CANDIDATES == []
+
+
+class TestCacheKnowsWhichFieldsItHolds:
+    """A cache holds the columns that were requested when it was written. Adding
+    a field to the request lists does not change it, and the delta refresh only
+    re-downloads rows whose LASTUPDATE moved - so a newly requested field would
+    arrive for a few changed records and be blank for the rest.
+
+    The signature is stored with the cache and compared on read, so adding a
+    field forces one full refresh instead of a half-populated column.
+    """
+
+    def test_the_signature_is_stable(self, lr):
+        assert lr.out_field_request_signature() == lr.out_field_request_signature()
+
+    def test_the_signature_covers_the_address(self, lr, monkeypatch):
+        before = lr.out_field_request_signature()
+        monkeypatch.setattr(lr, "LEAK_ADDRESS_CANDIDATES", [])
+        assert lr.out_field_request_signature() != before
+
+    @pytest.mark.parametrize("attribute", [
+        "MODIFIED_FIELD_CANDIDATES",
+        "LEAK_KEY_CANDIDATES",
+        "LEAK_DATE_CANDIDATES",
+        "PIPE_DIAMETER_CANDIDATES",
+        "PIPE_PRESSURE_CANDIDATES",
+        "PIPE_MATERIAL_FIELDS",
+        "PIPE_CREATED_CANDIDATES",
+        "PIPE_RETIRED_CANDIDATES",
+        "GLOBALID_CANDIDATES",
+        "OBJECTID_CANDIDATES",
+        "JURISDICTION_CANDIDATES",
+    ])
+    def test_every_requested_group_moves_the_signature(self, lr, monkeypatch, attribute):
+        before = lr.out_field_request_signature()
+        monkeypatch.setattr(lr, attribute, [*getattr(lr, attribute), "NEWFIELD"])
+        assert lr.out_field_request_signature() != before, attribute
+
+    def test_case_and_order_do_not_move_the_signature(self, lr, monkeypatch):
+        """resolve_field_name ignores case and returns the layer's own spelling,
+        so re-casing or reordering a list changes nothing about what comes back.
+        Invalidating every cache for that would be a gratuitous re-download."""
+        before = lr.out_field_request_signature()
+        monkeypatch.setattr(lr, "LEAK_KEY_CANDIDATES",
+                            [name.lower() for name in reversed(lr.LEAK_KEY_CANDIDATES)])
+        assert lr.out_field_request_signature() == before
+
+    def test_a_written_cache_carries_the_signature(self, lr, tmp_path, monkeypatch):
+        import geopandas as gpd
+        from shapely.geometry import Point
+        monkeypatch.setattr(lr, "LAYER_CACHE_FOLDER", str(tmp_path))
+        monkeypatch.setattr(lr, "USE_LAYER_CACHE", True)
+        monkeypatch.setattr(lr, "FORCE_LAYER_REFRESH", False)
+        gdf = gpd.GeoDataFrame({"OBJECTID": [1]}, geometry=[Point(0, 0)],
+                               crs="EPSG:4326")
+        with redirect_stdout(io.StringIO()):
+            lr.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
+            loaded, meta = lr.read_layer_cache("leaks", "http://x/206", "1=1")
+        assert meta["out_field_signature"] == lr.out_field_request_signature()
+        assert loaded is not None and len(loaded) == 1
+
+    def test_a_cache_written_for_different_fields_is_refused(
+            self, lr, tmp_path, monkeypatch):
+        """Refusing it sends the caller down the full-download path, the only one
+        that populates a new column for every record."""
+        import geopandas as gpd
+        from shapely.geometry import Point
+        monkeypatch.setattr(lr, "LAYER_CACHE_FOLDER", str(tmp_path))
+        monkeypatch.setattr(lr, "USE_LAYER_CACHE", True)
+        monkeypatch.setattr(lr, "FORCE_LAYER_REFRESH", False)
+        gdf = gpd.GeoDataFrame({"OBJECTID": [1]}, geometry=[Point(0, 0)],
+                               crs="EPSG:4326")
+        with redirect_stdout(io.StringIO()):
+            lr.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
+        # Same cache, read after the code started asking for another field.
+        monkeypatch.setattr(lr, "LEAK_ADDRESS_CANDIDATES", ["ADDRESS", "ADDRESS2"])
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            loaded, meta = lr.read_layer_cache("leaks", "http://x/206", "1=1")
+        assert loaded is None and meta is None
+        assert "requested fields have changed" in buffer.getvalue()
+
+    def test_a_cache_from_before_the_check_is_refreshed_once(
+            self, lr, tmp_path, monkeypatch):
+        import json
+
+        import geopandas as gpd
+        from shapely.geometry import Point
+        monkeypatch.setattr(lr, "LAYER_CACHE_FOLDER", str(tmp_path))
+        monkeypatch.setattr(lr, "USE_LAYER_CACHE", True)
+        monkeypatch.setattr(lr, "FORCE_LAYER_REFRESH", False)
+        gdf = gpd.GeoDataFrame({"OBJECTID": [1]}, geometry=[Point(0, 0)],
+                               crs="EPSG:4326")
+        with redirect_stdout(io.StringIO()):
+            lr.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
+        _, meta_path = lr.layer_cache_paths("leaks")
+        with open(meta_path, encoding="utf-8") as handle:
+            meta = json.load(handle)
+        del meta["out_field_signature"]
+        with open(meta_path, "w", encoding="utf-8") as handle:
+            json.dump(meta, handle)
+        with redirect_stdout(io.StringIO()):
+            loaded, read_meta = lr.read_layer_cache("leaks", "http://x/206", "1=1")
+        assert loaded is None and read_meta is None
 
 
 class TestPreparePipesReadsSchemaMaterial:
