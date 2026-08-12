@@ -104,6 +104,54 @@ class TestAttributePane:
         assert js is viewer_pane.PANE_JS
 
 
+class TestSelectionClearsOnAnOutsideClick:
+    """Clicking away from the rows drops the highlight and the popup."""
+
+    def test_clear_is_part_of_the_public_api(self):
+        assert "clearSelection:" in viewer_pane.PANE_JS
+
+    def test_clearing_drops_the_identity_not_just_the_row(self):
+        """renderTable re-applies the highlight from selectedLayerKey and
+        selectedFeatureId after every map move, so stripping the class alone
+        would let the highlight come back on the next pan."""
+        body = viewer_pane.PANE_JS.split("function clearSelection()")[1]
+        body = body.split("\n  }")[0]
+        assert "selectedLayerKey = null" in body
+        assert "selectedFeatureId = null" in body
+        assert "classList.remove('selected')" in body
+        assert "map.closePopup()" in body
+        # A popup whose layer was destroyed by clearLayers() is no longer a map
+        # layer, so only the DOM node can be removed.
+        assert ".leaflet-popup" in body
+
+    def test_the_map_background_clears(self):
+        assert "map.on('click'" in viewer_pane.PANE_JS
+
+    def test_selecting_a_feature_does_not_clear_itself(self):
+        """A click on a feature also reaches the map's own click handler. Without
+        the mark, the map handler would wipe the selection just made."""
+        assert "selectionJustHappened" in viewer_pane.PANE_JS
+        assert "if (selectionJustHappened) return;" in viewer_pane.PANE_JS
+        # Released on the next turn of the event loop, not after a delay, so it
+        # cannot swallow a later click on the background.
+        assert "setTimeout(function () { selectionJustHappened = false; }, 0);" \
+            in viewer_pane.PANE_JS
+
+    def test_row_and_header_clicks_are_not_outside_clicks(self):
+        """Rows have their own handler, and sorting is a table operation - the
+        highlight is meant to survive the re-render it causes."""
+        assert "closest('#attrTable tbody tr')) return;" in viewer_pane.PANE_JS
+        assert "closest('#attrTable thead')) return;" in viewer_pane.PANE_JS
+
+    def test_the_clear_handlers_are_wired_once(self):
+        """build() runs after every reload of the layers, so an unguarded
+        addEventListener would stack a handler per pan."""
+        assert "!build.wiredMapClear" in viewer_pane.PANE_JS
+        assert "build.wiredMapClear = true" in viewer_pane.PANE_JS
+        assert "!paneBody.dataset.wiredClear" in viewer_pane.PANE_JS
+        assert "paneBody.dataset.wiredClear = '1'" in viewer_pane.PANE_JS
+
+
 class TestBboxServerMaterialColumns:
     """Pipe material comes from ASSETTYPE. The raw subtype code and its domain
     value are different things and must not be conflated: classifying the code

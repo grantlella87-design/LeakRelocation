@@ -93,6 +93,30 @@ const AttributePane = (function () {
   let selectedFeatureId = null;
   let restoring = false;
 
+  /* A click that is neither on a row nor on a feature clears the selection.
+     In Leaflet a click on a feature also reaches the map's own click handler, so
+     without this the map handler would wipe the selection the feature click had
+     just made. A selection marks itself and the map handler skips one clear.
+     The mark is released on the next turn of the event loop rather than after a
+     delay, so it cannot swallow a later click on the background. */
+  let selectionJustHappened = false;
+
+  function markSelection() {
+    selectionJustHappened = true;
+    setTimeout(function () { selectionJustHappened = false; }, 0);
+  }
+
+  function clearSelection() {
+    selectedLayerKey = null;
+    selectedFeatureId = null;
+    if (selectedRow) selectedRow.classList.remove('selected');
+    selectedRow = null;
+    if (typeof map !== 'undefined' && map.closePopup) map.closePopup();
+    document.querySelectorAll('.leaflet-popup').forEach(function (node) {
+      node.remove();
+    });
+  }
+
   /* A stable id for a feature across reloads. OBJECTID is what the services use;
      the fallbacks keep this working for a layer without one. */
   function featureId(feature) {
@@ -285,6 +309,7 @@ const AttributePane = (function () {
         const item = capped[Number(tr.dataset.index)];
         selectedLayerKey = activeKey;
         selectedFeatureId = item ? featureId(item.feature) : null;
+        markSelection();
         highlight(tr);
         focusFeature(item);
       });
@@ -319,6 +344,7 @@ const AttributePane = (function () {
       if (collected.some(function (item) { return item.mapLayer === mapLayer; })) {
         selectedLayerKey = entry.key;
         selectedFeatureId = mapLayer.feature ? featureId(mapLayer.feature) : null;
+        markSelection();
         if (entry.key !== activeKey) select(entry.key);
         break;
       }
@@ -364,11 +390,37 @@ const AttributePane = (function () {
       filter.dataset.wired = '1';
       filter.addEventListener('input', function () { renderTable(); });
     }
+
+    /* Clicking the map background clears the selection. */
+    if (typeof map !== 'undefined' && map.on && !build.wiredMapClear) {
+      build.wiredMapClear = true;
+      map.on('click', function () {
+        if (selectionJustHappened) return;
+        clearSelection();
+      });
+    }
+
+    /* So does clicking inside the pane but not on a row - the empty space below
+       the last row, for instance. Row clicks are let through to their own
+       handler, and so are header clicks: sorting is a table operation, not a
+       deselect, and the highlight is meant to survive the re-render. */
+    const paneBody = document.getElementById('attrPaneBody');
+    if (paneBody && !paneBody.dataset.wiredClear) {
+      paneBody.dataset.wiredClear = '1';
+      paneBody.addEventListener('click', function (event) {
+        const target = event.target;
+        if (!target.closest) return;
+        if (target.closest('#attrTable tbody tr')) return;
+        if (target.closest('#attrTable thead')) return;
+        clearSelection();
+      });
+    }
     select(activeKey);
     if (map && map.invalidateSize) map.invalidateSize();
   }
 
-  return { register: register, build: build, select: select, selectFromMap: selectFromMap };
+  return { register: register, build: build, select: select,
+           selectFromMap: selectFromMap, clearSelection: clearSelection };
 })();
 """
 
