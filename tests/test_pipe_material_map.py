@@ -241,10 +241,13 @@ class TestTheServerCanBeStartedByRunPy:
         under __main__, so nothing could start it."""
         assert callable(server.serve)
 
-    def test_the_pipe_layers_are_configured_with_their_dnv_layer_ids(self, server):
+    def test_every_pipe_layer_is_configured_with_its_layer_id(self, server):
+        """The decode needs the layer the frame came from, including the retired
+        one, which is on the MA service rather than the DNV NY service."""
         assert server.PIPE_LAYER_IDS_BY_KEY == {
             "distribution_pipes": config.DISTRIBUTION_PIPE_LAYER_ID,
             "service_pipes": config.SERVICE_PIPE_LAYER_ID,
+            "retired_pipes": config.RETIRED_PIPE_LAYER_ID,
         }
 
 

@@ -84,6 +84,27 @@ const AttributePane = (function () {
   let sortAscending = true;
   let selectedRow = null;
 
+  /* The selected feature, remembered by identity rather than by the row element
+     or the Leaflet layer. Both of those are thrown away every time the map moves:
+     the bbox map reloads each layer on pan and zoom, clearLayers() destroys the
+     popup, and build() re-renders the table. Clicking a row used to zoom to the
+     feature and then immediately lose both the popup and the highlight. */
+  let selectedLayerKey = null;
+  let selectedFeatureId = null;
+  let restoring = false;
+
+  /* A stable id for a feature across reloads. OBJECTID is what the services use;
+     the fallbacks keep this working for a layer without one. */
+  function featureId(feature) {
+    const props = (feature && feature.properties) || {};
+    for (const key of ['OBJECTID', 'objectid', 'GLOBALID', 'GlobalID', 'globalid']) {
+      if (props[key] !== undefined && props[key] !== null && props[key] !== '') {
+        return key + ':' + String(props[key]);
+      }
+    }
+    return 'props:' + JSON.stringify(props).slice(0, 200);
+  }
+
   function escapeHtml(value) {
     if (value === null || value === undefined) return '';
     return String(value)
@@ -214,10 +235,41 @@ const AttributePane = (function () {
       const props = item.feature.properties || {};
       let cells = '';
       for (const column of columns) cells += '<td>' + escapeHtml(props[column]) + '</td>';
-      table += '<tr data-index="' + index + '">' + cells + '</tr>';
+      /* Re-apply the highlight as the row is written, so it survives the
+         re-render that follows every map move. */
+      const isSelected = activeKey === selectedLayerKey
+        && featureId(item.feature) === selectedFeatureId;
+      table += '<tr data-index="' + index + '"'
+        + (isSelected ? ' class="selected"' : '') + '>' + cells + '</tr>';
     });
     table += '</tbody></table>';
     body.innerHTML = table;
+
+    selectedRow = body.querySelector('#attrTable tbody tr.selected');
+    if (selectedRow) {
+      selectedRow.scrollIntoView({ block: 'nearest' });
+      /* Show the feature's attributes on the map again. Guarded because opening a
+         popup can pan the map, which would reload the layers and land back here. */
+      if (!restoring) {
+        restoring = true;
+        try {
+          const item = capped[Number(selectedRow.dataset.index)];
+          if (item && item.mapLayer && item.mapLayer.openPopup) {
+            /* Sweep any popup DOM Leaflet has lost track of. A layer destroyed
+               by clearLayers() while its popup was open leaves the element
+               behind, and it is no longer a map layer, so removeLayer cannot
+               reach it - only the DOM node can be removed. */
+            if (typeof map !== 'undefined' && map.closePopup) map.closePopup();
+            document.querySelectorAll('.leaflet-popup').forEach(function (node) {
+              node.remove();
+            });
+            item.mapLayer.openPopup();
+          }
+        } finally {
+          restoring = false;
+        }
+      }
+    }
 
     body.querySelectorAll('#attrTable thead th').forEach(function (header) {
       header.addEventListener('click', function () {
@@ -230,8 +282,11 @@ const AttributePane = (function () {
 
     body.querySelectorAll('#attrTable tbody tr').forEach(function (tr) {
       tr.addEventListener('click', function () {
+        const item = capped[Number(tr.dataset.index)];
+        selectedLayerKey = activeKey;
+        selectedFeatureId = item ? featureId(item.feature) : null;
         highlight(tr);
-        focusFeature(capped[Number(tr.dataset.index)]);
+        focusFeature(item);
       });
     });
   }
@@ -262,6 +317,8 @@ const AttributePane = (function () {
     for (const entry of layers) {
       const collected = collect(entry);
       if (collected.some(function (item) { return item.mapLayer === mapLayer; })) {
+        selectedLayerKey = entry.key;
+        selectedFeatureId = mapLayer.feature ? featureId(mapLayer.feature) : null;
         if (entry.key !== activeKey) select(entry.key);
         break;
       }
@@ -284,6 +341,8 @@ const AttributePane = (function () {
     columns = columnsFor(rows);
     sortColumn = null;
     sortAscending = true;
+    /* selectedLayerKey and selectedFeatureId deliberately survive: renderTable
+       re-applies the highlight when the selected feature is in this layer. */
     selectedRow = null;
     renderTabs();
     renderTable();
