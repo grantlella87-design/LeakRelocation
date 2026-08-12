@@ -228,9 +228,12 @@ def load_supplemental():
         log(f"WARNING supplemental CSV missing: {SUPPLEMENTAL_CSV}")
         return pd.DataFrame()
     df = pd.read_csv(SUPPLEMENTAL_CSV, dtype=str, encoding_errors="ignore")
-    key_col = find_col(
-        df.columns, ["LeakNumber", "LMSLEAKNUMBER", "LMSLeakNumber", "Leak_Number"]
-    )
+    # The join is on the leak's GlobalID, which HistoricalLeaksID holds. Keyed on
+    # the leak number this showed the wrong material and diameter in the popup:
+    # the number is not unique in the CSV, and the drop_duplicates below then kept
+    # whichever row happened to come first. 5,364 leak numbers have rows that
+    # disagree about the material or the diameter.
+    key_col = find_col(df.columns, ["HistoricalLeaksID"])
     mat_col = find_col(
         df.columns, ["LeakMaterialType", "Material", "Leak Material Type"]
     )
@@ -239,7 +242,10 @@ def load_supplemental():
     cond_col = find_col(df.columns, ["PipeCondition", "Pipe Condition"])
     if not key_col:
         log(
-            "WARNING supplemental key column not found; initial leak popup will not be enriched."
+            "WARNING supplemental GlobalID column (HistoricalLeaksID) not found; "
+            "initial leak popup will not be enriched. It is not enriched from the "
+            "leak number instead: that number is not unique in this file, so it "
+            "would show another leak's material and diameter."
         )
         return pd.DataFrame()
     out = pd.DataFrame()
@@ -249,7 +255,14 @@ def load_supplemental():
     out["SuppFacilityType"] = df[fac_col] if fac_col else None
     out["SuppPipeCondition"] = df[cond_col] if cond_col else None
     out["SuppMaterialFamily"] = out["SuppLeakMaterialType"].map(material_family)
+    # The GlobalID is unique per row, so this drops nothing on the committed file.
+    # It stays as a guard, because a duplicate key would otherwise multiply rows
+    # in the merge below rather than being ignored.
+    before = len(out)
     out = out[out["JoinLeakKey"] != ""].drop_duplicates("JoinLeakKey", keep="first")
+    if len(out) != before:
+        log(f"WARNING supplemental rows dropped for a blank or repeated "
+            f"GlobalID: {before - len(out):,}")
     log(f"Supplemental loaded for popup enrichment: {len(out):,} keyed records")
     return out
 
@@ -260,12 +273,12 @@ def enrich_historic_leaks(gdf):
         SUPPLEMENTAL = load_supplemental()
     if SUPPLEMENTAL is None or len(SUPPLEMENTAL) == 0 or len(gdf) == 0:
         return gdf
-    key_col = find_col(
-        gdf.columns, ["LMSLEAKNUMBER", "LMSLeakNumber", "LeakNumber", "Leak_Number"]
-    )
+    # Layer 206 spells it GlobalID; find_col matches case-insensitively.
+    key_col = find_col(gdf.columns, ["GlobalID", "GLOBALID"])
     if not key_col:
         log(
-            "WARNING historic leak key not found; cannot enrich initial leak popup attributes."
+            "WARNING the leak cache has no GlobalID column, so the popup cannot be "
+            "enriched. Re-download the leak layer: python run.py --refresh"
         )
         return gdf
     gdf = gdf.copy()
