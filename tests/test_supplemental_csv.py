@@ -118,8 +118,10 @@ class TestThereIsNoPressureColumn:
     def test_turning_it_on_fails_loudly(self, workflow, monkeypatch, tmp_path):
         """Rather than matching every leak against a blank pressure."""
         csv_path = tmp_path / "supp.csv"
-        csv_path.write_text("LeakNumber,Diameter,LeakMaterialType,FacilityType\n"
-                            "1,2,Cast Iron,Distribution Main\n", encoding="utf-8")
+        csv_path.write_text(
+            "HistoricalLeaksID,LeakNumber,Diameter,LeakMaterialType,FacilityType\n"
+            "{AAAAAAAA-0000-0000-0000-000000000001},1,2,Cast Iron,Distribution Main\n",
+            encoding="utf-8")
         monkeypatch.setattr(workflow, "SUPPLEMENTAL_CSV", str(csv_path))
         monkeypatch.setattr(workflow, "REQUIRE_PRESSURE_MATCH", True)
         with pytest.raises(RuntimeError, match="REQUIRE_PRESSURE_MATCH"), \
@@ -185,3 +187,164 @@ class TestFacilityRouting:
         """2,223 rows have no facility type. Trying both layers is the safe
         reading - it cannot wrongly exclude the pipe the leak belongs to."""
         assert sorted(workflow.route_layers("")) == ["distribution", "service"]
+
+
+class TestTheJoinKeyIsTheGlobalId:
+    """The supplemental join is on the leak's GlobalID, not its leak number.
+
+    In the committed file HistoricalLeaksID is unique on all 98,464 rows, while
+    25,733 rows (26.1%) share a LeakNumber with another row across 10,990 numbers -
+    and 5,364 of those numbers have rows that disagree about the material or the
+    diameter. Keyed on the number, those leaks took an arbitrary row's attributes.
+    """
+
+    def test_the_globalid_column_is_in_the_file(self, headers):
+        assert "HistoricalLeaksID" in headers
+
+    def test_it_resolves(self, workflow, headers):
+        assert matching.resolve_field_name(
+            headers, workflow.SUPP_GLOBALID_CANDIDATES) == "HistoricalLeaksID"
+
+    def test_the_globalid_is_unique_and_the_number_is_not(self):
+        """Read from the file rather than asserted from a comment. This is the
+        whole reason for the change, so it is worth the one full pass."""
+        import csv as csv_module
+        globalids = set()
+        numbers = set()
+        repeated_numbers = 0
+        rows = 0
+        with open(config.SUPPLEMENTAL_CSV, encoding="utf-8-sig", newline="") as handle:
+            for row in csv_module.DictReader(handle):
+                rows += 1
+                globalids.add(row["HistoricalLeaksID"].strip())
+                number = row["LeakNumber"].strip()
+                if number in numbers:
+                    repeated_numbers += 1
+                numbers.add(number)
+        assert len(globalids) == rows, "the GlobalID is not unique after all"
+        assert len(numbers) < rows, "the leak number is unique after all"
+        assert repeated_numbers > 0
+
+    def test_both_sides_normalise_to_the_same_shape(self):
+        """The CSV writes {ABC...}; the service may return it braced or not, and in
+        either case. normalize_key strips the braces and upper-cases, so the two
+        sides meet."""
+        braced = "{55891E36-306D-4812-B747-7623651D2ECD}"
+        assert matching.normalize_key(braced) == \
+            matching.normalize_key(braced.lower())
+        assert matching.normalize_key(braced) == \
+            matching.normalize_key("55891e36-306d-4812-b747-7623651d2ecd")
+
+    def test_rows_sharing_a_number_stay_apart(self, workflow, monkeypatch, tmp_path):
+        """The real shape of leak 1000001: a Cast Iron 8" main and a Bare Steel
+        1.25" service under one number. Each must keep its own attributes."""
+        csv_path = tmp_path / "supp.csv"
+        csv_path.write_text(
+            "HistoricalLeaksID,LeakNumber,Diameter,LeakMaterialType,FacilityType\n"
+            "{55891E36-306D-4812-B747-7623651D2ECD},1000001,8,Cast Iron,Distribution Main\n"
+            "{8D0318B7-BEF3-4A38-ADF1-79D26E200FD0},1000001,1.25,Bare Steel,Service\n",
+            encoding="utf-8")
+        monkeypatch.setattr(workflow, "SUPPLEMENTAL_CSV", str(csv_path))
+        with redirect_stdout(io.StringIO()):
+            records = workflow.load_supplemental()
+
+        assert len(records) == 2, "the two rows collapsed into one"
+        main = records["55891E36-306D-4812-B747-7623651D2ECD"]
+        service = records["8D0318B7-BEF3-4A38-ADF1-79D26E200FD0"]
+        assert (main["material"], main["diameter"]) == ("Cast Iron", 8.0)
+        assert (service["material"], service["diameter"]) == ("Bare Steel", 1.25)
+        assert main["facility"] == "Distribution Main"
+        assert service["facility"] == "Service"
+        # The number is still carried, for labelling and the audit.
+        assert main["leak_number"] == service["leak_number"] == "1000001"
+
+    def test_a_leak_gets_its_own_row_not_its_twins(self, workflow, monkeypatch, tmp_path):
+        """End to end through prepare_leaks: two leaks sharing a number, each
+        pointing at a different supplemental row. Keyed on the number both would
+        have taken the same attributes, and one of them would have been wrong."""
+        import geopandas as gpd
+        from shapely.geometry import Point
+
+        csv_path = tmp_path / "supp.csv"
+        csv_path.write_text(
+            "HistoricalLeaksID,LeakNumber,Diameter,LeakMaterialType,FacilityType\n"
+            "{55891E36-306D-4812-B747-7623651D2ECD},1000001,8,Cast Iron,Distribution Main\n"
+            "{8D0318B7-BEF3-4A38-ADF1-79D26E200FD0},1000001,1.25,Bare Steel,Service\n",
+            encoding="utf-8")
+        monkeypatch.setattr(workflow, "SUPPLEMENTAL_CSV", str(csv_path))
+        with redirect_stdout(io.StringIO()):
+            records = workflow.load_supplemental()
+
+        leaks = gpd.GeoDataFrame(
+            {
+                "OBJECTID": [1, 2],
+                "LMSLEAKNUMBER": ["1000001", "1000001"],
+                # Lower case and unbraced on purpose: the join must not depend on
+                # the service spelling it the way the CSV does.
+                "GlobalID": ["55891e36-306d-4812-b747-7623651d2ecd",
+                             "{8D0318B7-BEF3-4A38-ADF1-79D26E200FD0}"],
+            },
+            geometry=[Point(0, 0), Point(10, 10)],
+            crs="EPSG:2249",
+        )
+        with redirect_stdout(io.StringIO()):
+            tasks, _ = workflow.prepare_leaks(leaks, records)
+
+        assert len(tasks) == 2
+        by_oid = {task["leak_oid"]: task for task in tasks}
+        assert by_oid[1]["leak_info"]["material"] == "Cast Iron"
+        assert by_oid[1]["leak_info"]["diameter"] == 8.0
+        assert by_oid[1]["allowed_layers"] == ["distribution"]
+        assert by_oid[2]["leak_info"]["material"] == "Bare Steel"
+        assert by_oid[2]["leak_info"]["diameter"] == 1.25
+        assert by_oid[2]["allowed_layers"] == ["service"]
+
+    def test_a_leak_without_a_globalid_is_counted_not_guessed(
+            self, workflow, monkeypatch, tmp_path):
+        """Falling back to the leak number here is what imported another leak's
+        attributes, so a leak with no GlobalID is left unmatched instead."""
+        import geopandas as gpd
+        from shapely.geometry import Point
+
+        csv_path = tmp_path / "supp.csv"
+        csv_path.write_text(
+            "HistoricalLeaksID,LeakNumber,Diameter,LeakMaterialType,FacilityType\n"
+            "{55891E36-306D-4812-B747-7623651D2ECD},1000001,8,Cast Iron,Distribution Main\n",
+            encoding="utf-8")
+        monkeypatch.setattr(workflow, "SUPPLEMENTAL_CSV", str(csv_path))
+        with redirect_stdout(io.StringIO()):
+            records = workflow.load_supplemental()
+
+        leaks = gpd.GeoDataFrame(
+            {"OBJECTID": [1], "LMSLEAKNUMBER": ["1000001"], "GlobalID": [""]},
+            geometry=[Point(0, 0)], crs="EPSG:2249",
+        )
+        with redirect_stdout(io.StringIO()):
+            tasks, counters = workflow.prepare_leaks(leaks, records)
+        assert tasks == []
+        assert counters["unmatched_no_globalid"] == 1
+
+    def test_a_leak_layer_without_the_column_stops_the_run(
+            self, workflow, monkeypatch, tmp_path):
+        """Rather than joining on the number and producing plausible, wrong
+        output."""
+        import geopandas as gpd
+        from shapely.geometry import Point
+
+        leaks = gpd.GeoDataFrame(
+            {"OBJECTID": [1], "LMSLEAKNUMBER": ["1000001"]},
+            geometry=[Point(0, 0)], crs="EPSG:2249",
+        )
+        with pytest.raises(RuntimeError, match="GlobalID"), \
+                redirect_stdout(io.StringIO()):
+            workflow.prepare_leaks(leaks, {})
+
+    def test_the_csv_without_the_column_stops_the_run(
+            self, workflow, monkeypatch, tmp_path):
+        csv_path = tmp_path / "supp.csv"
+        csv_path.write_text("LeakNumber,Diameter,LeakMaterialType,FacilityType\n"
+                            "1000001,8,Cast Iron,Distribution Main\n", encoding="utf-8")
+        monkeypatch.setattr(workflow, "SUPPLEMENTAL_CSV", str(csv_path))
+        with pytest.raises(RuntimeError, match="GlobalID"), \
+                redirect_stdout(io.StringIO()):
+            workflow.load_supplemental()

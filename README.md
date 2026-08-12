@@ -67,16 +67,42 @@ against it offline. What that turned up:
 
 | Field | Column | Notes |
 | --- | --- | --- |
-| leak key | `LeakNumber` | `Name` holds the same value on all 98,464 rows. `LMSLEAKNUMBER` and `LEAKNUMBER` were guesses; the file has neither. |
+| **join key** | `HistoricalLeaksID` | Layer 206's `GlobalID`. Unique on all 98,464 rows. |
+| leak number | `LeakNumber` | Carried for labelling and the audit, **not** joined on — see below. `Name` holds the same value on all 98,464 rows. |
 | diameter | `Diameter` | Filled on 94.7%. `Abdn_Diameter_Main` and `Abdn_Diameter_Service` are different measurements, not fallbacks. |
 | material | `LeakMaterialType` | Filled on 95.8%. The `Abdn_Material*` columns are far sparser and sat behind a name that always resolves. |
 | facility | `FacilityType` | `Distribution Main` or `Service`, which is what decides the pipe layers a leak may relocate onto. |
 | pressure | — | **There is no pressure column of any kind.** Five names used to be guessed for one. |
 
-98,464 rows key to **83,721 distinct leak numbers**, so 14,743 rows share a number
-with another. The last row for a number is the one used — the behaviour this has
-always had — and the run now reports the count instead of leaving the file looking
-like one row per leak.
+#### The join is on the GlobalID, not the leak number
+
+**The leak number is not unique in this file.** 25,733 rows (26.1%) share a number
+with another row, across 10,990 numbers, and 5,364 of those numbers have rows that
+disagree about the material or the diameter. Leak 1000001 is three rows: a Cast
+Iron 8" main, a Bare Steel 1.25" service, and a second copy of the main.
+
+Joining on the number therefore gave a leak whichever of its namesakes' rows came
+last, and discarded the rest. Measured against the committed file, that was:
+
+| | |
+| --- | --- |
+| leaks given the wrong material | 4,476 |
+| leaks given the wrong diameter | 6,247 |
+| leaks given the wrong facility type | 6,285 |
+| **leaks wrong in at least one of the three** | **8,425** |
+| rows discarded outright | 14,743 |
+
+The facility type is not cosmetic: it decides which pipe layers a leak may
+relocate onto, so those 6,285 were being routed by another leak's data.
+
+The join is on `HistoricalLeaksID` — layer 206's `GlobalID` — which is unique on
+every row, so all 98,464 rows are kept and each leak gets its own. Both sides are
+normalised through `normalize_key`, which strips the braces and upper-cases, so
+`{8D0318B7-…}` and `8d0318b7-…` join.
+
+A leak with no `GlobalID`, or a supplemental file without the column, is **not**
+quietly joined on the number instead: the run counts it as unmatched, or stops.
+Falling back is what produced plausible, wrong output.
 
 The eight material values are `Cast Iron`, `Bare Steel`, `Plastic - MD`, `Coated
 Steel`, `Copper`, `Plastic - HD`, `Wrought Iron` and blank. Note that
