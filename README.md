@@ -202,11 +202,18 @@ Leaflet's own layer control is a flat list and cannot express a parent, so the
 data layers use a small grouped control instead; the basemaps and the two
 reference shapes stay in Leaflet's.
 
+`run.py` always runs it. **Every** layer degrades on its own: a layer whose cache
+or GeoPackage is not there is empty and says why, in the terminal and in the info
+box on the page — `Main lines - material coded: not available - Missing cache
+file: … Download it with: python run.py --no-view`. So a fresh checkout, which has
+no caches at all, still opens the viewer instead of a traceback.
+
+That used to be true only of the abandoned layer, and `run.py` refused to serve at
+all when a pipe cache was missing.
+
 The abandoned layer reads `retired_pipes.pkl.gz`, which the workflow writes when
-it loads layer 62. Until that cache exists the layer appears and reports itself
-as unavailable rather than stopping the map from opening. Its materials need
-layer 62's subtype domains, so run `python scripts\describe_layer.py --save`
-once to put them in `reference/`.
+it loads layer 62. Its materials need layer 62's subtype domains, so run
+`python scripts\describe_layer.py --save` once to put them in `reference/`.
 
 Clicking a row in the attribute table shows that feature's attributes on the map
 and leaves the row highlighted, and both survive the layer reload that a pan or

@@ -177,3 +177,66 @@ class TestBboxServerMaterialColumns:
             "center_lat": 42.5, "center_lon": -71.5,
         })
         assert "PipeMaterialDomain" in server.html_page()
+
+
+class TestTheMapOpensWithoutItsSources:
+    """run.py has to run the map server. It used to refuse when a pipe cache was
+    missing, and the map server itself raised for any layer not marked optional -
+    so on a fresh checkout, which has no caches, there was no viewer at all."""
+
+    @pytest.fixture
+    def server(self):
+        pytest.importorskip("geopandas")
+        sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+        import leaflet_bbox_server
+        return leaflet_bbox_server
+
+    def test_no_layer_is_marked_optional_any_more(self, server):
+        """The flag decided who was allowed to degrade. They all are."""
+        for key, cfg in server.LAYERS.items():
+            assert "optional" not in cfg, key
+
+    def test_a_missing_cache_empties_one_layer_and_notes_why(
+            self, server, monkeypatch, tmp_path):
+        monkeypatch.setattr(server, "CACHE", tmp_path)
+        server.LAYER_NOTES.clear()
+        cfg = {"source": "cache", "cache": "distribution_pipes"}
+        with redirect_stdout(io.StringIO()):
+            frame = server.source_frame("main_lines", cfg, {})
+        assert len(frame) == 0
+        assert "main_lines" in server.LAYER_NOTES
+        # The note has to say how to fix it, not only what is missing.
+        assert "run.py --no-view" in server.LAYER_NOTES["main_lines"]
+
+    def test_load_all_survives_an_empty_cache_directory(
+            self, server, monkeypatch, tmp_path):
+        monkeypatch.setattr(server, "CACHE", tmp_path)
+        monkeypatch.setattr(server, "OUTPUT_GPKG", tmp_path / "nothing.gpkg")
+        with redirect_stdout(io.StringIO()):
+            server.load_all()
+        assert set(server.DATA) == set(server.LAYERS)
+        assert all(len(frame) == 0 for frame in server.DATA.values())
+        # Bounds still have to be something the map can open on.
+        assert server.BOUNDS and server.BOUNDS["west"] < server.BOUNDS["east"]
+
+    def test_the_page_carries_the_notes(self, server, monkeypatch):
+        monkeypatch.setattr(server, "BOUNDS", {
+            "west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
+            "center_lat": 42.5, "center_lon": -71.5,
+        })
+        monkeypatch.setitem(server.LAYER_NOTES, "retired_pipes", "Missing cache file: x")
+        page = server.html_page()
+        assert "const LAYER_NOTES" in page
+        assert "Missing cache file: x" in page
+        # And the info box reads them, otherwise the map is silently empty.
+        assert "LAYER_NOTES[key]" in page
+
+    def test_load_all_clears_stale_notes(self, server, monkeypatch, tmp_path):
+        """The notes are rebuilt per load, so a layer that comes back does not keep
+        reporting itself missing."""
+        monkeypatch.setattr(server, "CACHE", tmp_path)
+        monkeypatch.setattr(server, "OUTPUT_GPKG", tmp_path / "nothing.gpkg")
+        server.LAYER_NOTES["gone"] = "stale"
+        with redirect_stdout(io.StringIO()):
+            server.load_all()
+        assert "gone" not in server.LAYER_NOTES
