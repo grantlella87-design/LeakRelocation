@@ -177,13 +177,30 @@ python run.py
 
 ### The map
 
-`run.py` serves `src/leaflet_bbox_server.py`, which shows, as switchable layers:
+`run.py` serves `src/leaflet_bbox_server.py`. The layers sit under two parents,
+each carrying everything that belongs to one kind of leak:
 
-- **distribution pipes** and **service pipes**, each line coloured by its
-  material — plastic, steel, iron, copper, unknown;
-- **abandoned / retired pipe**, the same colouring, as its own switchable layer;
-- the historic leaks in their original positions;
-- the relocated leak points and the trace lines back to where each leak was.
+| MAINS | SERVICES |
+| --- | --- |
+| Main lines — material coded | Service lines — material coded |
+| Main leaks — original location | Service leaks — original location |
+| Main leaks — relocated location | Service leaks — relocated location |
+| Main leaks — connecting line | Service leaks — connecting line |
+
+Plus **abandoned / retired pipe** under OTHER. Ticking a parent switches its four
+children together; each child still toggles on its own, and the parent shows a
+dash when only some are on. Mains and services are independent — turning one off
+leaves the other exactly as it was.
+
+The split follows the same routing the matcher used, so the map agrees with the
+output: relocated points and connecting lines are one GeoPackage layer each, split
+on `LinkedLayer`, and the original leaks are one cache split on the supplemental
+facility type. A facility type that names neither is searched against both by the
+workflow, so it appears under both here rather than being hidden from one.
+
+Leaflet's own layer control is a flat list and cannot express a parent, so the
+data layers use a small grouped control instead; the basemaps and the two
+reference shapes stay in Leaflet's.
 
 The abandoned layer reads `retired_pipes.pkl.gz`, which the workflow writes when
 it loads layer 62. Until that cache exists the layer appears and reports itself
