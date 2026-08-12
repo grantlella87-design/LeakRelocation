@@ -159,11 +159,16 @@ LAYERS = {
         "group": "other",
         "source": "cache", "cache": "retired_pipes",
         "kind": "pipe_line", "color": "#7b68ee", "radius": 0, "weight": 3,
-        "default": True, "optional": True,
+        "default": True,
     },
 }
 
 DATA = {}
+# Why a layer is empty, per layer key. A missing cache or GeoPackage makes that
+# one layer empty rather than stopping the map from opening - a map with three of
+# its layers drawn is worth having, and the note says what is missing and how to
+# fill it. There is no "optional" flag any more: every layer degrades this way.
+LAYER_NOTES = {}
 BOUNDS = None
 LOCK = threading.Lock()
 SUPPLEMENTAL = None
@@ -502,9 +507,14 @@ def source_frame(key, cfg, cache):
     try:
         frame = read_cache(name) if cfg["source"] == "cache" else read_gpkg(name)
     except RuntimeError as ex:
-        if not cfg.get("optional"):
-            raise
-        log(f"WARNING {key} is not available, so that layer will be empty: {ex}")
+        # Every layer degrades. This used to re-raise for anything not marked
+        # optional, so one missing pipe cache meant no map at all - on a fresh
+        # checkout, which has no caches, run.py could not open the viewer.
+        note = str(ex)
+        if cfg["source"] == "cache":
+            note += ". Download it with: python run.py --no-view"
+        log(f"WARNING {key} is not available, so that layer will be empty: {note}")
+        LAYER_NOTES[key] = note
         frame = gpd.GeoDataFrame(geometry=[], crs=WGS84)
     cache[name] = frame
     return frame
@@ -512,6 +522,7 @@ def source_frame(key, cfg, cache):
 
 def load_all():
     global BOUNDS
+    LAYER_NOTES.clear()
     all_bounds = []
     # Eight map layers come from four sources, so each source is read once.
     sources = {}
@@ -658,6 +669,9 @@ def html_page():
     )
     parts.append("const LAYER_CONFIG = " + cfg_json + ";")
     parts.append("const GROUP_CONFIG = " + json.dumps(GROUPS) + ";")
+    # Why a layer is empty, so the map explains itself rather than showing an
+    # empty layer and leaving the reason in the terminal.
+    parts.append("const LAYER_NOTES = " + json.dumps(LAYER_NOTES) + ";")
     parts.append("const DATA_BOUNDS = " + bounds_json + ";")
     parts.append("const MAX_FEATURES=25000; const SIMPLIFY=0.000002;")
     parts.append(
@@ -796,7 +810,7 @@ def html_page():
         "const info=L.control({position:'bottomleft'}); info.onAdd=function(){const div=L.DomUtil.create('div','info');div.id='infoBox';return div}; info.addTo(map);"
     )
     parts.append(
-        'function updateInfo(){const div=document.getElementById(\'infoBox\');let html=\'<b>LeakRelocation DNV material-coded Leaflet context</b><br/>Initial leaks are enriched from Supplemental CSV: material, diameter, facility type, pipe condition.<br/>Pipelines are colored by material family.<br/><span class="legend-line" style="background:#00b050"></span>Plastic <span class="legend-line" style="background:#404040;margin-left:8px"></span>Steel <span class="legend-line" style="background:#8b4513;margin-left:8px"></span>Iron <span class="legend-line" style="background:#b87333;margin-left:8px"></span>Copper <span class="legend-line" style="background:#999999;margin-left:8px"></span>Unknown <span class="legend-line" style="background:#7b68ee;margin-left:8px"></span>Other<br/><br/>\'; for(const key of active){if(loadErrors[key]){html+=LAYER_CONFIG[key].label+\': <span class="warn">could not load: \'+esc(loadErrors[key])+\'</span><br/>\'; continue} const s=status[key]; if(s){html+=LAYER_CONFIG[key].label+\': shown \'+s.returned.toLocaleString()+\' of \'+s.total_in_view.toLocaleString()+\' in viewport\'; if(s.truncated)html+=\' <span class="warn">TRUNCATED - zoom in</span>\'; html+=\'<br/>\'}}div.innerHTML=html}'
+        'function updateInfo(){const div=document.getElementById(\'infoBox\');let html=\'<b>LeakRelocation DNV material-coded Leaflet context</b><br/>Initial leaks are enriched from Supplemental CSV: material, diameter, facility type, pipe condition.<br/>Pipelines are colored by material family.<br/><span class="legend-line" style="background:#00b050"></span>Plastic <span class="legend-line" style="background:#404040;margin-left:8px"></span>Steel <span class="legend-line" style="background:#8b4513;margin-left:8px"></span>Iron <span class="legend-line" style="background:#b87333;margin-left:8px"></span>Copper <span class="legend-line" style="background:#999999;margin-left:8px"></span>Unknown <span class="legend-line" style="background:#7b68ee;margin-left:8px"></span>Other<br/><br/>\'; for(const key of active){if(LAYER_NOTES[key]){html+=LAYER_CONFIG[key].label+\': <span class="warn">not available</span> - \'+esc(LAYER_NOTES[key])+\'<br/>\'; continue}if(loadErrors[key]){html+=LAYER_CONFIG[key].label+\': <span class="warn">could not load: \'+esc(loadErrors[key])+\'</span><br/>\'; continue} const s=status[key]; if(s){html+=LAYER_CONFIG[key].label+\': shown \'+s.returned.toLocaleString()+\' of \'+s.total_in_view.toLocaleString()+\' in viewport\'; if(s.truncated)html+=\' <span class="warn">TRUNCATED - zoom in</span>\'; html+=\'<br/>\'}}div.innerHTML=html}'
     )
     parts.append("setTimeout(refreshActive,250);</script></body></html>")
     return "\n".join(parts)

@@ -287,12 +287,26 @@ class TestRunPyServesThisMap:
         (tmp_path / "distribution_pipes.pkl.gz").write_bytes(b"")
         assert run_py.missing_pipe_caches() == ["service_pipes"]
 
-    def test_serving_without_caches_names_the_command_that_makes_them(
+    def test_it_still_serves_the_map_without_the_caches(
             self, run_py, monkeypatch, tmp_path):
+        """This used to raise, so a fresh checkout - which has no caches - got a
+        traceback instead of a viewer. run.py has to run the map server; a missing
+        cache makes that layer empty, not the whole map absent."""
         monkeypatch.setattr(run_py.config, "LAYER_CACHE_DIR", tmp_path)
-        with pytest.raises(RuntimeError, match="run.py --no-view"), \
-                redirect_stdout(io.StringIO()):
+        import leaflet_bbox_server as map_server
+        served = {}
+        monkeypatch.setattr(map_server, "serve",
+                            lambda port, open_browser: served.update(port=port))
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
             run_py.serve_map(None, open_browser=False)
+
+        assert served, "the map server was not run"
+        # And it says which layers will be empty, and how to fill them.
+        printed = buffer.getvalue()
+        assert "will be empty" in printed
+        assert "run.py --no-view" in printed
 
     def test_the_port_falls_through_to_the_map_servers_own(
             self, run_py, monkeypatch, tmp_path):
