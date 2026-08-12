@@ -213,6 +213,11 @@ and leaves the row highlighted, and both survive the layer reload that a pan or
 zoom triggers. The selection is remembered by OBJECTID rather than by the table
 row or the Leaflet layer, because the map throws both away every time it moves.
 
+Clicking anywhere that is not a row and not a feature — the map background, or
+the empty space in the pane below the last row — drops the highlight and closes
+the popup. Sorting and clicking inside an open popup are not outside clicks and
+keep the selection.
+
 Material comes from the decoded `ASSETGROUP + ASSETTYPE` subtype domains, which
 is what the matching uses too, so the map and the match agree. Colours live in
 one place, `MATERIAL_COLORS` in that file; the page's palette is generated from
@@ -265,6 +270,7 @@ layer:
 
 - Click a row to zoom to that feature and open its popup.
 - Click a feature on the map to select and scroll to its row.
+- Click the map background, or the pane below the rows, to clear the selection.
 - Click a column header to sort; numeric columns sort numerically.
 - Filter rows with the search box (matches any attribute value).
 - **Hide** collapses the pane and gives the space back to the map.
