@@ -92,6 +92,7 @@ const AttributePane = (function () {
   let selectedLayerKey = null;
   let selectedFeatureId = null;
   let restoring = false;
+  let renderTimer = null;
 
   /* A click that is neither on a row nor on a feature clears the selection.
      In Leaflet a click on a feature also reaches the map's own click handler, so
@@ -115,6 +116,33 @@ const AttributePane = (function () {
     document.querySelectorAll('.leaflet-popup').forEach(function (node) {
       node.remove();
     });
+  }
+
+  /* Open a popup without letting it move the map.
+
+     Leaflet pans the map when a popup will not fit in the view. The bbox map
+     reloads every layer on moveend, each reload rebuilds this table, and the
+     rebuild restores the selected feature's popup - which panned the map again.
+     One row click set off 33 map moves and 306 layer fetches before it settled,
+     measured in a browser; with production-sized layers that is the map locking
+     up and appearing to re-select rows by itself.
+
+     A restored popup therefore never pans. A popup the user opens by clicking
+     still does, because that pan is what they asked for, and the reload it
+     triggers finds the popup already open and leaves it alone. */
+  function openWithoutPanning(mapLayer) {
+    const popup = mapLayer.getPopup && mapLayer.getPopup();
+    if (!popup || !popup.options) {
+      mapLayer.openPopup();
+      return;
+    }
+    const saved = popup.options.autoPan;
+    popup.options.autoPan = false;
+    try {
+      mapLayer.openPopup();
+    } finally {
+      popup.options.autoPan = saved;
+    }
   }
 
   /* A stable id for a feature across reloads. OBJECTID is what the services use;
@@ -272,13 +300,15 @@ const AttributePane = (function () {
     selectedRow = body.querySelector('#attrTable tbody tr.selected');
     if (selectedRow) {
       selectedRow.scrollIntoView({ block: 'nearest' });
-      /* Show the feature's attributes on the map again. Guarded because opening a
-         popup can pan the map, which would reload the layers and land back here. */
+      /* Show the feature's attributes on the map again. The `restoring` guard
+         only covers re-entering synchronously; the loop this used to cause was
+         asynchronous - see openWithoutPanning. */
       if (!restoring) {
         restoring = true;
         try {
           const item = capped[Number(selectedRow.dataset.index)];
-          if (item && item.mapLayer && item.mapLayer.openPopup) {
+          if (item && item.mapLayer && item.mapLayer.openPopup
+              && !(item.mapLayer.isPopupOpen && item.mapLayer.isPopupOpen())) {
             /* Sweep any popup DOM Leaflet has lost track of. A layer destroyed
                by clearLayers() while its popup was open leaves the element
                behind, and it is no longer a map layer, so removeLayer cannot
@@ -287,7 +317,7 @@ const AttributePane = (function () {
             document.querySelectorAll('.leaflet-popup').forEach(function (node) {
               node.remove();
             });
-            item.mapLayer.openPopup();
+            openWithoutPanning(item.mapLayer);
           }
         } finally {
           restoring = false;
@@ -334,7 +364,15 @@ const AttributePane = (function () {
     } else if (mapLayer.getLatLng) {
       map.setView(mapLayer.getLatLng(), Math.max(map.getZoom(), 18));
     }
-    if (mapLayer.openPopup) mapLayer.openPopup();
+    /* Also without panning. The view has just been centred on this feature on
+       purpose, and letting the popup pan away from it undid that: in a short map
+       - the attribute pane takes 260px, so a laptop can leave the map around
+       250px tall - the popup panned far enough that the feature left the
+       viewport, the bbox reload dropped it, and the selection had nothing left to
+       restore. Measured: clicking the row for OBJECTID 1 ended with rows 2, 5 and
+       7 in view and no selection. A tall popup can now be clipped in a short map,
+       which is the better failure: the feature stays where it was put. */
+    if (mapLayer.openPopup) openWithoutPanning(mapLayer);
   }
 
   /* Select the table row for a feature clicked on the map. */
@@ -415,8 +453,20 @@ const AttributePane = (function () {
         clearSelection();
       });
     }
-    select(activeKey);
+    scheduleRender();
     if (map && map.invalidateSize) map.invalidateSize();
+  }
+
+  /* The map reloads nine layers per move and calls build() as each one finishes,
+     so an unguarded build re-read every layer and re-rendered the whole table
+     nine times per pan. One render per burst is what the user sees anyway.
+     Clicking a tab still renders straight away - that path calls select(). */
+  function scheduleRender() {
+    if (renderTimer !== null) clearTimeout(renderTimer);
+    renderTimer = setTimeout(function () {
+      renderTimer = null;
+      select(activeKey);
+    }, 90);
   }
 
   return { register: register, build: build, select: select,

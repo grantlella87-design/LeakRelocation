@@ -163,12 +163,21 @@ LAYERS = {
     },
 }
 
+# Columns the leak layers are expected to carry. A cache downloaded before a field
+# was requested has no such column, and the page then shows a blank attribute with
+# no hint that the fix is a re-download - ADDRESS and REVISEDLEAKDATE both arrived
+# after the first caches were written, so this is the normal way to meet them.
+EXPECTED_LEAK_FIELDS = ("ADDRESS", "REVISEDLEAKDATE")
+
 DATA = {}
 # Why a layer is empty, per layer key. A missing cache or GeoPackage makes that
 # one layer empty rather than stopping the map from opening - a map with three of
 # its layers drawn is worth having, and the note says what is missing and how to
 # fill it. There is no "optional" flag any more: every layer degrades this way.
 LAYER_NOTES = {}
+# Fields a layer loaded without, per layer key. Distinct from LAYER_NOTES: the
+# layer has data and draws, it is only missing an attribute.
+LAYER_FIELD_NOTES = {}
 BOUNDS = None
 LOCK = threading.Lock()
 SUPPLEMENTAL = None
@@ -184,12 +193,19 @@ def clean_value(value):
     try:
         if pd.isna(value):
             return None
-    except Exception:
+    # pd.isna on an array-like returns an array, and bool() of that raises. Every
+    # input this page passes through was tried - list, tuple, set, dict, bytes,
+    # ndarray (including empty), Series, DataFrame, shapely geometry, str, int,
+    # nan, NaT - and ValueError is the only thing raised, so an array-like is
+    # simply not missing.
+    except ValueError:
         pass
     if hasattr(value, "item"):
         try:
             value = value.item()
-        except Exception:
+        # .item() raises ValueError on anything whose size is not 1, which a
+        # numpy scalar never is. AttributeError cannot happen behind the hasattr.
+        except ValueError:
             pass
     if isinstance(value, pd.Timestamp):
         return value.isoformat()
@@ -204,7 +220,8 @@ def norm_key(value):
     try:
         if pd.isna(value):
             return ""
-    except Exception:
+    # See clean_value: bool() of an array raises ValueError and nothing else.
+    except ValueError:
         pass
     text = str(value).strip()
     text = text.removesuffix(".0")
@@ -463,7 +480,14 @@ def read_gpkg(layer):
         return gpd.GeoDataFrame(geometry=[], crs=WGS84)
     try:
         gdf = gpd.read_file(str(OUTPUT_GPKG), layer=layer)
-    except Exception as ex:
+    except Exception as ex:  # noqa: BLE001 - see below
+        # Deliberately broad, and reported rather than swallowed. Which exception
+        # a bad read raises depends on the engine geopandas is using: pyogrio
+        # raises DataLayerError for a missing layer and DataSourceError for a file
+        # it does not recognise (both RuntimeError subclasses), while fiona raises
+        # its own DriverError, which is not. A half-written GeoPackage can also
+        # fail inside GDAL in ways neither documents. No unreadable output layer
+        # is worth taking the whole map down for: the layer is empty and says why.
         log(f"WARNING could not read {layer}: {ex}")
         return gpd.GeoDataFrame(geometry=[], crs=WGS84)
     gdf = gdf[gdf.geometry.notna()].copy()
@@ -533,9 +557,26 @@ def source_frame(key, cfg, cache):
     return frame
 
 
+def missing_leak_field_note(cfg, gdf):
+    """Which expected leak attributes this layer's cache does not carry.
+
+    Only for the layers that read the historic leak cache, and only when it has
+    features - an empty layer already reports itself through LAYER_NOTES.
+    """
+    if cfg.get("cache") != "historic_leaks" or not len(gdf):
+        return ""
+    missing = [name for name in EXPECTED_LEAK_FIELDS if name not in gdf.columns]
+    if not missing:
+        return ""
+    return (f"{', '.join(missing)} is not in the downloaded leak cache, so it is "
+            f"blank here. The cache predates the field; re-download it with "
+            f"python run.py --refresh")
+
+
 def load_all():
     global BOUNDS
     LAYER_NOTES.clear()
+    LAYER_FIELD_NOTES.clear()
     all_bounds = []
     # Eight map layers come from four sources, so each source is read once.
     sources = {}
@@ -547,6 +588,10 @@ def load_all():
             all_bounds.append(gdf.total_bounds)
         DATA[key] = gdf
         log(f"  {key}: {len(gdf):,} features")
+        field_note = missing_leak_field_note(cfg, gdf)
+        if field_note:
+            LAYER_FIELD_NOTES[key] = field_note
+            log(f"WARNING {key}: {field_note}")
     if all_bounds:
         west = min(b[0] for b in all_bounds)
         south = min(b[1] for b in all_bounds)
@@ -685,6 +730,7 @@ def html_page():
     # Why a layer is empty, so the map explains itself rather than showing an
     # empty layer and leaving the reason in the terminal.
     parts.append("const LAYER_NOTES = " + json.dumps(LAYER_NOTES) + ";")
+    parts.append("const LAYER_FIELD_NOTES = " + json.dumps(LAYER_FIELD_NOTES) + ";")
     parts.append("const DATA_BOUNDS = " + bounds_json + ";")
     parts.append("const MAX_FEATURES=25000; const SIMPLIFY=0.000002;")
     parts.append(
@@ -823,7 +869,7 @@ def html_page():
         "const info=L.control({position:'bottomleft'}); info.onAdd=function(){const div=L.DomUtil.create('div','info');div.id='infoBox';return div}; info.addTo(map);"
     )
     parts.append(
-        'function updateInfo(){const div=document.getElementById(\'infoBox\');let html=\'<b>LeakRelocation DNV material-coded Leaflet context</b><br/>Initial leaks are enriched from Supplemental CSV: material, diameter, facility type, pipe condition.<br/>Pipelines are colored by material family.<br/><span class="legend-line" style="background:#00b050"></span>Plastic <span class="legend-line" style="background:#404040;margin-left:8px"></span>Steel <span class="legend-line" style="background:#8b4513;margin-left:8px"></span>Iron <span class="legend-line" style="background:#b87333;margin-left:8px"></span>Copper <span class="legend-line" style="background:#999999;margin-left:8px"></span>Unknown <span class="legend-line" style="background:#7b68ee;margin-left:8px"></span>Other<br/><br/>\'; for(const key of active){if(LAYER_NOTES[key]){html+=LAYER_CONFIG[key].label+\': <span class="warn">not available</span> - \'+esc(LAYER_NOTES[key])+\'<br/>\'; continue}if(loadErrors[key]){html+=LAYER_CONFIG[key].label+\': <span class="warn">could not load: \'+esc(loadErrors[key])+\'</span><br/>\'; continue} const s=status[key]; if(s){html+=LAYER_CONFIG[key].label+\': shown \'+s.returned.toLocaleString()+\' of \'+s.total_in_view.toLocaleString()+\' in viewport\'; if(s.truncated)html+=\' <span class="warn">TRUNCATED - zoom in</span>\'; html+=\'<br/>\'}}div.innerHTML=html}'
+        'function updateInfo(){const div=document.getElementById(\'infoBox\');let html=\'<b>LeakRelocation DNV material-coded Leaflet context</b><br/>Initial leaks are enriched from Supplemental CSV: material, diameter, facility type, pipe condition.<br/>Pipelines are colored by material family.<br/><span class="legend-line" style="background:#00b050"></span>Plastic <span class="legend-line" style="background:#404040;margin-left:8px"></span>Steel <span class="legend-line" style="background:#8b4513;margin-left:8px"></span>Iron <span class="legend-line" style="background:#b87333;margin-left:8px"></span>Copper <span class="legend-line" style="background:#999999;margin-left:8px"></span>Unknown <span class="legend-line" style="background:#7b68ee;margin-left:8px"></span>Other<br/><br/>\'; for(const key of active){if(LAYER_NOTES[key]){html+=LAYER_CONFIG[key].label+\': <span class="warn">not available</span> - \'+esc(LAYER_NOTES[key])+\'<br/>\'; continue}if(loadErrors[key]){html+=LAYER_CONFIG[key].label+\': <span class="warn">could not load: \'+esc(loadErrors[key])+\'</span><br/>\'; continue} const s=status[key]; if(s){html+=LAYER_CONFIG[key].label+\': shown \'+s.returned.toLocaleString()+\' of \'+s.total_in_view.toLocaleString()+\' in viewport\'; if(s.truncated)html+=\' <span class="warn">TRUNCATED - zoom in</span>\'; html+=\'<br/>\'}if(LAYER_FIELD_NOTES[key])html+=\'<span class="warn">&nbsp;&nbsp;\'+esc(LAYER_FIELD_NOTES[key])+\'</span><br/>\'}div.innerHTML=html}'
     )
     parts.append("setTimeout(refreshActive,250);</script></body></html>")
     return "\n".join(parts)
@@ -881,7 +927,11 @@ class Handler(BaseHTTPRequestHandler):
                 )
             else:
                 self.send_error(404, "Not found")
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001 - one request must not kill the server
+            # The request handler is the outermost boundary of this process. Any
+            # failure below it - a bad bbox, a frame that cannot be serialised, a
+            # dropped connection - has to become a 500 for that one request and
+            # nothing more; the page reports it in the info box and carries on.
             self.send_text(json.dumps({"error": str(ex)}), "application/json", 500)
 
     def send_text(self, text, ctype, status=200):
