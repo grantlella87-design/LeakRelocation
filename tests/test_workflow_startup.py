@@ -33,23 +33,72 @@ def lr():
 
 class TestOutputIsLocal:
     def test_geopackage_defaults_under_the_work_root(self):
-        # Writing straight to the share made each run depend on network write
-        # throughput and left a broken shared copy on a partial write.
+        # Writing straight to a network location made each run depend on network
+        # write throughput and left a broken shared copy on a partial write.
         assert config.OUTPUT_GPKG == config.OUTPUT_DIR / "HistoricLeakRelocation.gpkg"
-        assert str(config.PROJECT_DIR) not in str(config.OUTPUT_GPKG)
+        assert config.WORK_ROOT in config.OUTPUT_GPKG.parents
 
-    def test_share_location_still_known_for_publishing(self):
-        assert config.PUBLISHED_OUTPUT_GPKG.parent == config.PROJECT_DIR
+    def test_the_folder_created_at_startup_is_the_one_written_to(self, lr):
+        """ensure_output_folder used to create config.PROJECT_DIR - the network
+        share - which nothing wrote to. A run on a machine that could not reach it
+        failed there, before any work was done."""
+        assert lr.OUTPUT_FOLDER == str(config.OUTPUT_GPKG.parent)
 
-    def test_env_override_restores_the_share(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("LEAKRELOCATION_OUTPUT_GPKG", str(tmp_path / "shared.gpkg"))
+    def test_env_override_moves_the_output(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("LEAKRELOCATION_OUTPUT_GPKG", str(tmp_path / "elsewhere.gpkg"))
         import importlib
         reloaded = importlib.reload(config)
         try:
-            assert reloaded.OUTPUT_GPKG == tmp_path / "shared.gpkg"
+            assert reloaded.OUTPUT_GPKG == tmp_path / "elsewhere.gpkg"
         finally:
             monkeypatch.delenv("LEAKRELOCATION_OUTPUT_GPKG")
             importlib.reload(config)
+
+
+class TestNothingReadsTheShare:
+    """The supplemental data is committed under input/, so a run needs a clone and
+    a token and nothing else - no mapped drive, no VPN, no shared folder."""
+
+    def test_the_share_path_is_gone_from_the_source(self):
+        """A default that names an unreachable UNC path is not inert: it is what
+        the run uses when the environment variable is unset.
+
+        The needles are assembled from fragments so that this file does not match
+        itself - written out in full, the test failed on its own source.
+        """
+        needles = ["ngusnas" + "nwh001", "Complex" + " Team"]
+        for folder in ("src", "scripts", "tests"):
+            root = os.path.join(REPO_ROOT, folder)
+            for dirpath, _, filenames in os.walk(root):
+                if "__pycache__" in dirpath:
+                    continue
+                for filename in filenames:
+                    if not filename.endswith(".py"):
+                        continue
+                    path = os.path.join(dirpath, filename)
+                    with open(path, encoding="utf-8") as handle:
+                        body = handle.read()
+                    for needle in needles:
+                        assert needle not in body, f"{path} still names the share"
+
+    def test_the_config_has_no_project_dir_left(self):
+        for name in ("PROJECT_DIR", "DEFAULT_PROJECT_DIR", "PUBLISHED_OUTPUT_GPKG",
+                     "NETWORK_MAIN_SCRIPT"):
+            assert not hasattr(config, name), f"config.{name} still exists"
+
+    def test_the_supplemental_csv_defaults_into_the_repository(self):
+        assert config.SUPPLEMENTAL_CSV == config.INPUT_DIR / "HL_SupplementalData.csv"
+        assert config.INPUT_DIR == config.REPO_ROOT / "input"
+
+    def test_the_committed_csv_is_where_the_config_points(self):
+        assert config.SUPPLEMENTAL_CSV.is_file(), (
+            f"{config.SUPPLEMENTAL_CSV} is missing from the checkout")
+
+    def test_describe_reports_the_input_location(self):
+        described = config.describe()
+        assert described["input_dir"] == str(config.INPUT_DIR)
+        assert described["supplemental_csv"] == str(config.SUPPLEMENTAL_CSV)
+        assert "project_dir" not in described
 
 
 class TestLoopbackSignIn:

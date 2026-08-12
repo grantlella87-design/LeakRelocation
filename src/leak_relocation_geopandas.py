@@ -166,7 +166,12 @@ def normalize_loaded_layers_to_analysis_crs(
 
 
 SUPPLEMENTAL_CSV = str(config.SUPPLEMENTAL_CSV)
-OUTPUT_FOLDER = str(config.PROJECT_DIR)
+# The folder the GeoPackage is written into, derived from the file itself so that
+# overriding LEAKRELOCATION_OUTPUT_GPKG moves both. This used to be the network
+# share, which ensure_output_folder then tried to *create*: a run on a machine
+# that could not reach it failed there, before any work was done, even though
+# nothing was ever written to it.
+OUTPUT_FOLDER = str(config.OUTPUT_GPKG.parent)
 OUTPUT_GPKG = str(config.OUTPUT_GPKG)
 HIST_LEAK_URL = config.HIST_LEAK_URL
 DISTRIBUTION_PIPE_URL = config.DISTRIBUTION_PIPE_URL
@@ -287,24 +292,48 @@ OBJECTID_CANDIDATES = ["OBJECTID"]
 JURISDICTION_CANDIDATES = ["jurisdiction"]
 # --- Supplemental CSV headers ------------------------------------------------
 #
-# These stay candidate lists. HL_SupplementalData.csv lives on the share, not in
-# the service, so nothing in this repository can say what its headers are. They
-# are the last unverified names in this file.
-SUPP_KEY_CANDIDATES = ["LeakNumber", "Name", "LMSLEAKNUMBER", "LEAKNUMBER"]
-SUPP_DIAMETER_CANDIDATES = ["Diameter", "Abdn_Diameter_Main", "Abdn_Diameter_Service"]
-SUPP_MATERIAL_CANDIDATES = [
-    "LeakMaterialType",
-    "Abdn_Material",
-    "Adbn_Material_Main",
-    "Abdn_Material_Service",
-]
-SUPP_PRESSURE_CANDIDATES = [
-    "Pressure",
-    "OperatingPressure",
-    "MAOP",
-    "MAOPDesign",
-    "op_pressure",
-]
+# These were the last unverified names in this file. HL_SupplementalData.csv is
+# now committed under input/, so they are facts as well: every name below was read
+# off its 33 headers, and tests/test_supplemental_csv.py checks these lists
+# against the committed file, offline.
+#
+# The counts in the comments are from that file: 98,464 MA rows.
+#
+# LeakNumber and Name hold the same value on all 98,464 rows, so Name is a
+# duplicate column rather than a fallback. The old list also carried LMSLEAKNUMBER
+# and LEAKNUMBER, which the CSV does not have - and LEAKNUMBER could never have
+# been reached anyway, because resolve_field_name strips case and it is
+# "LeakNumber" in different clothes.
+SUPP_KEY_CANDIDATES = ["LeakNumber", "Name"]
+
+# Diameter is filled on 94.7%. Abdn_Diameter_Main and Abdn_Diameter_Service are
+# filled on 100% but are different measurements - the main's diameter and the
+# service's - so falling back to either would answer a question about one pipe
+# with a number from another. Diameter is the leak's own, so it is the only entry.
+SUPP_DIAMETER_CANDIDATES = ["Diameter"]
+
+# LeakMaterialType is filled on 95.8%; Abdn_Material on 24.8%, Adbn_Material_Main
+# (spelled that way in the file) on 23.1% and Abdn_Material_Service on 3.0%. All
+# four exist, so the three sparse ones sat behind a name that always resolves and
+# could never be reached.
+#
+# The eight values in the file are Cast Iron, Bare Steel, Plastic - MD, Coated
+# Steel, Copper, Plastic - HD, Wrought Iron and blank. Note that "Plastic - MD"
+# and "Plastic - HD" are not DNV ASSETTYPE domain labels: they match a pipe
+# through the material family, so those 15,313 leaks depend on
+# ALLOW_MATERIAL_FAMILY_FALLBACK being on.
+SUPP_MATERIAL_CANDIDATES = ["LeakMaterialType"]
+
+# The CSV has no pressure column at all - not Pressure, MAOP, MAOPDesign or
+# anything else. The five names that used to be here were guesses for a file
+# nothing in this repository could read. The list is deliberately empty: pressure
+# matching is off by default, load_supplemental says so, and it fails loudly if
+# REQUIRE_PRESSURE_MATCH is ever turned on.
+SUPP_PRESSURE_CANDIDATES = []
+
+# FacilityType is filled on 97.7% with "Distribution Main" or "Service", which is
+# what route_layers reads. PipeType says "Distribution Pipe" or "Service Pipe" on
+# 95.1% and is a different field, kept as the fallback.
 SUPP_FACILITY_CANDIDATES = ["FacilityType", "PipeType"]
 WORKER_TREES = None
 
@@ -1281,11 +1310,18 @@ def load_supplemental():
     )
     records = {}
     skipped_no_key = 0
+    duplicate_keys = 0
     for _, row in df.iterrows():
         leak_key = normalize_key(row.get(key_field))
         if not leak_key:
             skipped_no_key += 1
             continue
+        if leak_key in records:
+            # Later rows win, which is the behaviour this has always had. The
+            # committed file has 98,464 rows and 83,721 distinct leak numbers, so
+            # this is not an edge case: without the count it looks as though the
+            # CSV holds one row per leak.
+            duplicate_keys += 1
         records[leak_key] = {
             "diameter": parse_number(row.get(diameter_field))
             if diameter_field
@@ -1297,6 +1333,9 @@ def load_supplemental():
     log(f"Supplemental records keyed: {len(records):,}")
     if skipped_no_key:
         warn(f"Supplemental rows skipped, missing key: {skipped_no_key:,}")
+    if duplicate_keys:
+        warn(f"Supplemental rows sharing a leak number: {duplicate_keys:,}. "
+             f"The last row for each key is the one used.")
     if REQUIRE_PRESSURE_MATCH and not pressure_field:
         fail(
             "REQUIRE_PRESSURE_MATCH is True but no supplemental pressure field was resolved."

@@ -28,7 +28,6 @@ HOST = "127.0.0.1"
 PORT = 8765
 ROOT = config.WORK_ROOT
 CACHE = config.LAYER_CACHE_DIR
-PROJECT = config.PROJECT_DIR
 SUPPLEMENTAL_CSV = config.SUPPLEMENTAL_CSV
 OUTPUT_GPKG = config.OUTPUT_GPKG
 VENDOR = ROOT / "leaflet_context" / "vendor" / "leaflet"
