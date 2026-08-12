@@ -40,9 +40,10 @@ MAX_FEATURES_DEFAULT = 25000
 # layers offer, which is 19 - too coarse to separate two service lines on the
 # same frontage. Past each provider's native zoom the last tile is upscaled and
 # looks soft, while the pipes stay sharp because they are drawn as vectors.
-MAX_ZOOM = 22
-OSM_MAX_NATIVE_ZOOM = 19
-ESRI_MAX_NATIVE_ZOOM = 19
+# Both are configurable; see config.MAP_MAX_ZOOM.
+MAX_ZOOM = config.MAP_MAX_ZOOM
+OSM_MAX_NATIVE_ZOOM = config.TILE_MAX_NATIVE_ZOOM
+ESRI_MAX_NATIVE_ZOOM = config.TILE_MAX_NATIVE_ZOOM
 SIMPLIFY_DEFAULT = 0.000002
 KEEP_TOKENS = [
     "objectid",
@@ -101,6 +102,20 @@ LAYERS = {
         "radius": 0,
         "weight": 2,
         "default": True,
+    },
+    # The retired/abandoned pipe layer, downloaded by the workflow into
+    # retired_pipes.pkl.gz. Optional: that cache only exists once the workflow has
+    # loaded layer 62, and a map that refuses to start without it would be worse
+    # than one that opens and says the layer is not there.
+    "retired_pipes": {
+        "label": "Abandoned / retired pipe - material coded",
+        "source": "cache",
+        "kind": "pipe_line",
+        "color": "#7b68ee",
+        "radius": 0,
+        "weight": 3,
+        "default": True,
+        "optional": True,
     },
     "relocated_leaks": {
         "label": "Relocated leak points",
@@ -281,6 +296,7 @@ def decode_from_subtypes(gdf, layer_id, layer_name):
 PIPE_LAYER_IDS_BY_KEY = {
     "distribution_pipes": config.DISTRIBUTION_PIPE_LAYER_ID,
     "service_pipes": config.SERVICE_PIPE_LAYER_ID,
+    "retired_pipes": config.RETIRED_PIPE_LAYER_ID,
 }
 
 
@@ -415,7 +431,13 @@ def load_all():
     all_bounds = []
     for key, cfg in LAYERS.items():
         log(f"Loading layer: {key}")
-        gdf = read_cache(key) if cfg["source"] == "cache" else read_gpkg(cfg["layer"])
+        try:
+            gdf = read_cache(key) if cfg["source"] == "cache" else read_gpkg(cfg["layer"])
+        except RuntimeError as ex:
+            if not cfg.get("optional"):
+                raise
+            log(f"WARNING {key} is not available, so that layer will be empty: {ex}")
+            gdf = gpd.GeoDataFrame(geometry=[], crs=WGS84)
         if len(gdf):
             _ = gdf.sindex
             all_bounds.append(gdf.total_bounds)
@@ -559,7 +581,7 @@ def html_page():
         "attribution:'Tiles &copy; Esri'});"
     )
     parts.append(
-        "osm.addTo(map); const groups={}; const active=new Set(); const status={};"
+        "osm.addTo(map); const groups={}; const active=new Set(); const status={}; const loadErrors={};"
     )
     parts.append(
         "function esc(v){if(v===null||v===undefined)return '';return String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}"
@@ -586,7 +608,25 @@ def html_page():
         "map.fitBounds([[DATA_BOUNDS.south,DATA_BOUNDS.west],[DATA_BOUNDS.north,DATA_BOUNDS.east]],{padding:[24,24]});"
     )
     parts.append(
-        "async function refreshLayer(key){if(!active.has(key))return; const b=map.getBounds(); const url='/api/layer?name='+encodeURIComponent(key)+'&west='+b.getWest()+'&south='+b.getSouth()+'&east='+b.getEast()+'&north='+b.getNorth()+'&simplify='+SIMPLIFY+'&max='+MAX_FEATURES; const r=await fetch(url); const payload=await r.json(); groups[key].clearLayers(); L.geoJSON(payload.geojson,{pointToLayer:pointToLayerFor(key),style:function(f){return styleFor(key,f)},onEachFeature:bindPopup}).addTo(groups[key]); status[key]=payload; updateInfo(); AttributePane.build();}"
+        # try/catch because this is the only thing that draws a layer: a failed
+        # fetch used to surface as an unhandled promise rejection in the console
+        # and leave the layer silently empty.
+        "async function refreshLayer(key){if(!active.has(key))return;"
+        " const b=map.getBounds();"
+        " const url='/api/layer?name='+encodeURIComponent(key)+'&west='+b.getWest()+'&south='+b.getSouth()+'&east='+b.getEast()+'&north='+b.getNorth()+'&simplify='+SIMPLIFY+'&max='+MAX_FEATURES;"
+        " try{"
+        "  const r=await fetch(url); if(!r.ok)throw new Error(r.status+' '+r.statusText);"
+        "  const payload=await r.json();"
+        # Close before clearing. clearLayers() destroys the layer that owns an
+        # open popup and leaves the popup's DOM behind, one orphan per reload -
+        # 104 of them after a few pans. The pane reopens the selected one after
+        # the table is rebuilt.
+        "  if(map.closePopup)map.closePopup();"
+        "  groups[key].clearLayers();"
+        "  L.geoJSON(payload.geojson,{pointToLayer:pointToLayerFor(key),style:function(f){return styleFor(key,f)},onEachFeature:bindPopup}).addTo(groups[key]);"
+        "  status[key]=payload; delete loadErrors[key];"
+        " }catch(err){ loadErrors[key]=String(err); }"
+        " updateInfo(); AttributePane.build();}"
     )
     parts.append(
         "function refreshActive(){for(const key of Array.from(active))refreshLayer(key)} map.on('overlayadd',function(e){for(const key of Object.keys(groups)){if(groups[key]===e.layer){active.add(key);refreshLayer(key)}}}); map.on('overlayremove',function(e){for(const key of Object.keys(groups)){if(groups[key]===e.layer){active.delete(key);groups[key].clearLayers();delete status[key];updateInfo();AttributePane.build()}}}); map.on('moveend zoomend',refreshActive);"
@@ -595,7 +635,7 @@ def html_page():
         "const info=L.control({position:'bottomleft'}); info.onAdd=function(){const div=L.DomUtil.create('div','info');div.id='infoBox';return div}; info.addTo(map);"
     )
     parts.append(
-        'function updateInfo(){const div=document.getElementById(\'infoBox\');let html=\'<b>LeakRelocation DNV material-coded Leaflet context</b><br/>Initial leaks are enriched from Supplemental CSV: material, diameter, facility type, pipe condition.<br/>Pipelines are colored by material family.<br/><span class="legend-line" style="background:#00b050"></span>Plastic <span class="legend-line" style="background:#404040;margin-left:8px"></span>Steel <span class="legend-line" style="background:#8b4513;margin-left:8px"></span>Iron <span class="legend-line" style="background:#b87333;margin-left:8px"></span>Copper <span class="legend-line" style="background:#999999;margin-left:8px"></span>Unknown <span class="legend-line" style="background:#7b68ee;margin-left:8px"></span>Other<br/><br/>\'; for(const key of active){const s=status[key]; if(s){html+=LAYER_CONFIG[key].label+\': shown \'+s.returned.toLocaleString()+\' of \'+s.total_in_view.toLocaleString()+\' in viewport\'; if(s.truncated)html+=\' <span class="warn">TRUNCATED - zoom in</span>\'; html+=\'<br/>\'}}div.innerHTML=html}'
+        'function updateInfo(){const div=document.getElementById(\'infoBox\');let html=\'<b>LeakRelocation DNV material-coded Leaflet context</b><br/>Initial leaks are enriched from Supplemental CSV: material, diameter, facility type, pipe condition.<br/>Pipelines are colored by material family.<br/><span class="legend-line" style="background:#00b050"></span>Plastic <span class="legend-line" style="background:#404040;margin-left:8px"></span>Steel <span class="legend-line" style="background:#8b4513;margin-left:8px"></span>Iron <span class="legend-line" style="background:#b87333;margin-left:8px"></span>Copper <span class="legend-line" style="background:#999999;margin-left:8px"></span>Unknown <span class="legend-line" style="background:#7b68ee;margin-left:8px"></span>Other<br/><br/>\'; for(const key of active){if(loadErrors[key]){html+=LAYER_CONFIG[key].label+\': <span class="warn">could not load: \'+esc(loadErrors[key])+\'</span><br/>\'; continue} const s=status[key]; if(s){html+=LAYER_CONFIG[key].label+\': shown \'+s.returned.toLocaleString()+\' of \'+s.total_in_view.toLocaleString()+\' in viewport\'; if(s.truncated)html+=\' <span class="warn">TRUNCATED - zoom in</span>\'; html+=\'<br/>\'}}div.innerHTML=html}'
     )
     parts.append("setTimeout(refreshActive,250);</script></body></html>")
     return "\n".join(parts)

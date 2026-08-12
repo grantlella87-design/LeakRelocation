@@ -166,6 +166,21 @@ CACHE_FRESH_SECONDS = _int_from_env("LEAKRELOCATION_CACHE_FRESH_SECONDS", 3600)
 # Load the three layers concurrently. They are independent reads.
 PARALLEL_LAYER_LOAD = _flag_from_env("LEAKRELOCATION_PARALLEL_LOAD", True)
 
+# --- Map ---------------------------------------------------------------------
+
+# How far the map will zoom in. The tile providers stop at 19, so past that the
+# deepest tile is upscaled while the pipes stay sharp - they are vectors.
+#
+# 28 is as deep as Leaflet goes without complaint: checked in a browser at 22, 24,
+# 25, 26 and 28, all of which zoomed and drew without a page error. For scale, a
+# pixel is roughly 4 cm at zoom 22, 9 mm at 24 and 0.6 mm at 28 - well past survey
+# accuracy, so the extra levels are for separating overlapping lines rather than
+# for measuring anything.
+MAP_MAX_ZOOM = _int_from_env("LEAKRELOCATION_MAP_MAX_ZOOM", 28)
+
+# Deepest zoom each basemap actually has tiles for. Leaflet upscales beyond it.
+TILE_MAX_NATIVE_ZOOM = _int_from_env("LEAKRELOCATION_TILE_MAX_NATIVE_ZOOM", 19)
+
 # --- Output verbosity -------------------------------------------------------
 
 # Field resolution, proxy/TLS setup and outFields lists are diagnostic detail.

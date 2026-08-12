@@ -181,8 +181,20 @@ python run.py
 
 - **distribution pipes** and **service pipes**, each line coloured by its
   material — plastic, steel, iron, copper, unknown;
+- **abandoned / retired pipe**, the same colouring, as its own switchable layer;
 - the historic leaks in their original positions;
 - the relocated leak points and the trace lines back to where each leak was.
+
+The abandoned layer reads `retired_pipes.pkl.gz`, which the workflow writes when
+it loads layer 62. Until that cache exists the layer appears and reports itself
+as unavailable rather than stopping the map from opening. Its materials need
+layer 62's subtype domains, so run `python scripts\describe_layer.py --save`
+once to put them in `reference/`.
+
+Clicking a row in the attribute table shows that feature's attributes on the map
+and leaves the row highlighted, and both survive the layer reload that a pan or
+zoom triggers. The selection is remembered by OBJECTID rather than by the table
+row or the Leaflet layer, because the map throws both away every time it moves.
 
 Material comes from the decoded `ASSETGROUP + ASSETTYPE` subtype domains, which
 is what the matching uses too, so the map and the match agree. Colours live in
@@ -198,11 +210,13 @@ too large to write into a single GeoJSON and hand to a browser. With the whole
 state in view the cap is reached and the info box says `TRUNCATED - zoom in`;
 that is the cap, not missing data.
 
-The map zooms to **level 22**. The tile providers only have imagery to level 19,
-so past that the last tile is upscaled and looks soft while the pipes stay sharp,
-because they are drawn as vectors rather than baked into the tiles. Leaflet
-otherwise stops at whatever the tiles offer, which is not close enough to tell
-two services on one frontage apart.
+The map zooms to **level 28**, as deep as Leaflet goes without complaint — 22,
+24, 25, 26 and 28 were each checked in a browser and all zoomed and drew cleanly.
+The tile providers only have imagery to 19, so past that the last tile is upscaled
+and looks soft while the pipes stay sharp, because they are vectors rather than
+baked into the tiles. For scale a pixel is about 4 cm at zoom 22, 9 mm at 24 and
+0.6 mm at 28 — well past survey accuracy, so the deep levels are for separating
+overlapping lines, not for measuring. `LEAKRELOCATION_MAP_MAX_ZOOM` changes it.
 
 Leaflet is committed under `vendor/leaflet/`, so the page has it with no internet
 and nothing to build first. The map falls back to a CDN only if that copy is
