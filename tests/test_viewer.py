@@ -343,3 +343,126 @@ class TestTheMapOpensWithoutItsSources:
         with redirect_stdout(io.StringIO()):
             server.load_all()
         assert "gone" not in server.LAYER_NOTES
+
+
+class TestPopupsDoNotMoveTheMap:
+    """A row click set off 33 map moves and 306 layer fetches before settling.
+
+    Leaflet pans the map when a popup will not fit. The bbox map reloads every
+    layer on moveend, each reload rebuilds the table, and the rebuild restored the
+    popup - which panned again. In a short map the pan also carried the selected
+    feature out of the viewport, so the reload dropped it and the selection could
+    not be restored at all. Measured after the fix: 1 move, 18 fetches, the
+    selection intact, in both a 638px and a 258px tall map.
+    """
+
+    def test_a_helper_opens_popups_without_panning(self):
+        assert "function openWithoutPanning(mapLayer)" in viewer_pane.PANE_JS
+        body = viewer_pane.PANE_JS.split("function openWithoutPanning(mapLayer)")[1]
+        body = body.split("\n  }")[0]
+        assert "popup.options.autoPan = false" in body
+        # Restored, so a popup the user opens deliberately is unaffected.
+        assert "popup.options.autoPan = saved" in body
+
+    def test_both_paths_that_open_a_popup_use_it(self):
+        """The restore path and the row-click focus path. Either one panning is
+        enough to start the loop."""
+        assert "openWithoutPanning(item.mapLayer)" in viewer_pane.PANE_JS
+        assert "openPopup) openWithoutPanning(mapLayer)" in viewer_pane.PANE_JS
+
+    def test_no_path_calls_openpopup_bare(self):
+        """Guards the two above: a third caller would reintroduce the loop."""
+        bare = viewer_pane.PANE_JS.count("mapLayer.openPopup()")
+        # Only the two inside openWithoutPanning itself.
+        assert bare == 2, f"{bare} bare openPopup() calls"
+
+    def test_an_already_open_popup_is_left_alone(self):
+        assert "isPopupOpen && item.mapLayer.isPopupOpen()" in viewer_pane.PANE_JS
+
+    def test_renders_are_coalesced(self):
+        """build() is called once per layer as each reload finishes - nine times
+        per pan - and each call re-read every layer and re-rendered the table."""
+        assert "function scheduleRender()" in viewer_pane.PANE_JS
+        assert "clearTimeout(renderTimer)" in viewer_pane.PANE_JS
+        assert "scheduleRender();" in viewer_pane.PANE_JS
+
+
+class TestTheLeakFieldNotes:
+    """ADDRESS and REVISEDLEAKDATE arrived after the first caches were written, so
+    a cache from before then simply has no such column and the page showed a blank
+    attribute with no hint that the fix is a re-download."""
+
+    @pytest.fixture
+    def server(self):
+        pytest.importorskip("geopandas")
+        sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+        import leaflet_bbox_server
+        return leaflet_bbox_server
+
+    def leak_frame(self, server, **columns):
+        import geopandas as gpd
+        from shapely.geometry import Point
+        rows = len(next(iter(columns.values())))
+        columns["geometry"] = [Point(-71 - i * 0.01, 42) for i in range(rows)]
+        return gpd.GeoDataFrame(columns, crs="EPSG:4326")
+
+    def test_a_cache_without_the_fields_is_reported(self, server):
+        cfg = {"source": "cache", "cache": "historic_leaks"}
+        frame = self.leak_frame(server, OBJECTID=[1], LMSLEAKNUMBER=["A"])
+        note = server.missing_leak_field_note(cfg, frame)
+        assert "ADDRESS" in note and "REVISEDLEAKDATE" in note
+        assert "run.py --refresh" in note
+
+    def test_a_cache_with_them_is_not(self, server):
+        cfg = {"source": "cache", "cache": "historic_leaks"}
+        frame = self.leak_frame(server, OBJECTID=[1], ADDRESS=["12 Elm St"],
+                                REVISEDLEAKDATE=[1_500_000_000_000])
+        assert server.missing_leak_field_note(cfg, frame) == ""
+
+    def test_pipe_layers_are_not_checked(self, server):
+        """They have neither field and are not supposed to."""
+        cfg = {"source": "cache", "cache": "distribution_pipes"}
+        frame = self.leak_frame(server, OBJECTID=[1])
+        assert server.missing_leak_field_note(cfg, frame) == ""
+
+    def test_an_empty_layer_is_not_checked(self, server):
+        """It already reports itself through LAYER_NOTES; two messages for one
+        cause is noise."""
+        cfg = {"source": "cache", "cache": "historic_leaks"}
+        frame = self.leak_frame(server, OBJECTID=[])
+        assert server.missing_leak_field_note(cfg, frame) == ""
+
+    def test_the_page_carries_and_reads_them(self, server, monkeypatch):
+        monkeypatch.setattr(server, "BOUNDS", {
+            "west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
+            "center_lat": 42.5, "center_lon": -71.5,
+        })
+        monkeypatch.setitem(server.LAYER_FIELD_NOTES, "main_leaks_original",
+                            "ADDRESS is not in the downloaded leak cache")
+        page = server.html_page()
+        assert "const LAYER_FIELD_NOTES" in page
+        assert "ADDRESS is not in the downloaded leak cache" in page
+        assert "LAYER_FIELD_NOTES[key]" in page
+
+    def test_update_info_javascript_is_balanced(self, server, monkeypatch):
+        """This function is built as a Python string, and adding the field note to
+        it left one brace too many - which unit tests passed straight through and
+        only the browser caught, as "Unexpected token '}'" with the whole pane
+        dead. Counting braces here is cheap and catches that class of mistake."""
+        monkeypatch.setattr(server, "BOUNDS", {
+            "west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
+            "center_lat": 42.5, "center_lon": -71.5,
+        })
+        page = server.html_page()
+        start = page.index("function updateInfo()")
+        end = page.index("div.innerHTML=html}", start) + len("div.innerHTML=html}")
+        depth = 0
+        lowest = 0
+        for char in page[start:end]:
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                lowest = min(lowest, depth)
+        assert depth == 0, f"updateInfo braces are unbalanced by {depth}"
+        assert lowest == 0, "updateInfo closes a brace it never opened"
