@@ -8,6 +8,14 @@ pyproj>=3.5
 requests>=2.31
 keyring>=24.0
 
+# Makes Python verify TLS against the Windows certificate store instead of
+# certifi's bundled list. Required on the corporate network: the proxy re-signs
+# HTTPS with an internal root that is trusted by Windows and absent from certifi,
+# so without this every request to gis.nationalgrid.com fails with
+#   SSLCertVerificationError: self-signed certificate in certificate chain
+# auth.make_session() injects it when it is importable and warns when it is not.
+truststore>=0.9; python_version >= "3.10"
+
 # Tests (pure logic only - no network, no shared drive):
 #   .venv\Scripts\python.exe -m pytest
 pytest>=7.4
