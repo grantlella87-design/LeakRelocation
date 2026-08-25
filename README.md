@@ -236,6 +236,17 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
+Install from `requirements.txt` rather than picking packages by hand: `truststore`
+is in there for a reason. The corporate proxy re-signs HTTPS with an internal root
+that Windows trusts and certifi does not, so without it every request to
+`gis.nationalgrid.com` ends in
+
+    SSLCertVerificationError: self-signed certificate in certificate chain
+
+`auth.make_session()` warns when it cannot import it — `truststore injection
+failed: No module named 'truststore'` is that warning, and the sign-in traceback
+that follows is its consequence, not a separate problem.
+
 ## Running
 
 One command does everything: check the token, download the three layers, decode
