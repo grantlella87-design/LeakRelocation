@@ -71,20 +71,54 @@ def family_from_assettype(decoded_assettype):
 def reference_layer_json(layer_id):
     """The committed metadata copy for a layer id, or None.
 
-    config.REFERENCE_DIR holds one file per layer, named layer_006_*.json and so
-    on. Reading the domains from there means a tool can name a pipe material with
-    no token and no network - which is what lets the map colour pipes straight
-    from a downloaded cache.
+    Every folder under reference/mapserver_json/ is searched, and the id is
+    compared as a number rather than as a filename fragment. Both of those were
+    wrong before, and they hid a layer that was sitting in the checkout:
+
+      - only config.REFERENCE_DIR was searched, which is the DNV NY service, so
+        layer 62 under MA_Material_View_MA/ was never seen;
+      - the glob was layer_062_*.json, which does not match
+        layer_0062_Pipeline_Line_Abandoned.json.
+
+    The effect was that the abandoned pipe layer could not name its materials -
+    PipeMaterialDomain came out empty and every retired pipe drew in one colour -
+    while the file it needed was committed and two directories away.
     """
     import json
 
-    if not config.REFERENCE_DIR.is_dir():
-        return None
-    matches = sorted(config.REFERENCE_DIR.glob(f"layer_{int(layer_id):03d}_*.json"))
-    if not matches:
-        return None
-    with open(matches[0], encoding="utf-8") as handle:
-        return json.load(handle)
+    for path in reference_layer_paths():
+        stem = path.name.split("_")
+        if len(stem) < 2 or not stem[1].isdigit():
+            continue
+        if int(stem[1]) != int(layer_id):
+            continue
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    return None
+
+
+def reference_layer_paths():
+    """Every committed layer JSON, the configured directory first.
+
+    REFERENCE_DIR stays first so a service this project reads directly keeps
+    priority over a copy someone added for reference.
+    """
+    seen = []
+    for directory in (config.REFERENCE_DIR, *sorted(reference_service_dirs())):
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("layer_*.json")):
+            if path not in seen:
+                seen.append(path)
+    return seen
+
+
+def reference_service_dirs():
+    """The per-service folders under reference/mapserver_json/."""
+    root = getattr(config, "REFERENCE_ROOT", None)
+    if root is None or not root.is_dir():
+        return []
+    return [path for path in root.iterdir() if path.is_dir()]
 
 
 def decoder_for_layer(layer_id):
