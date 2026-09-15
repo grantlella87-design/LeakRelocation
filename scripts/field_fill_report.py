@@ -162,6 +162,13 @@ def service_counts(url, layer_label, fields, where, candidates=()):
     log(f"\n=== {layer_label} on the service ===")
     log(f"   {url}")
     total = workflow.query_count(session, url, where, layer_label)
+    if total is None:
+        # query_count warns and returns None when the reply carries no count.
+        # Everything below divides by it, so stop here rather than crash the
+        # report on the layer that could not answer.
+        warn(f"{layer_label}: the service did not return a row count, so the "
+             f"per-field counts cannot be put in proportion. Skipping it.")
+        return
     log(f"   {'field':<24} {'with a value':>13}  of {total:,}")
     ask(session, workflow, url, layer_label, fields, where, total)
     if candidates:
@@ -176,6 +183,9 @@ def ask(session, workflow, url, layer_label, fields, where, total):
             count = workflow.query_count(session, url, clause, f"{layer_label}.{field}")
         except Exception as ex:  # noqa: BLE001 - one field must not stop the report
             log(f"   {field:<24} {'could not ask':>13}  ({ex})")
+            continue
+        if count is None:
+            log(f"   {field:<24} {'no count':>13}  (the reply carried none)")
             continue
         mark = "  " if count else "<-"
         share = (count / total * 100) if total else 0.0
