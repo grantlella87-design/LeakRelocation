@@ -144,6 +144,7 @@ files anything read. Re-copy from the URL above if another layer is ever needed.
 | `arcgis_signin.py` | Sign in on its own, inspect or clear the cached token, test the redirect. |
 | `preflight_assettype_cache_check.py` | Report which pipe caches are present. |
 | `describe_layer.py` | Print a layer's fields, dates and subtype domains; `--save` writes it into `reference/`. |
+| `field_fill_report.py` | Which fields actually hold values, in the caches and (with `--service`) in the service. |
 | `enrich_assettype_cache.py` | Repair an existing cache. Not needed for a normal run — `run.py` decodes the material itself. |
 
 The viewer builders, the audit and the inspect scripts are gone: `run.py` serves
@@ -216,6 +217,30 @@ the run says so:
 
 Adding `ADDRESS` changed the signature, so the first run after it re-downloads
 the three layers. Later runs use the cache as before.
+
+### If a field is empty on the map
+
+An empty column has two causes that need opposite fixes, and they are told apart
+with:
+
+```bat
+python scripts\field_fill_report.py
+python scripts\field_fill_report.py --service
+```
+
+The first reads the local caches and the output GeoPackage and reports, per field,
+how many rows hold a value. The second asks the service the same question - one
+count query per field, no data returned - so:
+
+| What the report shows | What it means |
+| --- | --- |
+| `not in this source` | the download predates the field. `python run.py --refresh` |
+| `0` here, filled on the service | it is being lost after the download — a bug here |
+| `0` in both | the service does not populate it. Nothing here can fill it in |
+
+`ADDRESS` and `REVISEDLEAKDATE` were added to the leak query after the first
+caches were written, so a cache from before then simply has no such column and the
+map says so beside the layer's own name.
 
 ### If the network drops a request
 

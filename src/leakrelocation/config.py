@@ -66,8 +66,11 @@ WORKFLOW_SCRIPT = Path(__file__).resolve().parent.parent / "leak_relocation_geop
 # Committed point-in-time copy of the DNV service metadata. It carries the
 # ASSETTYPE subtype domains, which is what makes a material decode possible
 # without a token - see assettype.decoder_for_layer.
-REFERENCE_DIR = (REPO_ROOT / "reference" / "mapserver_json"
-                 / "NY_DNV_Synergi_RiskResults_Assets_NY")
+# One folder per service. Layer metadata is looked up across all of them, because
+# the layers this project reads are not all on the same service: the retired pipe
+# layer is on MA_Material_View_MA while the rest are on the DNV NY service.
+REFERENCE_ROOT = REPO_ROOT / "reference" / "mapserver_json"
+REFERENCE_DIR = REFERENCE_ROOT / "NY_DNV_Synergi_RiskResults_Assets_NY"
 
 # Leaflet, committed so the map works with no internet and nothing to build
 # first. scripts/build_leaflet_context.py used to download it into the work root;

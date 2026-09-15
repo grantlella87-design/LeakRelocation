@@ -82,8 +82,20 @@ class TestTheOfflineDecoder:
         assert assettype.decoder_for_layer(4242) == (None, {})
 
     def test_missing_reference_folder_gives_nothing(self, monkeypatch, tmp_path):
+        """Both locations have to be emptied now. The lookup searches every
+        service folder under REFERENCE_ROOT, not only REFERENCE_DIR, because the
+        retired pipe layer is on a different service and was being missed."""
         monkeypatch.setattr(config, "REFERENCE_DIR", tmp_path / "absent")
+        monkeypatch.setattr(config, "REFERENCE_ROOT", tmp_path / "also absent")
         assert assettype.decoder_for_layer(6) == (None, {})
+
+    def test_the_root_alone_still_finds_a_layer(self, monkeypatch, tmp_path):
+        """Guards the test above: it passes because both were emptied, not
+        because the lookup stopped working."""
+        monkeypatch.setattr(config, "REFERENCE_DIR", tmp_path / "absent")
+        type_id_field, decoder = assettype.decoder_for_layer(6)
+        assert type_id_field == "ASSETGROUP"
+        assert decoder
 
 
 @pytest.mark.skipif(not REFERENCE_PRESENT, reason="reference metadata not present")
