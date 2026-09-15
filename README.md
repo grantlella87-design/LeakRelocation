@@ -145,6 +145,7 @@ files anything read. Re-copy from the URL above if another layer is ever needed.
 | `preflight_assettype_cache_check.py` | Report which pipe caches are present. |
 | `describe_layer.py` | Print a layer's fields, dates and subtype domains; `--save` writes it into `reference/`. |
 | `field_fill_report.py` | Which fields actually hold values, in the caches and (with `--service`) in the service. |
+| `probe_leak_fields.py` | Why a leak field is empty: counts it with and without the `jurisdiction = 'MA'` filter, null against blank, and shows real values. |
 | `enrich_assettype_cache.py` | Repair an existing cache. Not needed for a normal run — `run.py` decodes the material itself. |
 
 The viewer builders, the audit and the inspect scripts are gone: `run.py` serves
@@ -215,8 +216,20 @@ the run says so:
     written. Refreshing the layer in full so the new fields are populated for
     every record.
 
-Adding `ADDRESS` changed the signature, so the first run after it re-downloads
-the three layers. Later runs use the cache as before.
+The signature is per layer kind, and two things keep it from costing more than it
+has to:
+
+- a leak field and a pipe field have separate digests, so collecting one more
+  leak column no longer re-downloads 1,274,797 service pipes that were never
+  affected by it;
+- when the signature does not match, the cache's own columns are checked before
+  it is thrown away. A cache that already carries every requested field is kept:
+
+      historic leaks: the requested fields have changed, but this cache already
+      carries every one of them. Keeping it.
+
+Adding `ADDRESS` changed the leak signature, so the first run after it
+re-downloads the leak layer. Later runs use the cache as before.
 
 ### If a field is empty on the map
 
@@ -243,12 +256,55 @@ a configured field turns out to be empty the alternatives are right there. On th
 MA leaks, `REVISEDLEAKDATE` and `ADDRESS` came back present but empty on all
 98,501 rows, which is why the audit table reads `no_leak_date` for 98% of them —
 the date rule has nothing to compare. Layer 206 carries `DISCOVEREDDATE`,
-`REPAIREDDATE`, `COMPLETEDDATE`, `NEARESTXSTREET` and `CITY` as well, and the
-report says which of those MA fills in.
+`REPAIREDDATE` and `COMPLETEDDATE` as well, and the report says which of those MA
+fills in.
 
 `ADDRESS` and `REVISEDLEAKDATE` were added to the leak query after the first
 caches were written, so a cache from before then simply has no such column and the
 map says so beside the layer's own name.
+
+### Why a leak field is empty
+
+`ADDRESS` **is** a field on layer 206, it **is** in the `outFields` this project
+sends, and the column **is** in the cache — with no value on any of the 98,501 MA
+rows. The fill report cannot say which of three things that is, because all three
+look identical from inside a MA-only cache. This can:
+
+```bat
+python scripts\probe_leak_fields.py
+```
+
+It counts each field four ways — with and without the `jurisdiction = 'MA'`
+filter, null against empty string — and pulls sample values from rows that
+actually have one rather than from the first five rows, which in the middle case
+below are all empty. It downloads nothing and writes nothing.
+
+| Verdict | What to do |
+| --- | --- |
+| the service has it and this project asks for it | it is lost between the two — a bug here |
+| populated on the layer, on no `MA` row | nothing in the request can fill it in; the fallback below is the answer |
+| empty for every row on the layer | same, and stop asking |
+
+`ADDRESS IS NOT NULL` is true of the empty string, so the probe asks for `<> ''`
+as well on text fields — the fill report once counted 92,707 blanks as fully
+populated for exactly that reason.
+
+### Where a leak is, when it has no address
+
+`LeakAddress` in the audit table and `LeakLocation` in the map popup are composed
+by `src/leakrelocation/leak_location.py`, from one street-level part and one
+municipality part, best available of each:
+
+| | street | municipality |
+| --- | --- | --- |
+| first choice | `ADDRESS` | `CITY` |
+| fallback | `NEARESTXSTREET` | `SuppTown` (from the supplemental CSV) |
+
+So a leak reads `12 Elm St / WATERTOWN` when the service has an address and
+`OAK ST / WATERTOWN` when it does not. Both callers share that module, so the
+popup over a leak and its row in the GeoPackage cannot describe it differently.
+This is a fallback for rows that lack a street address — not a replacement for
+one.
 
 ### If the network drops a request
 

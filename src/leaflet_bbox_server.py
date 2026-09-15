@@ -19,6 +19,7 @@ if _SCRIPT_DIR not in sys.path:
 # substring matching, where "PE" matched inside "PIPE" and "TYPE" and sent every
 # such label to PLASTIC.
 from leakrelocation import assettype, config, schema
+from leakrelocation import leak_location as location
 from leakrelocation.assettype import decoder_for_layer, norm_code
 from leakrelocation.assettype import family_from_assettype as material_family
 from leakrelocation.matching import route_layers
@@ -53,6 +54,12 @@ KEEP_TOKENS = [
     # ADDRESS on layer 206. Nothing else here matches it, so without this token
     # the column is downloaded and then dropped before it reaches the page.
     "address",
+    # The rest of what says where a leak is: NEARESTXSTREET, CITY, SuppTown and
+    # the LeakLocation built from them.
+    "street",
+    "city",
+    "town",
+    "location",
     "diam",
     "material",
     "facility",
@@ -265,6 +272,11 @@ def load_supplemental():
     dia_col = find_col(df.columns, ["Diameter", "LeakDiameter", "NominalDiameter"])
     fac_col = find_col(df.columns, ["FacilityType", "Facility Type"])
     cond_col = find_col(df.columns, ["PipeCondition", "Pipe Condition"])
+    # Towns is filled on all 98,464 rows of the committed CSV - "BOS-DORCHESTER",
+    # "WALA-WATERTOWN". It is a yard-town code rather than a street address, so it
+    # is the last thing LeakLocation falls back to, but it does place a leak when
+    # every proper address field is empty.
+    town_col = find_col(df.columns, ["Towns", "Town"])
     if not key_col:
         log(
             "WARNING supplemental GlobalID column (HistoricalLeaksID) not found; "
@@ -279,6 +291,7 @@ def load_supplemental():
     out["SuppDiameter"] = df[dia_col] if dia_col else None
     out["SuppFacilityType"] = df[fac_col] if fac_col else None
     out["SuppPipeCondition"] = df[cond_col] if cond_col else None
+    out["SuppTown"] = df[town_col] if town_col else None
     out["SuppMaterialFamily"] = out["SuppLeakMaterialType"].map(material_family)
     # The GlobalID is unique per row, so this drops nothing on the committed file.
     # It stays as a guard, because a duplicate key would otherwise multiply rows
@@ -317,7 +330,34 @@ def enrich_historic_leaks(gdf):
     log(
         f"Historic leak popup enrichment matched supplemental rows: {int(matched):,} of {len(merged):,}"
     )
+    merged["LeakLocation"] = build_leak_location(merged)
+    located = int((merged["LeakLocation"].astype(str).str.strip() != "").sum())
+    log(f"Historic leaks with a location: {located:,} of {len(merged):,}")
     return merged
+
+
+def build_leak_location(gdf):
+    """One readable location per leak, from whichever sources have a value.
+
+    The rule is leakrelocation.leak_location's, the same one the workflow writes
+    into LeakAddress, so the popup and the audit table cannot end up describing
+    the same leak differently.
+    """
+    # Wanted name -> this frame's spelling of it. A cache written before a field
+    # was requested simply has no such column.
+    columns = {}
+    for name in location.LOCATION_FIELDS:
+        found = find_col(gdf.columns, [name])
+        if found:
+            columns[name] = found
+    if not columns:
+        return pd.Series([""] * len(gdf), index=gdf.index)
+
+    def compose(row):
+        return location.from_values(
+            {name: clean_value(row[column]) for name, column in columns.items()})
+
+    return gdf[list(columns.values())].apply(compose, axis=1)
 
 
 def decode_from_subtypes(gdf, layer_id, layer_name):
@@ -771,7 +811,7 @@ def html_page():
         "function esc(v){if(v===null||v===undefined)return '';return String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}"
     )
     parts.append(
-        "function bindPopup(feature,layer){const props=feature.properties||{};const ordered=['LMSLEAKNUMBER','LeakNumber','ADDRESS','LeakAddress','SuppLeakMaterialType','SuppDiameter','SuppFacilityType','SuppPipeCondition','SuppMaterialFamily','PipeMaterialDomain','PipeMaterialRaw','PipeMaterialFamily','PipeDiameter','OBJECTID','GlobalID','GLOBALID','DistanceToPipe','ConfidenceLevel','LinkedLayer','NearestPipeID','NearestPipeGlobalID'];let keys=[];for(const k of ordered){if(Object.prototype.hasOwnProperty.call(props,k))keys.push(k)}for(const k of Object.keys(props)){if(!keys.includes(k)&&keys.length<18)keys.push(k)}let rows='';for(const k of keys)rows+='<tr><th>'+esc(k)+'</th><td>'+esc(props[k])+'</td></tr>';if(!rows)rows='<tr><td>No attributes</td></tr>';layer.bindPopup('<table>'+rows+'</table>');layer.on('click',function(){AttributePane.selectFromMap(layer)})}"
+        "function bindPopup(feature,layer){const props=feature.properties||{};const ordered=['LMSLEAKNUMBER','LeakNumber','LeakLocation','ADDRESS','NEARESTXSTREET','CITY','SuppTown','LeakAddress','SuppLeakMaterialType','SuppDiameter','SuppFacilityType','SuppPipeCondition','SuppMaterialFamily','PipeMaterialDomain','PipeMaterialRaw','PipeMaterialFamily','PipeDiameter','OBJECTID','GlobalID','GLOBALID','DistanceToPipe','ConfidenceLevel','LinkedLayer','NearestPipeID','NearestPipeGlobalID'];let keys=[];for(const k of ordered){if(Object.prototype.hasOwnProperty.call(props,k))keys.push(k)}for(const k of Object.keys(props)){if(!keys.includes(k)&&keys.length<18)keys.push(k)}let rows='';for(const k of keys)rows+='<tr><th>'+esc(k)+'</th><td>'+esc(props[k])+'</td></tr>';if(!rows)rows='<tr><td>No attributes</td></tr>';layer.bindPopup('<table>'+rows+'</table>');layer.on('click',function(){AttributePane.selectFromMap(layer)})}"
     )
     parts.append(
         "function styleFor(k,feature){const c=LAYER_CONFIG[k];const p=(feature&&feature.properties)||{};if(c.kind==='pipe_line'){const fam=p.PipeMaterialFamily||'OTHER';return {color:MATERIAL_COLORS[fam]||MATERIAL_COLORS.OTHER,weight:c.weight||2,opacity:.82}}return {color:c.color,weight:c.weight||1,opacity:.75}}"

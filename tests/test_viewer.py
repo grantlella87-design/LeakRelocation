@@ -282,6 +282,81 @@ class TestLeakAddressReachesTheMap:
         assert page.index("'ADDRESS'") < page.index("'SuppLeakMaterialType'")
 
 
+class TestTheLeakLocationOnTheMap:
+    """A leak with no ADDRESS still has a cross street, a city and a yard town,
+    and a popup that says "OAK ST / WATERTOWN" is worth more than a blank row.
+    LeakLocation is one column built from the best of them.
+    """
+
+    @pytest.fixture
+    def server(self):
+        pytest.importorskip("geopandas")
+        sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+        import leaflet_bbox_server
+        return leaflet_bbox_server
+
+    def leak_frame(self, **columns):
+        import geopandas as gpd
+        from shapely.geometry import Point
+        rows = len(next(iter(columns.values())))
+        columns["geometry"] = [Point(-71 - i * 0.01, 42) for i in range(rows)]
+        return gpd.GeoDataFrame(columns, crs="EPSG:4326")
+
+    def test_the_address_leads(self, server):
+        gdf = self.leak_frame(ADDRESS=["12 Elm St"], NEARESTXSTREET=["OAK ST"],
+                              CITY=["WATERTOWN"])
+        assert server.build_leak_location(gdf).tolist() == ["12 Elm St / WATERTOWN"]
+
+    def test_a_blank_address_contributes_nothing(self, server):
+        """Every cached MA row holds a blank here, so a build that included it
+        would prefix all 98,501 popups with " / "."""
+        gdf = self.leak_frame(ADDRESS=["", "  "], NEARESTXSTREET=["OAK ST", ""],
+                              CITY=["WATERTOWN", "BOSTON"])
+        assert server.build_leak_location(gdf).tolist() == \
+            ["OAK ST / WATERTOWN", "BOSTON"]
+
+    def test_the_town_is_the_last_resort(self, server):
+        gdf = self.leak_frame(ADDRESS=[""], SuppTown=["BOS-DORCHESTER"])
+        assert server.build_leak_location(gdf).tolist() == ["BOS-DORCHESTER"]
+
+    def test_it_composes_what_the_audit_table_composes(self, server):
+        """The popup and the GeoPackage row for the same leak have to agree."""
+        from leakrelocation import leak_location
+        values = {"ADDRESS": "", "NEARESTXSTREET": "OAK ST", "CITY": "WATERTOWN",
+                  "SuppTown": "WALA-WATERTOWN"}
+        gdf = self.leak_frame(**{name: [value] for name, value in values.items()})
+        assert server.build_leak_location(gdf).tolist() == \
+            [leak_location.from_values(values)]
+
+    def test_a_repeated_value_is_said_once(self, server):
+        gdf = self.leak_frame(CITY=["WATERTOWN"], SuppTown=["WATERTOWN"])
+        assert server.build_leak_location(gdf).tolist() == ["WATERTOWN"]
+
+    def test_no_location_column_at_all_is_empty_not_an_error(self, server):
+        """A cache written before any of these were requested."""
+        gdf = self.leak_frame(OBJECTID=[1, 2])
+        assert server.build_leak_location(gdf).tolist() == ["", ""]
+
+    def test_the_location_columns_survive_limit_columns(self, server):
+        """limit_columns drops anything matching no token; without tokens for
+        these they would be built and then thrown away before the page."""
+        gdf = self.leak_frame(OBJECTID=[1], NEARESTXSTREET=["OAK ST"],
+                              CITY=["WATERTOWN"], SuppTown=["BOS-DORCHESTER"],
+                              LeakLocation=["OAK ST / WATERTOWN"])
+        kept = server.limit_columns(gdf).columns
+        for name in ("NEARESTXSTREET", "CITY", "SuppTown", "LeakLocation"):
+            assert name in kept, name
+
+    def test_the_popup_leads_with_it(self, server, monkeypatch):
+        monkeypatch.setattr(server, "BOUNDS", {
+            "west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
+            "center_lat": 42.5, "center_lon": -71.5,
+        })
+        page = server.html_page()
+        assert "'LeakLocation'" in page
+        assert page.index("'LeakLocation'") < page.index("'ADDRESS'")
+
+
 class TestTheMapOpensWithoutItsSources:
     """run.py has to run the map server. It used to refuse when a pipe cache was
     missing, and the map server itself raised for any layer not marked optional -
