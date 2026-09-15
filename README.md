@@ -168,6 +168,9 @@ set to run as before.
 | `LEAKRELOCATION_TIMINGS` | `0` — set to `1` for per-stage elapsed times |
 | `LEAKRELOCATION_CACHE_FRESH_SECONDS` | `3600` — trust a cache younger than this without asking the server; `0` always checks |
 | `LEAKRELOCATION_PARALLEL_LOAD` | `1` — load the three layers concurrently |
+| `LEAKRELOCATION_RETRY_ATTEMPTS` | `4` — attempts per request before a transient failure ends the run |
+| `LEAKRELOCATION_RETRY_BACKOFF` | `2` — seconds before the first retry, doubling with jitter |
+| `LEAKRELOCATION_DOWNLOAD_WORKERS` | `8` — parallel batch downloads; lower it if the network keeps dropping them |
 | `LEAKRELOCATION_LOOPBACK_OAUTH` | `1` — sign in via a loopback redirect; `0` uses the out-of-band page |
 | `LEAKRELOCATION_LOOPBACK_PORT` | `8080` — must match a redirect URI on the portal app registration |
 
@@ -213,6 +216,36 @@ the run says so:
 
 Adding `ADDRESS` changed the signature, so the first run after it re-downloads
 the three layers. Later runs use the cache as before.
+
+### If the network drops a request
+
+A layer download is hundreds of POSTs over many minutes through the proxy, so one
+being dropped is ordinary. It used to be fatal:
+
+    RuntimeError: distribution pipes delta: objectId POST batch 20/322 failed:
+    ('Connection aborted.', ConnectionResetError(10054, 'An existing connection
+    was forcibly closed by the remote host'))
+
+with the other layer 584 batches of 588 through, and all of it thrown away.
+
+Transient failures are now retried — a reset, a dropped or refused connection, a
+timeout, and the statuses that mean *not now* (429, 502, 503, 504). Four attempts
+by default, waiting 2s then 4s then 8s, each with jitter so eight parallel batches
+do not all come back in the same instant. Each retry says so:
+
+    WARNING: POST .../query: ConnectionError: ('Connection aborted.', ...).
+    Attempt 1 of 4; retrying in 2.3s
+
+HTTP 500 is **not** retried: ArcGIS returns a genuine query error that way, and
+repeating a bad query only makes it fail more slowly.
+
+Workers also reuse one connection each instead of opening a new TLS connection per
+batch — 588 handshakes for one layer, eight at a time, was itself part of why the
+proxy was resetting them.
+
+If a batch still fails all four attempts, the run stops and names the two knobs
+worth turning: `LEAKRELOCATION_DOWNLOAD_WORKERS=2` for a network that dislikes
+parallelism, and `LEAKRELOCATION_RETRY_ATTEMPTS` for one that is merely flaky.
 
 ### If a run is slow
 
