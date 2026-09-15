@@ -57,18 +57,49 @@ EXPECTED = {
 # they are there.
 DERIVED = ("PipeMaterialDomain", "PipeMaterialFamily", "PipeMaterialRaw")
 
+# Fields this project does not request, asked about only with --service.
+#
+# REVISEDLEAKDATE and ADDRESS came back present but empty on every one of the
+# 98,501 MA leaks, which makes the relocation date rule a no-op - the audit table
+# reads "no_leak_date" for 98% of rows - and leaves the address blank everywhere
+# it is shown. Layer 206 carries six other date fields and two other location
+# fields, so the question is which of them MA populates. One count query each
+# answers it, and the answer is data rather than a guess.
+CANDIDATES = {
+    "historic_leaks": (
+        # Dates, in the order they would be preferred for "when was this leak".
+        "DISCOVEREDDATE", "REPAIREDDATE", "COMPLETEDDATE", "DUEDATE",
+        "CREATIONDATE", "LASTUPDATE",
+        # Where the leak is.
+        "NEARESTXSTREET", "CITY", "STATE", "STATEROAD",
+        # Useful context for both questions.
+        "LEAKSTATUS", "ORIGINALLEAKCLASS", "REVISEDLEAKCLASS",
+    ),
+}
+
 # Layers written by the workflow into the output GeoPackage.
 GPKG_LAYERS = ("relocated_leaks", "relocated_leak_offset_lines",
                "leak_relocation_audit")
 
 
 def filled(series):
-    """How many values are neither null nor blank."""
+    """How many values are neither null nor blank.
+
+    The blank check is applied to every non-numeric column, not only to dtype
+    "object". pandas 3 gives a text column dtype "str", so an object-only check
+    silently counted empty strings as values - which reported LeakAddress and
+    LeakDate as 100% filled when every one of them was "".
+    """
     if series is None or len(series) == 0:
         return 0
     cleaned = series.dropna()
-    if cleaned.dtype == object:
-        cleaned = cleaned[cleaned.astype(str).str.strip() != ""]
+    if len(cleaned) == 0:
+        return 0
+    import pandas as pandas_module
+
+    if not pandas_module.api.types.is_numeric_dtype(cleaned):
+        text = cleaned.astype(str).str.strip()
+        cleaned = cleaned[(text != "") & (text.str.lower() != "nat")]
     return len(cleaned)
 
 
@@ -119,8 +150,12 @@ def read_cache(name):
     return pd.read_pickle(path, compression="gzip")
 
 
-def service_counts(url, layer_label, fields, where):
-    """Ask the layer how many features have a value for each field."""
+def service_counts(url, layer_label, fields, where, candidates=()):
+    """Ask the layer how many features have a value for each field.
+
+    One count query per field. Nothing is downloaded, so this is cheap even
+    against a layer of a million features.
+    """
     import leak_relocation_geopandas as workflow
 
     session = workflow.make_session()
@@ -128,6 +163,13 @@ def service_counts(url, layer_label, fields, where):
     log(f"   {url}")
     total = workflow.query_count(session, url, where, layer_label)
     log(f"   {'field':<24} {'with a value':>13}  of {total:,}")
+    ask(session, workflow, url, layer_label, fields, where, total)
+    if candidates:
+        log("   -- not requested by this project, for comparison --")
+        ask(session, workflow, url, layer_label, candidates, where, total)
+
+
+def ask(session, workflow, url, layer_label, fields, where, total):
     for field in fields:
         clause = f"{where} AND {field} IS NOT NULL"
         try:
@@ -188,7 +230,8 @@ def main(argv=None):
         for name, (label, url) in CACHES.items():
             fields = list(EXPECTED.get(name, ()))
             try:
-                service_counts(url, label, fields, workflow.WHERE_MA)
+                service_counts(url, label, fields, workflow.WHERE_MA,
+                               CANDIDATES.get(name, ()))
             except Exception as ex:  # noqa: BLE001 - keep going to the next layer
                 warn(f"{label}: could not be asked ({ex})")
 

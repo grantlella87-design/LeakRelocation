@@ -238,6 +238,14 @@ count query per field, no data returned - so:
 | `0` here, filled on the service | it is being lost after the download — a bug here |
 | `0` in both | the service does not populate it. Nothing here can fill it in |
 
+`--service` also asks about the fields this project does **not** request, so when
+a configured field turns out to be empty the alternatives are right there. On the
+MA leaks, `REVISEDLEAKDATE` and `ADDRESS` came back present but empty on all
+98,501 rows, which is why the audit table reads `no_leak_date` for 98% of them —
+the date rule has nothing to compare. Layer 206 carries `DISCOVEREDDATE`,
+`REPAIREDDATE`, `COMPLETEDDATE`, `NEARESTXSTREET` and `CITY` as well, and the
+report says which of those MA fills in.
+
 `ADDRESS` and `REVISEDLEAKDATE` were added to the leak query after the first
 caches were written, so a cache from before then simply has no such column and the
 map says so beside the layer's own name.
