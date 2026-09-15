@@ -105,3 +105,122 @@ class TestTheCandidateFields:
         for name in ("NEARESTXSTREET", "CITY"):
             assert name in offered
             assert name in leak_fields
+
+
+class TestAskingTheService:
+    """--service drives the same request path as a run, against a stub that
+    answers returnCountOnly the way ArcGIS does. It was shipped without ever
+    being exercised, which is how the two failure paths below went unnoticed."""
+
+    @pytest.fixture
+    def stub(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from urllib.parse import parse_qs, urlparse
+
+        state = {"counts": {}, "total": 1000, "reject": set(), "countless": False,
+                 "asked": []}
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.0"
+
+            def reply(self, payload):
+                body = payload.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                where = (parse_qs(urlparse(self.path).query).get("where") or [""])[0]
+                state["asked"].append(where)
+                if state["countless"]:
+                    self.reply('{"objectIdFieldName": "OBJECTID"}')
+                    return
+                if "IS NOT NULL" not in where:
+                    self.reply(f'{{"count": {state["total"]}}}')
+                    return
+                field = where.split("AND")[-1].replace("IS NOT NULL", "").strip()
+                if field in state["reject"]:
+                    self.reply('{"error": {"code": 400, "message": "Invalid field"}}')
+                    return
+                self.reply(f'{{"count": {state["counts"].get(field, 0)}}}')
+
+            do_POST = do_GET
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        state["url"] = f"http://127.0.0.1:{server.server_address[1]}"
+        yield state
+        server.shutdown()
+
+    @pytest.fixture
+    def workflow(self, monkeypatch):
+        import importlib.util
+        import io
+        from contextlib import redirect_stdout
+
+        pytest.importorskip("geopandas")
+        pytest.importorskip("keyring")
+        path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
+        spec = importlib.util.spec_from_file_location("lr_fill", path)
+        module = importlib.util.module_from_spec(spec)
+        with redirect_stdout(io.StringIO()):
+            spec.loader.exec_module(module)
+
+        import requests
+        session = requests.Session()
+        session._arcgis_access_token = "test-token"
+        module.make_session = lambda *a, **k: session
+        monkeypatch.setitem(sys.modules, "leak_relocation_geopandas", module)
+        return module
+
+    def run(self, stub, fields, candidates=()):
+        import io
+        from contextlib import redirect_stdout
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            report.service_counts(stub["url"], "historic leaks", fields,
+                                  "jurisdiction = 'MA'", candidates)
+        return buffer.getvalue()
+
+    def test_an_empty_field_is_marked(self, stub, workflow):
+        stub["counts"] = {"REVISEDLEAKDATE": 0, "LMSLEAKNUMBER": 1000}
+        printed = self.run(stub, ("LMSLEAKNUMBER", "REVISEDLEAKDATE"))
+        assert "<-REVISEDLEAKDATE" in printed
+        assert "<-LMSLEAKNUMBER" not in printed
+
+    def test_the_candidates_are_asked_too(self, stub, workflow):
+        stub["counts"] = {"REVISEDLEAKDATE": 0, "DISCOVEREDDATE": 990}
+        printed = self.run(stub, ("REVISEDLEAKDATE",), ("DISCOVEREDDATE",))
+        assert "not requested by this project" in printed
+        assert "DISCOVEREDDATE" in printed
+        assert any("DISCOVEREDDATE IS NOT NULL" in w for w in stub["asked"])
+
+    def test_a_rejected_field_does_not_stop_the_report(self, stub, workflow):
+        """Asking for a field the layer does not have makes the service reject
+        that query; the remaining fields still have to be reported."""
+        stub["counts"] = {"CITY": 900}
+        stub["reject"] = {"NOSUCHFIELD"}
+        printed = self.run(stub, (), ("NOSUCHFIELD", "CITY"))
+        assert "could not ask" in printed
+        assert "CITY" in printed
+
+    def test_a_reply_with_no_count_is_reported(self, stub, workflow):
+        """query_count returns None there, and everything downstream divides by
+        it."""
+        stub["countless"] = True
+        printed = self.run(stub, ("REVISEDLEAKDATE",))
+        assert "did not return a row count" in printed
+
+    def test_one_query_per_field_and_no_data_is_downloaded(self, stub, workflow):
+        stub["counts"] = {"A": 1, "B": 2, "C": 3}
+        self.run(stub, ("A", "B", "C"))
+        # One for the total, three for the fields.
+        assert len(stub["asked"]) == 4
+        assert all("returnCountOnly" not in w for w in stub["asked"])
