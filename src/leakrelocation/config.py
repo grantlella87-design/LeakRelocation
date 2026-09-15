@@ -147,6 +147,11 @@ ALLOW_MATERIAL_FAMILY_FALLBACK = True
 
 REQUEST_PAGE_SIZE = _int_from_env("LEAKRELOCATION_PAGE_SIZE", 2000)
 REQUEST_TIMEOUT_SECONDS = _int_from_env("LEAKRELOCATION_TIMEOUT", 120)
+# A layer download is hundreds of requests over many minutes through a
+# corporate proxy, so one being dropped is ordinary. Retried with backoff
+# and jitter rather than ending the run - see send_with_retry.
+REQUEST_RETRY_ATTEMPTS = _int_from_env("LEAKRELOCATION_RETRY_ATTEMPTS", 4)
+REQUEST_RETRY_BACKOFF_SECONDS = _int_from_env("LEAKRELOCATION_RETRY_BACKOFF", 2)
 OBJECTID_BATCH_SIZE = _int_from_env("LEAKRELOCATION_BATCH_SIZE", 2000)
 OBJECTID_DOWNLOAD_WORKERS = _int_from_env("LEAKRELOCATION_DOWNLOAD_WORKERS", 8)
 VERIFY_SSL = _flag_from_env("LEAKRELOCATION_VERIFY_SSL", True)

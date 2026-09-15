@@ -12,8 +12,10 @@ import json
 import math
 import numbers
 import os
+import random
 import re
 import sys
+import threading
 import time
 import traceback
 from collections import defaultdict
@@ -194,6 +196,8 @@ USE_OBJECTID_BATCH_DOWNLOAD = True
 OBJECTID_BATCH_SIZE = config.OBJECTID_BATCH_SIZE
 OBJECTID_DOWNLOAD_WORKERS = config.OBJECTID_DOWNLOAD_WORKERS
 REQUEST_TIMEOUT_SECONDS = config.REQUEST_TIMEOUT_SECONDS
+REQUEST_RETRY_ATTEMPTS = config.REQUEST_RETRY_ATTEMPTS
+REQUEST_RETRY_BACKOFF_SECONDS = config.REQUEST_RETRY_BACKOFF_SECONDS
 VERIFY_SSL = config.VERIFY_SSL
 
 PORTAL_ROOT = config.PORTAL_ROOT
@@ -487,6 +491,78 @@ def apply_pipe_domain_out_fields(url, params):
     return updated
 
 
+# One requests.Session per worker thread, reused across batches.
+#
+# A fresh Session per batch meant a fresh TLS handshake per batch: 588 of them for
+# one layer, eight at a time, through a proxy that re-signs every one. Reusing the
+# connection is faster and far gentler on whatever was resetting them.
+_WORKER_STATE = threading.local()
+
+
+def worker_session(token):
+    """The calling thread's session, created on first use."""
+    session = getattr(_WORKER_STATE, "session", None)
+    if session is None:
+        session = requests.Session()
+        _WORKER_STATE.session = session
+    session._arcgis_access_token = token
+    return session
+
+
+# --- Transient network failures ----------------------------------------------
+#
+# A download of the pipe layers is hundreds of requests over many minutes, through
+# a corporate proxy. One of them being dropped is normal; it used to be fatal. A
+# run died on "objectId POST batch 20/322 failed: ConnectionResetError(10054, 'An
+# existing connection was forcibly closed by the remote host')" with another layer
+# 584 batches of 588 through, and every one of those batches was thrown away.
+#
+# These are the failures worth trying again. requests wraps the socket-level ones
+# - urllib3's ProtocolError, Python's ConnectionResetError, WinError 10054 - in
+# ConnectionError, so catching that covers a reset, a dropped connection and a
+# refused one.
+TRANSIENT_EXCEPTIONS = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    requests.exceptions.ChunkedEncodingError,
+)
+
+# Statuses that mean "not now" rather than "not ever". 500 is deliberately absent:
+# ArcGIS returns a genuine query error that way, and repeating a bad query just
+# makes it fail more slowly. 429 and the gateway codes are what a proxy or a busy
+# service returns under load.
+TRANSIENT_STATUSES = (429, 502, 503, 504)
+
+
+def send_with_retry(send, describe):
+    """Run a request, retrying transient failures with backoff.
+
+    `send` is called again from scratch each attempt, so it must build its own
+    request - these are all read-only queries, so repeating one is safe.
+    """
+    last_error = None
+    for attempt in range(1, REQUEST_RETRY_ATTEMPTS + 1):
+        try:
+            response = send()
+            if response.status_code not in TRANSIENT_STATUSES:
+                return response
+            last_error = f"HTTP {response.status_code}"
+        except TRANSIENT_EXCEPTIONS as ex:
+            last_error = f"{type(ex).__name__}: {ex}"
+            if attempt == REQUEST_RETRY_ATTEMPTS:
+                raise
+        if attempt == REQUEST_RETRY_ATTEMPTS:
+            return response
+        delay = REQUEST_RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+        # Jitter, because the batches run eight at a time: without it a proxy
+        # that drops several at once gets them all back in the same instant.
+        delay += random.uniform(0, delay / 2)
+        warn(f"{describe}: {last_error}. Attempt {attempt} of "
+             f"{REQUEST_RETRY_ATTEMPTS}; retrying in {delay:.1f}s")
+        time.sleep(delay)
+    return response
+
+
 def request_json(session, url, params=None):
     params = apply_pipe_domain_out_fields(url, params)
     request_params = dict(params or {})
@@ -499,8 +575,12 @@ def request_json(session, url, params=None):
     if token and "token" not in request_params:
         request_params["token"] = token
 
-    response = session.get(
-        url, params=request_params, timeout=REQUEST_TIMEOUT_SECONDS, verify=VERIFY_SSL
+    response = send_with_retry(
+        lambda: session.get(
+            url, params=request_params, timeout=REQUEST_TIMEOUT_SECONDS,
+            verify=VERIFY_SSL,
+        ),
+        f"GET {url}",
     )
 
     response.raise_for_status()
@@ -555,8 +635,12 @@ def request_json_post(session, url, params):
     if token and "token" not in request_params:
         request_params["token"] = token
 
-    response = session.post(
-        url, data=request_params, timeout=REQUEST_TIMEOUT_SECONDS, verify=VERIFY_SSL
+    response = send_with_retry(
+        lambda: session.post(
+            url, data=request_params, timeout=REQUEST_TIMEOUT_SECONDS,
+            verify=VERIFY_SSL,
+        ),
+        f"POST {url}",
     )
 
     if response.status_code >= 400:
@@ -1026,8 +1110,7 @@ def fetch_objectid_batch(
     batch_total,
     token,
 ):
-    local_session = requests.Session()
-    local_session._arcgis_access_token = token
+    local_session = worker_session(token)
 
     params = {
         "f": "json",
@@ -1104,8 +1187,17 @@ def query_feature_set(session, layer_url, where_clause, layer_name, meta, out_fi
                     # narrowing here would mean listing every failure mode of
                     # the request path. It is turned into one fatal message that
                     # names the batch.
+                    #
+                    # Reaching here means the batch already failed
+                    # REQUEST_RETRY_ATTEMPTS times with backoff, so this is a
+                    # network that is not coming back on its own.
                     fail(
-                        f"{layer_name}: objectId POST batch {batch_number:,}/{total_batches:,} failed: {ex}"
+                        f"{layer_name}: objectId POST batch {batch_number:,}/{total_batches:,} "
+                        f"failed after {REQUEST_RETRY_ATTEMPTS} attempts: {ex}\n"
+                        f"  If this keeps happening, fewer parallel requests often "
+                        f"helps: set LEAKRELOCATION_DOWNLOAD_WORKERS=2 (currently "
+                        f"{OBJECTID_DOWNLOAD_WORKERS}), or raise "
+                        f"LEAKRELOCATION_RETRY_ATTEMPTS."
                     )
 
                 if (
