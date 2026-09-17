@@ -44,11 +44,14 @@ from pyproj import CRS
 from leakrelocation import config, leak_location as location, schema
 from leakrelocation.assettype import build_assettype_decoder, norm_code
 from leakrelocation.matching import (
+    DIAMETER_EXACT,
     IN_SERVICE_AT_LEAK,
+    NOMINAL_DIAMETERS_IN,
     RETIRED_AFTER_LEAK,
+    candidate_sort_key,
     clean,
     date_rule_result,
-    diameter_matches,
+    diameter_match,
     matched_radius_from_distance,
     material_label,
     material_matches,
@@ -173,8 +176,13 @@ SUPPLEMENTAL_CSV = str(config.SUPPLEMENTAL_CSV)
 # share, which ensure_output_folder then tried to *create*: a run on a machine
 # that could not reach it failed there, before any work was done, even though
 # nothing was ever written to it.
+# Which diameter rule this run uses, and so which GeoPackage it writes. The
+# strict run keeps the original filename; the widened one is suffixed, so the
+# two outputs sit beside each other and can be compared instead of one
+# replacing the other.
+DIAMETER_MATCH_MODE = config.DIAMETER_MATCH_MODE
 OUTPUT_FOLDER = str(config.OUTPUT_GPKG.parent)
-OUTPUT_GPKG = str(config.OUTPUT_GPKG)
+OUTPUT_GPKG = str(config.output_gpkg_for(DIAMETER_MATCH_MODE))
 HIST_LEAK_URL = config.HIST_LEAK_URL
 DISTRIBUTION_PIPE_URL = config.DISTRIBUTION_PIPE_URL
 SERVICE_PIPE_URL = config.SERVICE_PIPE_URL
@@ -1890,7 +1898,9 @@ def match_one_leak(task):
             distance_ft = leak_geometry.distance(pipe["geometry"])
             if distance_ft > MAX_RADIUS_FT:
                 continue
-            if not diameter_matches(leak_info["diameter"], pipe["diameter"]):
+            diameter_result = diameter_match(
+                leak_info["diameter"], pipe["diameter"], DIAMETER_MATCH_MODE)
+            if diameter_result is None:
                 continue
             if not material_matches(leak_info["material"], pipe["material"]):
                 continue
@@ -1913,11 +1923,17 @@ def match_one_leak(task):
                     "distance_ft": distance_ft,
                     "date_rule": pipe["date_rule"],
                     "date_reason": date_reason,
+                    # exact, one_size_up or one_size_down. Carried so the audit
+                    # records how much slack the match took, not only that one
+                    # was found.
+                    "diameter_match": diameter_result,
                 }
             )
     if not candidates:
-        reason = ("No exact diameter/material/pressure match found within "
-                  "MAX_RADIUS_FT")
+        rule = ("exact diameter" if DIAMETER_MATCH_MODE == DIAMETER_EXACT
+                else "diameter within one nominal size")
+        reason = (f"No {rule}/material/pressure match found within "
+                  f"MAX_RADIUS_FT")
         if rejected_on_date:
             reason = (f"{rejected_on_date:,} pipe(s) matched on "
                       f"diameter/material/pressure but were not in service when "
@@ -1928,7 +1944,7 @@ def match_one_leak(task):
             "rejected_on_date": rejected_on_date,
             "reason": reason,
         }
-    candidates.sort(key=lambda item: item["distance_ft"])
+    candidates.sort(key=candidate_sort_key)
     best = candidates[0]
     verbose(
         f"Leak {leak_number}: matched {best['layer']} pipe OID {best['pipe_oid']} at {best['distance_ft']:.2f} ft"
@@ -1942,6 +1958,7 @@ def match_one_leak(task):
         "matched_radius": matched_radius_from_distance(best["distance_ft"]),
         "date_rule": best["date_rule"],
         "date_reason": best["date_reason"],
+        "diameter_match": best["diameter_match"],
         "rejected_on_date": rejected_on_date,
         "reason": "",
     }
@@ -2025,6 +2042,8 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
                     "PipePressure": "",
                     "SearchRadiusFt": None,
                     "DistanceFt": None,
+                    "DiameterMatch": "",
+                    "DiameterMode": DIAMETER_MATCH_MODE,
                     "LeakDate": epoch_ms_to_iso(task.get("leak_date_ms")),
                     "PipesRejectedOnDate": result.get("rejected_on_date", 0),
                     "MatchStatus": "NoMatch",
@@ -2054,6 +2073,12 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
                 "MatchMaterial": pipe["material"],
                 "MatchDiameter": pipe["diameter"],
                 "MatchPressure": pipe["pressure"],
+                # How much diameter slack this relocation took: exact,
+                # one_size_up or one_size_down. On the map it is the difference
+                # between a relocation the strict rule would also have made and
+                # one only the widened rule found.
+                "DiameterMatch": result.get("diameter_match", ""),
+                "DiameterMode": DIAMETER_MATCH_MODE,
                 "LeakDate": epoch_ms_to_iso(task.get("leak_date_ms")),
                 "DateRule": result.get("date_rule", ""),
                 "DateCheck": result.get("date_reason", ""),
@@ -2088,6 +2113,8 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
                 "PipePressure": pipe["pressure"],
                 "SearchRadiusFt": result["matched_radius"],
                 "DistanceFt": result["distance_ft"],
+                "DiameterMatch": result.get("diameter_match", ""),
+                "DiameterMode": DIAMETER_MATCH_MODE,
                 "LeakDate": epoch_ms_to_iso(task.get("leak_date_ms")),
                 "PipeCreated": epoch_ms_to_iso(pipe.get("created_ms")),
                 "PipeRetired": epoch_ms_to_iso(pipe.get("retired_ms")),
@@ -2140,6 +2167,13 @@ def main():
     log(f"Max radius ft: {MAX_RADIUS_FT}")
     log(f"Require pressure match: {REQUIRE_PRESSURE_MATCH}")
     log(f"Material family fallback: {ALLOW_MATERIAL_FAMILY_FALLBACK}")
+    log(f"Diameter match mode: {DIAMETER_MATCH_MODE}")
+    if DIAMETER_MATCH_MODE != DIAMETER_EXACT:
+        log(f"  A pipe may be one nominal size up or down from the leak's "
+            f"diameter. Nominal sizes (in): "
+            f"{', '.join(format(size, 'g') for size in NOMINAL_DIAMETERS_IN)}")
+        log(f"  Exact diameters still win over adjacent ones: "
+            f"PREFER_EXACT_DIAMETER={config.PREFER_EXACT_DIAMETER}")
     ensure_output_folder()
 
     with timed("supplemental CSV"):

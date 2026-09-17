@@ -5,6 +5,11 @@
     python run.py --view-only        just serve the map
     python run.py --refresh          ignore the layer caches
     python run.py --port 8800        serve on another port
+    python run.py --diameter fuzzy   allow one nominal size up or down
+
+The two diameter rules write different GeoPackages, so running both leaves both
+outputs on disk and the dashboard can compare them rather than one having
+replaced the other.
 
 Each stage used to be its own command in a particular order, and getting the
 order wrong produced a failure that named the next command to run:
@@ -52,7 +57,27 @@ def parse_args(argv=None):
                         help="Serve the map without opening a browser.")
     parser.add_argument("--skip-signin-check", action="store_true",
                         help="Do not verify the token before the long stages.")
+    parser.add_argument("--diameter", choices=("exact", "fuzzy"), default=None,
+                        help="How strictly a leak's diameter must match the "
+                             "pipe's. exact (the default) is the original rule; "
+                             "fuzzy also accepts one nominal size up or down. "
+                             "Each writes its own GeoPackage.")
     return parser.parse_args(argv)
+
+
+def apply_diameter_mode(mode):
+    """Set the diameter rule before the workflow module reads it.
+
+    It has to happen here rather than inside the workflow: that module binds
+    OUTPUT_GPKG and DIAMETER_MATCH_MODE at import, so setting the variable after
+    the import would write the widened output over the strict one.
+    """
+    if mode:
+        os.environ["LEAKRELOCATION_DIAMETER_MODE"] = mode
+    import importlib
+    from leakrelocation import config as live
+    importlib.reload(live)
+    return live.DIAMETER_MATCH_MODE
 
 
 def check_signin():
@@ -86,7 +111,7 @@ def run_workflow(refresh):
     import leak_relocation_geopandas as workflow
 
     workflow.main()
-    return Path(config.OUTPUT_GPKG)
+    return Path(workflow.OUTPUT_GPKG)
 
 
 def missing_pipe_caches():
@@ -125,8 +150,12 @@ def main(argv=None):
     if args.no_view and args.view_only:
         fail("--no-view and --view-only ask for opposite things.")
 
+    mode = apply_diameter_mode(args.diameter)
+    output = config.output_gpkg_for(mode)
+
     log("=== LeakRelocation ===")
-    log(f"GeoPackage: {config.OUTPUT_GPKG}")
+    log(f"Diameter rule: {mode}")
+    log(f"GeoPackage: {output}")
     log(f"Layer cache: {config.LAYER_CACHE_DIR}")
 
     if not args.view_only:
@@ -135,8 +164,8 @@ def main(argv=None):
         gpkg = run_workflow(args.refresh)
         if not gpkg.exists():
             fail(f"The workflow finished but {gpkg} is not there.")
-    elif not Path(config.OUTPUT_GPKG).exists():
-        warn(f"--view-only, but there is no GeoPackage at {config.OUTPUT_GPKG}. "
+    elif not output.exists():
+        warn(f"--view-only, but there is no GeoPackage at {output}. "
              "The pipes and leaks will still draw; the relocated points and "
              "trace lines will be empty until the workflow has run.")
 

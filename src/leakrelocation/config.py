@@ -148,6 +148,40 @@ MAX_RADIUS_FT = 3000.0
 REQUIRE_PRESSURE_MATCH = False
 ALLOW_MATERIAL_FAMILY_FALLBACK = True
 
+# How strictly a leak's diameter has to agree with the pipe's.
+#
+#   exact   the diameters are the same nominal size. The original rule, and the
+#           default, so an unchanged command produces the output it always did.
+#   fuzzy   the pipe may also be one nominal size up or down - see
+#           matching.NOMINAL_DIAMETERS_IN.
+#
+# The two modes write to different GeoPackages (see output_gpkg_for) so both
+# outputs exist side by side and can be compared rather than one replacing the
+# other.
+DIAMETER_MATCH_MODE = os.environ.get(
+    "LEAKRELOCATION_DIAMETER_MODE", "exact").strip().lower() or "exact"
+
+# An exact diameter wins over an adjacent one whatever the distance, so every
+# leak the strict run relocated keeps the same pipe in the widened run and the
+# difference between the two outputs is only the leaks the widening rescued.
+# Turn this off to take the nearest pipe within the size window instead.
+PREFER_EXACT_DIAMETER = _flag_from_env("LEAKRELOCATION_PREFER_EXACT_DIAMETER", True)
+
+
+def output_gpkg_for(mode=None, base=None):
+    """Where the outputs for a diameter-match mode are written.
+
+    The strict run keeps the original filename, so nothing that already points
+    at it has to change. Any other mode gets a suffixed name, which is what
+    lets the two outputs sit beside each other - the alternative is one
+    overwriting the other and no way to compare them.
+    """
+    chosen = (mode or DIAMETER_MATCH_MODE or "exact").strip().lower()
+    path = Path(base) if base else OUTPUT_GPKG
+    if chosen in ("", "exact"):
+        return path
+    return path.with_name(f"{path.stem}_{chosen}_diameter{path.suffix}")
+
 REQUEST_PAGE_SIZE = _int_from_env("LEAKRELOCATION_PAGE_SIZE", 2000)
 REQUEST_TIMEOUT_SECONDS = _int_from_env("LEAKRELOCATION_TIMEOUT", 120)
 # A layer download is hundreds of requests over many minutes through a

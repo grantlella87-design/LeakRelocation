@@ -207,6 +207,8 @@ class TestMaterialTokens:
 
 
 class TestDiameterMatches:
+    """The default rule, unchanged: the diameters are the same nominal size."""
+
     def test_exact_match_required(self):
         assert matching.diameter_matches(2, 2) is True
         assert matching.diameter_matches(2, 2.0) is True
@@ -216,6 +218,244 @@ class TestDiameterMatches:
         assert matching.diameter_matches(None, 2) is False
         assert matching.diameter_matches(2, None) is False
         assert matching.diameter_matches(None, None) is False
+
+    def test_the_default_mode_is_exact(self):
+        """An unchanged command has to produce the output it always did."""
+        assert config.DIAMETER_MATCH_MODE == matching.DIAMETER_EXACT
+        assert matching.diameter_matches(8, 12) is False
+
+
+class TestTheNominalLadder:
+    """The sizes "one size up or down" is counted on."""
+
+    def test_it_is_the_specified_list(self):
+        assert matching.NOMINAL_DIAMETERS_IN == (
+            1.0, 1.25, 1.5, 2.0, 4.0, 6.0, 8.0, 12.0, 16.0, 20.0, 24.0, 30.0,
+            36.0, 42.0, 48.0)
+
+    def test_it_is_sorted_and_unique(self):
+        ladder = matching.NOMINAL_DIAMETERS_IN
+        assert list(ladder) == sorted(ladder)
+        assert len(set(ladder)) == len(ladder)
+
+    def test_there_is_no_three_or_ten_inch_rung(self):
+        """Both exist in the data and neither is a listed size, which is the
+        case adjacent_nominal_sizes has to bracket."""
+        assert 3.0 not in matching.NOMINAL_DIAMETERS_IN
+        assert 10.0 not in matching.NOMINAL_DIAMETERS_IN
+
+
+class TestAdjacentNominalSizes:
+    def test_a_listed_size_gets_its_neighbours(self):
+        assert matching.adjacent_nominal_sizes(8) == (6.0, 12.0)
+        assert matching.adjacent_nominal_sizes(1.25) == (1.0, 1.5)
+
+    def test_an_unlisted_size_brackets_its_gap(self):
+        """The 10 in pipe the data carries sits between the 8 and the 12."""
+        assert matching.adjacent_nominal_sizes(10) == (8.0, 12.0)
+        assert matching.adjacent_nominal_sizes(3) == (2.0, 4.0)
+        assert matching.adjacent_nominal_sizes(14) == (12.0, 16.0)
+
+    def test_the_ends_of_the_ladder_have_one_neighbour(self):
+        assert matching.adjacent_nominal_sizes(1) == (None, 1.25)
+        assert matching.adjacent_nominal_sizes(48) == (42.0, None)
+
+    def test_below_the_ladder_has_no_lower_neighbour(self):
+        assert matching.adjacent_nominal_sizes(0.75) == (None, 1.0)
+
+
+class TestDiameterWithinOneSize:
+    """The widened rule: no nominal size strictly between the two diameters.
+
+    For listed sizes that is exactly "one size up or down". The formulation
+    matters for the uncommon sizes, where taking each value's own neighbours
+    would make the rule disagree with itself depending on which side you asked
+    from.
+    """
+
+    @pytest.mark.parametrize("leak,pipe", [
+        (8, 8), (8, 6), (8, 12),
+        (1, 1.25), (1.25, 1.5), (1.5, 2), (2, 4), (4, 6),
+        (42, 48), (36, 42),
+    ])
+    def test_the_same_or_an_adjacent_listed_size_matches(self, leak, pipe):
+        assert matching.diameter_within_one_size(leak, pipe) is True
+
+    @pytest.mark.parametrize("leak,pipe", [
+        (8, 16), (8, 4), (8, 20),
+        (1, 1.5), (1, 2), (2, 6), (4, 8),
+        (48, 36), (12, 20),
+    ])
+    def test_two_sizes_away_does_not(self, leak, pipe):
+        assert matching.diameter_within_one_size(leak, pipe) is False
+
+    def test_it_is_symmetric(self):
+        """Asked either way round it gives the same answer. The reason the rule
+        is written as "nothing in between" rather than as a neighbour lookup."""
+        for leak, pipe in [(8, 12), (8, 16), (1, 0.75), (10, 12), (3, 6),
+                           (0.5, 1), (48, 60), (14, 16)]:
+            assert (matching.diameter_within_one_size(leak, pipe)
+                    == matching.diameter_within_one_size(pipe, leak)), (leak, pipe)
+
+    @pytest.mark.parametrize("leak,pipe,expected", [
+        # The uncommon sizes follow the same rule.
+        (10, 8, True), (10, 12, True), (10, 6, False), (10, 16, False),
+        (3, 2, True), (3, 4, True), (3, 6, False), (3, 1.5, False),
+        (14, 12, True), (14, 16, True), (14, 20, False),
+        (0.75, 1, True), (1, 0.75, True),
+    ])
+    def test_an_uncommon_size_is_treated_the_same_way(self, leak, pipe, expected):
+        assert matching.diameter_within_one_size(leak, pipe) is expected
+
+    def test_two_uncommon_sizes_in_one_gap_match(self):
+        """2.5 and 3.5 both sit between the 2 and the 4, so nothing listed
+        separates them."""
+        assert matching.diameter_within_one_size(2.5, 3.5) is True
+
+    def test_a_float_that_is_a_hair_off_still_matches(self):
+        """A diameter read from a GeoPackage and one read from a CSV do not
+        compare cleanly, and 6.0 against 5.999999999999999 is the same pipe."""
+        assert matching.diameter_within_one_size(6.0, 5.999999999999999) is True
+        assert matching.diameters_equal(6.0, 5.9999999) is True
+        assert matching.diameters_equal(6.0, 5.9) is False
+
+    def test_a_tolerance_wide_value_does_not_skip_a_rung(self):
+        """The tolerance must not let 8 reach 16 by rounding."""
+        assert matching.diameter_within_one_size(8.0005, 16) is False
+
+
+class TestDiameterMatchReportsHow:
+    """The audit records how much slack a match took, not only that one was
+    found, so a widened output can be read row by row."""
+
+    def test_exact_is_reported_in_both_modes(self):
+        for mode in matching.DIAMETER_MODES:
+            assert matching.diameter_match(8, 8, mode) == \
+                matching.DIAMETER_MATCH_EXACT
+
+    def test_exact_mode_refuses_an_adjacent_size(self):
+        assert matching.diameter_match(8, 12, matching.DIAMETER_EXACT) is None
+        assert matching.diameter_match(8, 6, matching.DIAMETER_EXACT) is None
+
+    def test_fuzzy_mode_names_the_direction(self):
+        assert matching.diameter_match(8, 12, "fuzzy") == \
+            matching.DIAMETER_MATCH_UP
+        assert matching.diameter_match(8, 6, "fuzzy") == \
+            matching.DIAMETER_MATCH_DOWN
+
+    def test_fuzzy_mode_still_refuses_two_sizes_away(self):
+        assert matching.diameter_match(8, 16, "fuzzy") is None
+
+    @pytest.mark.parametrize("mode", list(matching.DIAMETER_MODES))
+    def test_a_missing_diameter_never_matches_in_any_mode(self, mode):
+        """Widening the rule does not give a leak with no diameter something to
+        compare against."""
+        assert matching.diameter_match(None, 8, mode) is None
+        assert matching.diameter_match(8, None, mode) is None
+        assert matching.diameter_match(None, None, mode) is None
+
+    @pytest.mark.parametrize("mode", list(matching.DIAMETER_MODES))
+    def test_a_not_a_number_never_matches(self, mode):
+        assert matching.diameter_match(float("nan"), 8, mode) is None
+        assert matching.diameter_match(8, float("nan"), mode) is None
+        assert matching.diameter_match("", 8, mode) is None
+        assert matching.diameter_match("wide", 8, mode) is None
+
+    def test_a_numeric_string_is_read(self):
+        assert matching.diameter_match("8", "12", "fuzzy") == \
+            matching.DIAMETER_MATCH_UP
+
+    def test_an_unknown_mode_is_treated_as_exact(self):
+        """A typo in the environment variable must not silently widen the rule."""
+        assert matching.diameter_match(8, 12, "fuzzyy") is None
+        assert matching.diameter_match(8, 8, "fuzzyy") == \
+            matching.DIAMETER_MATCH_EXACT
+
+    def test_the_boolean_form_agrees_with_it(self):
+        for leak, pipe, mode in [(8, 8, "exact"), (8, 12, "exact"),
+                                 (8, 12, "fuzzy"), (8, 16, "fuzzy")]:
+            assert (matching.diameter_matches(leak, pipe, mode)
+                    is (matching.diameter_match(leak, pipe, mode) is not None))
+
+
+class TestWhichCandidateWins:
+    """An exact diameter beats an adjacent one at any distance, so every leak
+    the strict run relocated keeps the same pipe in the widened run. Without
+    that, a nearer wrong-size pipe would steal a match the strict run had made
+    correctly, and the two outputs would differ in ways that have nothing to do
+    with the leaks the widening was meant to rescue."""
+
+    def candidate(self, distance, tier):
+        return {"distance_ft": distance, "diameter_match": tier}
+
+    def test_an_exact_match_wins_over_a_nearer_adjacent_one(self):
+        far_exact = self.candidate(900.0, matching.DIAMETER_MATCH_EXACT)
+        near_fuzzy = self.candidate(20.0, matching.DIAMETER_MATCH_UP)
+        assert sorted([near_fuzzy, far_exact], key=matching.candidate_sort_key)[0] \
+            is far_exact
+
+    def test_among_exact_matches_the_nearest_wins(self):
+        near = self.candidate(10.0, matching.DIAMETER_MATCH_EXACT)
+        far = self.candidate(80.0, matching.DIAMETER_MATCH_EXACT)
+        assert sorted([far, near], key=matching.candidate_sort_key)[0] is near
+
+    def test_among_adjacent_matches_the_nearest_wins(self):
+        near = self.candidate(10.0, matching.DIAMETER_MATCH_DOWN)
+        far = self.candidate(80.0, matching.DIAMETER_MATCH_UP)
+        assert sorted([far, near], key=matching.candidate_sort_key)[0] is near
+
+    def test_up_and_down_are_ranked_the_same(self):
+        """Neither direction is a better claim than the other."""
+        up = self.candidate(50.0, matching.DIAMETER_MATCH_UP)
+        down = self.candidate(50.0, matching.DIAMETER_MATCH_DOWN)
+        assert matching.candidate_sort_key(up) == matching.candidate_sort_key(down)
+
+    def test_with_the_preference_off_distance_alone_decides(self, monkeypatch):
+        monkeypatch.setattr(config, "PREFER_EXACT_DIAMETER", False)
+        far_exact = self.candidate(900.0, matching.DIAMETER_MATCH_EXACT)
+        near_fuzzy = self.candidate(20.0, matching.DIAMETER_MATCH_UP)
+        assert sorted([far_exact, near_fuzzy], key=matching.candidate_sort_key)[0] \
+            is near_fuzzy
+
+    def test_a_candidate_with_no_tier_is_not_treated_as_exact(self):
+        """Ranking an unknown tier as exact would let it outrank a real one."""
+        unknown = self.candidate(5.0, None)
+        exact = self.candidate(50.0, matching.DIAMETER_MATCH_EXACT)
+        assert sorted([unknown, exact], key=matching.candidate_sort_key)[0] is exact
+
+
+class TestWhereEachModeWrites:
+    """The two rules must not overwrite each other, or there is nothing to
+    compare and no way back to the output you had."""
+
+    def test_the_strict_rule_keeps_the_original_filename(self):
+        assert config.output_gpkg_for("exact") == config.OUTPUT_GPKG
+
+    def test_no_mode_at_all_is_the_original_filename(self):
+        assert config.output_gpkg_for("") == config.OUTPUT_GPKG
+        assert config.output_gpkg_for(None) == config.output_gpkg_for(
+            config.DIAMETER_MATCH_MODE)
+
+    def test_the_widened_rule_is_suffixed(self):
+        path = config.output_gpkg_for("fuzzy")
+        assert path != config.OUTPUT_GPKG
+        assert path.name == "HistoricLeakRelocation_fuzzy_diameter.gpkg"
+        assert path.parent == config.OUTPUT_GPKG.parent
+        assert path.suffix == config.OUTPUT_GPKG.suffix
+
+    def test_it_suffixes_whatever_base_it_is_given(self):
+        """The map server passes its own OUTPUT_GPKG in, and the tests point it
+        at a temporary folder, so the base cannot be read from config alone."""
+        from pathlib import Path
+        base = Path("/tmp/somewhere/Other.gpkg")
+        assert config.output_gpkg_for("exact", base=base) == base
+        assert config.output_gpkg_for("fuzzy", base=base) == \
+            Path("/tmp/somewhere/Other_fuzzy_diameter.gpkg")
+
+    def test_an_unknown_mode_still_gets_its_own_file(self):
+        """Better a file nobody expected than the strict output overwritten by
+        a run whose mode was misspelled."""
+        assert config.output_gpkg_for("wider") != config.OUTPUT_GPKG
 
 
 class TestPressureMatches:

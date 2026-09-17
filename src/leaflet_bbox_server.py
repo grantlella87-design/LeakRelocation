@@ -659,52 +659,107 @@ def load_all():
 
 AUDIT_LAYER = "leak_relocation_audit"
 
-# The rendered dashboard, keyed on the GeoPackage's modification time. Building
-# it reads 92,707 rows and takes a second or two, which is fine for a click and
-# wasteful for every reload. Re-running the workflow changes the mtime, so a
-# rebuilt GeoPackage invalidates this without anyone having to remember.
-_DASHBOARD = {"key": None, "html": None}
+# The diameter rules, and so the outputs, this server can show. Both are
+# rendered from the same report code; which one is on screen is a query
+# parameter, so switching between them is a link rather than a re-run.
+DASHBOARD_MODES = ("exact", "fuzzy")
+
+# One rendered dashboard per mode, keyed on the modification times of both
+# GeoPackages. Building one reads 92,707 rows and takes a second or two, which
+# is fine for a click and wasteful for every reload. Both mtimes are in the key
+# because the page shows the comparison: writing either output has to
+# invalidate it, or the page would keep claiming a difference that has changed.
+_DASHBOARD = {}
 
 
-def dashboard_page():
-    """The relocation-distance dashboard, as HTML.
+def dashboard_gpkg(mode):
+    return config.output_gpkg_for(mode, base=OUTPUT_GPKG)
+
+
+def _mtime(path):
+    try:
+        return path.stat().st_mtime_ns if path.exists() else None
+    except OSError:
+        return None
+
+
+def dashboard_page(mode="exact"):
+    """The relocation-distance dashboard for one diameter rule, as HTML.
 
     Served rather than only written to a file so `python run.py` - which starts
-    this server - puts it one click from the map it describes.
+    this server - puts it one click from the map it describes, and so the two
+    diameter rules are one click from each other.
     """
     from leakrelocation import distance_dashboard, distance_report
 
-    try:
-        key = OUTPUT_GPKG.stat().st_mtime_ns if OUTPUT_GPKG.exists() else None
-    except OSError:
-        key = None
-    if key is not None and _DASHBOARD["key"] == key and _DASHBOARD["html"]:
-        return _DASHBOARD["html"]
-
-    if not OUTPUT_GPKG.exists():
+    mode = (mode or "exact").strip().lower()
+    if mode not in DASHBOARD_MODES:
         return _dashboard_placeholder(
-            f"There is no output GeoPackage at {OUTPUT_GPKG}.",
-            "Run the workflow to write one: <code>python run.py</code>")
+            f"There is no diameter rule called {escape(mode)}.",
+            "The rules are <code>exact</code> and <code>fuzzy</code>.")
+
+    mine = dashboard_gpkg(mode)
+    other_mode = next(name for name in DASHBOARD_MODES if name != mode)
+    theirs = dashboard_gpkg(other_mode)
+
+    key = (_mtime(mine), _mtime(theirs))
+    cached = _DASHBOARD.get(mode)
+    if cached and cached["key"] == key and key[0] is not None:
+        return cached["html"]
+
+    if not mine.exists():
+        run = "python run.py" if mode == "exact" else "python run.py --diameter fuzzy"
+        return _dashboard_placeholder(
+            f"There is no {escape(mode)}-diameter output at {escape(mine)}.",
+            f"Write one with: <code>{run}</code>"
+            + (f'<br><br><a href="/dashboard?mode={other_mode}">'
+               f"The {other_mode} output is there</a>" if theirs.exists() else ""))
+
+    audit = _read_audit(mine)
+    if isinstance(audit, str):
+        return audit
+    compare = _read_audit(theirs) if theirs.exists() else None
+    if isinstance(compare, str):
+        compare = None
+
     try:
-        audit = gpd.read_file(str(OUTPUT_GPKG), layer=AUDIT_LAYER)
+        report = distance_report.build_report(
+            audit, source=str(mine), max_radius_ft=config.MAX_RADIUS_FT,
+            compare_audit=compare, compare_source=str(theirs))
+        html = distance_dashboard.dashboard_html(
+            report, switch_links=_switch_links(mode))
+    except (KeyError, ValueError) as ex:
+        # A GeoPackage from a run before the audit carried DistanceFt.
+        return _dashboard_placeholder("This GeoPackage cannot be reported on.",
+                                      escape(str(ex)))
+    _DASHBOARD[mode] = {"key": key, "html": html}
+    return html
+
+
+def _switch_links(mode):
+    """Where the other diameter rule's dashboard is, or None if unwritten."""
+    links = {}
+    for name in DASHBOARD_MODES:
+        if name == mode:
+            continue
+        links[name] = (f"/dashboard?mode={name}"
+                       if dashboard_gpkg(name).exists() else None)
+    return links
+
+
+def _read_audit(path):
+    """The audit layer, or a placeholder page explaining why not."""
+    try:
+        return gpd.read_file(str(path), layer=AUDIT_LAYER)
     except Exception as ex:  # noqa: BLE001 - reported, not swallowed
         # Same breadth as read_gpkg, and for the same reason: which exception an
         # unreadable layer raises depends on whether geopandas is on pyogrio or
         # fiona, and a half-written GeoPackage can fail inside GDAL in ways
         # neither documents. The dashboard says so instead of 500-ing.
-        log(f"WARNING could not read {AUDIT_LAYER} for the dashboard: {ex}")
+        log(f"WARNING could not read {AUDIT_LAYER} from {path}: {ex}")
         return _dashboard_placeholder(
-            f"Could not read the {AUDIT_LAYER} layer.", escape(str(ex)))
-    try:
-        report = distance_report.build_report(
-            audit, source=str(OUTPUT_GPKG), max_radius_ft=config.MAX_RADIUS_FT)
-        html = distance_dashboard.dashboard_html(report)
-    except (KeyError, ValueError) as ex:
-        # A GeoPackage from a run before the audit carried DistanceFt.
-        return _dashboard_placeholder("This GeoPackage cannot be reported on.",
-                                      escape(str(ex)))
-    _DASHBOARD.update(key=key, html=html)
-    return html
+            f"Could not read the {AUDIT_LAYER} layer from {escape(path)}.",
+            escape(str(ex)))
 
 
 def escape(value):
@@ -821,6 +876,29 @@ def grouped_control_html():
     return "".join(parts)
 
 
+def dash_link_html():
+    """The map's link to the dashboards, one entry per diameter rule.
+
+    Built here rather than in the page's JavaScript because which outputs exist
+    is a filesystem question. A rule that has not been run is still listed, with
+    the command in its tooltip, so the link is how someone discovers the widened
+    output is available at all.
+    """
+    rows = []
+    for mode in DASHBOARD_MODES:
+        title = ("Distance dashboard" if mode == "exact"
+                 else "\u2014 fuzzy diameter")
+        if dashboard_gpkg(mode).exists():
+            rows.append(f'<a href="/dashboard?mode={mode}" target="_blank" '
+                        f'rel="noopener">{title}</a>')
+        else:
+            command = ("python run.py" if mode == "exact"
+                       else "python run.py --diameter fuzzy")
+            rows.append(f'<span class="unrun" title="Not written yet. Run: '
+                        f'{command}">{title}</span>')
+    return "".join(rows)
+
+
 def html_page():
     cfg_json = json.dumps(LAYERS)
     bounds_json = json.dumps(BOUNDS)
@@ -830,7 +908,7 @@ def html_page():
     css_ref, js_ref = leaflet_refs()
     parts.append(f'<link rel="stylesheet" href="{css_ref}"/>')
     parts.append(
-        "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}.grouped-layers{padding:6px 10px;background:#fff;max-height:72vh;overflow:auto;font-size:12px}.grouped-layers .group{margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #ddd}.grouped-layers label{display:block;white-space:nowrap}.grouped-layers .child{padding-left:16px}.dash-link a{display:block;padding:6px 10px;background:#fff;color:#1f6feb;font-size:13px;font-weight:bold;text-decoration:none;white-space:nowrap}.dash-link a:hover{background:#f4f4f4}" + PANE_CSS + "</style>"
+        "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}.grouped-layers{padding:6px 10px;background:#fff;max-height:72vh;overflow:auto;font-size:12px}.grouped-layers .group{margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #ddd}.grouped-layers label{display:block;white-space:nowrap}.grouped-layers .child{padding-left:16px}.dash-link a,.dash-link .unrun{display:block;padding:6px 10px;background:#fff;color:#1f6feb;font-size:13px;font-weight:bold;text-decoration:none;white-space:nowrap}.dash-link a:hover{background:#f4f4f4}.dash-link .unrun{color:#9a9a9a;font-weight:normal;cursor:help}" + PANE_CSS + "</style>"
     )
     parts.append(
         '</head><body><div id="map"></div>' + PANE_HTML
@@ -910,12 +988,12 @@ def html_page():
         # unbalanced - which every unit test passed and only the browser caught,
         # as "Unexpected token '}'" with the whole pane dead. A separate control
         # cannot do that to it.
+        "const DASH_LINK_HTML=" + json.dumps(dash_link_html()) + ";"
         "const dashLink=L.control({position:'topleft'});"
         "dashLink.onAdd=function(){"
         " const div=L.DomUtil.create('div','leaflet-bar dash-link');"
         " L.DomEvent.disableClickPropagation(div);"
-        " div.innerHTML='<a href=\"/dashboard\" target=\"_blank\" rel=\"noopener\""
-        " title=\"How far each leak was relocated\">Distance dashboard</a>';"
+        " div.innerHTML=DASH_LINK_HTML;"
         " return div};"
         "dashLink.addTo(map);"
         "const GROUP_CONTROL_HTML=" + json.dumps(grouped_control_html()) + ";"
@@ -1006,7 +1084,8 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path in ["/", "/index.html"]:
                 self.send_text(html_page(), "text/html")
             elif parsed.path in ["/dashboard", "/dashboard/"]:
-                self.send_text(dashboard_page(), "text/html")
+                mode = (parse_qs(parsed.query).get("mode", ["exact"])[0])
+                self.send_text(dashboard_page(mode), "text/html")
             elif parsed.path.startswith("/leaflet/"):
                 folder = leaflet_dir()
                 if folder is None:

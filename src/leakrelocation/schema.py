@@ -79,6 +79,11 @@ LEAK_MATERIAL = "LeakMaterial"
 LEAK_DIAMETER = "LeakDiameter"
 LINKED_LAYER = "LinkedLayer"
 DISTANCE_FT = "DistanceFt"
+# How much diameter slack the match took - exact, one_size_up, one_size_down -
+# and which rule the run was using. Together they say whether a relocation is
+# one the strict rule would also have made.
+DIAMETER_MATCH = "DiameterMatch"
+DIAMETER_MODE = "DiameterMode"
 
 
 def require(frame, columns, what):
