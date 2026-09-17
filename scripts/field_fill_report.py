@@ -37,7 +37,7 @@ CACHES = {
 PIPE_FIELDS = ("ASSETGROUP", "ASSETTYPE", "nominaldiameter", "operatingpressure",
                "GLOBALID", "jurisdiction", "CREATIONDATE", "dateretired")
 LEAK_FIELDS = ("LMSLEAKNUMBER", "GlobalID", "jurisdiction", "REVISEDLEAKDATE",
-               "ADDRESS")
+               "ADDRESS", "NEARESTXSTREET", "CITY")
 
 EXPECTED = {
     "historic_leaks": LEAK_FIELDS,
@@ -70,8 +70,10 @@ CANDIDATES = {
         # Dates, in the order they would be preferred for "when was this leak".
         "DISCOVEREDDATE", "REPAIREDDATE", "COMPLETEDDATE", "DUEDATE",
         "CREATIONDATE", "LASTUPDATE",
-        # Where the leak is.
-        "NEARESTXSTREET", "CITY", "STATE", "STATEROAD",
+        # Where the leak is. NEARESTXSTREET and CITY have moved into the request
+        # itself, so they are reported from the cache above rather than asked
+        # about here; these are what is left.
+        "STATE", "STATEROAD",
         # Useful context for both questions.
         "LEAKSTATUS", "ORIGINALLEAKCLASS", "REVISEDLEAKCLASS",
     ),

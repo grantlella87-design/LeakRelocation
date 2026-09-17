@@ -19,6 +19,7 @@ if _SCRIPT_DIR not in sys.path:
 # substring matching, where "PE" matched inside "PIPE" and "TYPE" and sent every
 # such label to PLASTIC.
 from leakrelocation import assettype, config, schema
+from leakrelocation import leak_location as location
 from leakrelocation.assettype import decoder_for_layer, norm_code
 from leakrelocation.assettype import family_from_assettype as material_family
 from leakrelocation.matching import route_layers
@@ -53,6 +54,12 @@ KEEP_TOKENS = [
     # ADDRESS on layer 206. Nothing else here matches it, so without this token
     # the column is downloaded and then dropped before it reaches the page.
     "address",
+    # The rest of what says where a leak is: NEARESTXSTREET, CITY, SuppTown and
+    # the LeakLocation built from them.
+    "street",
+    "city",
+    "town",
+    "location",
     "diam",
     "material",
     "facility",
@@ -265,6 +272,11 @@ def load_supplemental():
     dia_col = find_col(df.columns, ["Diameter", "LeakDiameter", "NominalDiameter"])
     fac_col = find_col(df.columns, ["FacilityType", "Facility Type"])
     cond_col = find_col(df.columns, ["PipeCondition", "Pipe Condition"])
+    # Towns is filled on all 98,464 rows of the committed CSV - "BOS-DORCHESTER",
+    # "WALA-WATERTOWN". It is a yard-town code rather than a street address, so it
+    # is the last thing LeakLocation falls back to, but it does place a leak when
+    # every proper address field is empty.
+    town_col = find_col(df.columns, ["Towns", "Town"])
     if not key_col:
         log(
             "WARNING supplemental GlobalID column (HistoricalLeaksID) not found; "
@@ -279,6 +291,7 @@ def load_supplemental():
     out["SuppDiameter"] = df[dia_col] if dia_col else None
     out["SuppFacilityType"] = df[fac_col] if fac_col else None
     out["SuppPipeCondition"] = df[cond_col] if cond_col else None
+    out["SuppTown"] = df[town_col] if town_col else None
     out["SuppMaterialFamily"] = out["SuppLeakMaterialType"].map(material_family)
     # The GlobalID is unique per row, so this drops nothing on the committed file.
     # It stays as a guard, because a duplicate key would otherwise multiply rows
@@ -317,7 +330,34 @@ def enrich_historic_leaks(gdf):
     log(
         f"Historic leak popup enrichment matched supplemental rows: {int(matched):,} of {len(merged):,}"
     )
+    merged["LeakLocation"] = build_leak_location(merged)
+    located = int((merged["LeakLocation"].astype(str).str.strip() != "").sum())
+    log(f"Historic leaks with a location: {located:,} of {len(merged):,}")
     return merged
+
+
+def build_leak_location(gdf):
+    """One readable location per leak, from whichever sources have a value.
+
+    The rule is leakrelocation.leak_location's, the same one the workflow writes
+    into LeakAddress, so the popup and the audit table cannot end up describing
+    the same leak differently.
+    """
+    # Wanted name -> this frame's spelling of it. A cache written before a field
+    # was requested simply has no such column.
+    columns = {}
+    for name in location.LOCATION_FIELDS:
+        found = find_col(gdf.columns, [name])
+        if found:
+            columns[name] = found
+    if not columns:
+        return pd.Series([""] * len(gdf), index=gdf.index)
+
+    def compose(row):
+        return location.from_values(
+            {name: clean_value(row[column]) for name, column in columns.items()})
+
+    return gdf[list(columns.values())].apply(compose, axis=1)
 
 
 def decode_from_subtypes(gdf, layer_id, layer_name):
@@ -617,6 +657,77 @@ def load_all():
     log(f"Bounds: {BOUNDS}")
 
 
+AUDIT_LAYER = "leak_relocation_audit"
+
+# The rendered dashboard, keyed on the GeoPackage's modification time. Building
+# it reads 92,707 rows and takes a second or two, which is fine for a click and
+# wasteful for every reload. Re-running the workflow changes the mtime, so a
+# rebuilt GeoPackage invalidates this without anyone having to remember.
+_DASHBOARD = {"key": None, "html": None}
+
+
+def dashboard_page():
+    """The relocation-distance dashboard, as HTML.
+
+    Served rather than only written to a file so `python run.py` - which starts
+    this server - puts it one click from the map it describes.
+    """
+    from leakrelocation import distance_dashboard, distance_report
+
+    try:
+        key = OUTPUT_GPKG.stat().st_mtime_ns if OUTPUT_GPKG.exists() else None
+    except OSError:
+        key = None
+    if key is not None and _DASHBOARD["key"] == key and _DASHBOARD["html"]:
+        return _DASHBOARD["html"]
+
+    if not OUTPUT_GPKG.exists():
+        return _dashboard_placeholder(
+            f"There is no output GeoPackage at {OUTPUT_GPKG}.",
+            "Run the workflow to write one: <code>python run.py</code>")
+    try:
+        audit = gpd.read_file(str(OUTPUT_GPKG), layer=AUDIT_LAYER)
+    except Exception as ex:  # noqa: BLE001 - reported, not swallowed
+        # Same breadth as read_gpkg, and for the same reason: which exception an
+        # unreadable layer raises depends on whether geopandas is on pyogrio or
+        # fiona, and a half-written GeoPackage can fail inside GDAL in ways
+        # neither documents. The dashboard says so instead of 500-ing.
+        log(f"WARNING could not read {AUDIT_LAYER} for the dashboard: {ex}")
+        return _dashboard_placeholder(
+            f"Could not read the {AUDIT_LAYER} layer.", escape(str(ex)))
+    try:
+        report = distance_report.build_report(
+            audit, source=str(OUTPUT_GPKG), max_radius_ft=config.MAX_RADIUS_FT)
+        html = distance_dashboard.dashboard_html(report)
+    except (KeyError, ValueError) as ex:
+        # A GeoPackage from a run before the audit carried DistanceFt.
+        return _dashboard_placeholder("This GeoPackage cannot be reported on.",
+                                      escape(str(ex)))
+    _DASHBOARD.update(key=key, html=html)
+    return html
+
+
+def escape(value):
+    return (str(value).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+def _dashboard_placeholder(headline, detail):
+    """A page that says why there is no dashboard, rather than an empty one."""
+    return (
+        '<!doctype html><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        "<title>Leak relocation distance</title>"
+        "<style>body{font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',"
+        "Arial,sans-serif;max-width:640px;margin:14vh auto;padding:0 20px;"
+        "color:#15181d}h1{font-size:19px}code{background:#eceff4;padding:1px 5px;"
+        "border-radius:4px}a{color:#1f6feb}"
+        "@media(prefers-color-scheme:dark){body{background:#101317;color:#e8ebf0}"
+        "code{background:#222831}}</style>"
+        f"<h1>{escape(headline)}</h1><p>{detail}</p>"
+        '<p><a href="/">Back to the map</a></p>')
+
+
 def gdf_to_geojson(gdf):
     if len(gdf) == 0:
         return {"type": "FeatureCollection", "features": []}
@@ -719,7 +830,7 @@ def html_page():
     css_ref, js_ref = leaflet_refs()
     parts.append(f'<link rel="stylesheet" href="{css_ref}"/>')
     parts.append(
-        "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}.grouped-layers{padding:6px 10px;background:#fff;max-height:72vh;overflow:auto;font-size:12px}.grouped-layers .group{margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #ddd}.grouped-layers label{display:block;white-space:nowrap}.grouped-layers .child{padding-left:16px}" + PANE_CSS + "</style>"
+        "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}.grouped-layers{padding:6px 10px;background:#fff;max-height:72vh;overflow:auto;font-size:12px}.grouped-layers .group{margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #ddd}.grouped-layers label{display:block;white-space:nowrap}.grouped-layers .child{padding-left:16px}.dash-link a{display:block;padding:6px 10px;background:#fff;color:#1f6feb;font-size:13px;font-weight:bold;text-decoration:none;white-space:nowrap}.dash-link a:hover{background:#f4f4f4}" + PANE_CSS + "</style>"
     )
     parts.append(
         '</head><body><div id="map"></div>' + PANE_HTML
@@ -771,7 +882,7 @@ def html_page():
         "function esc(v){if(v===null||v===undefined)return '';return String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}"
     )
     parts.append(
-        "function bindPopup(feature,layer){const props=feature.properties||{};const ordered=['LMSLEAKNUMBER','LeakNumber','ADDRESS','LeakAddress','SuppLeakMaterialType','SuppDiameter','SuppFacilityType','SuppPipeCondition','SuppMaterialFamily','PipeMaterialDomain','PipeMaterialRaw','PipeMaterialFamily','PipeDiameter','OBJECTID','GlobalID','GLOBALID','DistanceToPipe','ConfidenceLevel','LinkedLayer','NearestPipeID','NearestPipeGlobalID'];let keys=[];for(const k of ordered){if(Object.prototype.hasOwnProperty.call(props,k))keys.push(k)}for(const k of Object.keys(props)){if(!keys.includes(k)&&keys.length<18)keys.push(k)}let rows='';for(const k of keys)rows+='<tr><th>'+esc(k)+'</th><td>'+esc(props[k])+'</td></tr>';if(!rows)rows='<tr><td>No attributes</td></tr>';layer.bindPopup('<table>'+rows+'</table>');layer.on('click',function(){AttributePane.selectFromMap(layer)})}"
+        "function bindPopup(feature,layer){const props=feature.properties||{};const ordered=['LMSLEAKNUMBER','LeakNumber','LeakLocation','ADDRESS','NEARESTXSTREET','CITY','SuppTown','LeakAddress','SuppLeakMaterialType','SuppDiameter','SuppFacilityType','SuppPipeCondition','SuppMaterialFamily','PipeMaterialDomain','PipeMaterialRaw','PipeMaterialFamily','PipeDiameter','OBJECTID','GlobalID','GLOBALID','DistanceToPipe','ConfidenceLevel','LinkedLayer','NearestPipeID','NearestPipeGlobalID'];let keys=[];for(const k of ordered){if(Object.prototype.hasOwnProperty.call(props,k))keys.push(k)}for(const k of Object.keys(props)){if(!keys.includes(k)&&keys.length<18)keys.push(k)}let rows='';for(const k of keys)rows+='<tr><th>'+esc(k)+'</th><td>'+esc(props[k])+'</td></tr>';if(!rows)rows='<tr><td>No attributes</td></tr>';layer.bindPopup('<table>'+rows+'</table>');layer.on('click',function(){AttributePane.selectFromMap(layer)})}"
     )
     parts.append(
         "function styleFor(k,feature){const c=LAYER_CONFIG[k];const p=(feature&&feature.properties)||{};if(c.kind==='pipe_line'){const fam=p.PipeMaterialFamily||'OTHER';return {color:MATERIAL_COLORS[fam]||MATERIAL_COLORS.OTHER,weight:c.weight||2,opacity:.82}}return {color:c.color,weight:c.weight||1,opacity:.75}}"
@@ -794,6 +905,19 @@ def html_page():
         # a flat list, so MAINS and SERVICES could not be parents of anything:
         # a child added to the map through a parent group is not on the map as
         # itself, and its checkbox then contradicts what is drawn.
+        # Its own control rather than a line inside updateInfo. That function is
+        # built as one long Python string and adding to it has twice left a brace
+        # unbalanced - which every unit test passed and only the browser caught,
+        # as "Unexpected token '}'" with the whole pane dead. A separate control
+        # cannot do that to it.
+        "const dashLink=L.control({position:'topleft'});"
+        "dashLink.onAdd=function(){"
+        " const div=L.DomUtil.create('div','leaflet-bar dash-link');"
+        " L.DomEvent.disableClickPropagation(div);"
+        " div.innerHTML='<a href=\"/dashboard\" target=\"_blank\" rel=\"noopener\""
+        " title=\"How far each leak was relocated\">Distance dashboard</a>';"
+        " return div};"
+        "dashLink.addTo(map);"
         "const GROUP_CONTROL_HTML=" + json.dumps(grouped_control_html()) + ";"
         "const groupControl=L.control({position:'topright'});"
         "groupControl.onAdd=function(){"
@@ -881,6 +1005,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parsed.path in ["/", "/index.html"]:
                 self.send_text(html_page(), "text/html")
+            elif parsed.path in ["/dashboard", "/dashboard/"]:
+                self.send_text(dashboard_page(), "text/html")
             elif parsed.path.startswith("/leaflet/"):
                 folder = leaflet_dir()
                 if folder is None:

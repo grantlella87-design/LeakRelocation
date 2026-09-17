@@ -41,7 +41,7 @@ if _SCRIPT_DIR not in sys.path:
 # Do not force all layers to EPSG:2249 before matching.
 from pyproj import CRS
 
-from leakrelocation import config, schema
+from leakrelocation import config, leak_location as location, schema
 from leakrelocation.assettype import build_assettype_decoder, norm_code
 from leakrelocation.matching import (
     IN_SERVICE_AT_LEAK,
@@ -244,6 +244,29 @@ LEAK_KEY_CANDIDATES = ["LMSLEAKNUMBER", "LEAKNUMBER"]
 # by the matching - it is carried through so a leak can be identified on the map
 # and in the audit by where it is rather than only by its number.
 LEAK_ADDRESS_CANDIDATES = ["ADDRESS"]
+
+# The rest of what layer 206 knows about where a leak is. ADDRESS is requested
+# and is present in the cache as a column, but every one of the 98,501 MA rows
+# came back empty; scripts/probe_leak_fields.py asks the service which of the
+# three possible reasons that is. Meanwhile these are the only other location
+# fields the layer has - both read out of the committed metadata, both
+# esriFieldTypeString.
+#
+# Every one of them is requested rather than the first that resolves: which of
+# them this service populates is exactly what is unknown, so one refresh has to
+# collect them all. leakrelocation.leak_location decides what to do with them.
+LEAK_LOCATION_CANDIDATES = [name for name in location.SERVICE_FIELDS
+                            if name not in LEAK_ADDRESS_CANDIDATES]
+
+
+def is_leak_layer_name(layer_name):
+    """Whether a layer name is the historic leak layer.
+
+    One definition, used by build_out_fields and by the cache signature, so the
+    two cannot disagree about which fields a layer is expected to carry.
+    """
+    lowered = str(layer_name).lower()
+    return "historic" in lowered or "leak" in lowered
 
 PIPE_DIAMETER_CANDIDATES = ["nominaldiameter", "outsidediameter"]
 
@@ -804,8 +827,7 @@ def build_out_fields(meta, layer_name):
         wanted.append(object_id_field)
     if modified_field:
         wanted.append(modified_field)
-    is_leak_layer = "historic" in layer_name.lower() or "leak" in layer_name.lower()
-    if is_leak_layer:
+    if is_leak_layer_name(layer_name):
         candidate_groups = [
             LEAK_KEY_CANDIDATES,
             GLOBALID_CANDIDATES,
@@ -815,6 +837,13 @@ def build_out_fields(meta, layer_name):
             # Carried for identification, not used by the matching.
             LEAK_ADDRESS_CANDIDATES,
         ]
+        # Every location field, not the first that resolves: the point is to
+        # collect whatever the service populates, and which one that is is
+        # exactly what is unknown.
+        for name in LEAK_LOCATION_CANDIDATES if field_names else []:
+            resolved = resolve_from_names(field_names, [name])
+            if resolved:
+                wanted.append(resolved)
     else:
         candidate_groups = [
             PIPE_DIAMETER_CANDIDATES,
@@ -966,7 +995,7 @@ def build_delta_where(base_where, modified_field, last_epoch_ms):
     return f"({base_where}) AND {modified_field} > {epoch_ms_to_sql_timestamp(last_epoch_ms)}"
 
 
-def out_field_request_signature():
+def out_field_request_signature(layer_name=None):
     """A digest of the fields this code asks the service for.
 
     A cache holds the columns that were requested when it was written. Adding a
@@ -978,21 +1007,38 @@ def out_field_request_signature():
     The signature is stored with the cache and compared on read. It is built from
     the request configuration alone, so it can be computed without contacting the
     service, and it changes only when the set of requested names changes.
+
+    It is computed per layer kind. A single digest over every list meant that
+    adding one leak field invalidated the pipe caches too, and re-downloading
+    1.27 million service pipes to collect a leak's street address is a long wait
+    for nothing - the wait during which the connection resets that started all
+    this. `layer_name` is matched the same way build_out_fields matches it.
     """
-    groups = [
+    shared = [
         MODIFIED_FIELD_CANDIDATES,
+        GLOBALID_CANDIDATES,
+        OBJECTID_CANDIDATES,
+        JURISDICTION_CANDIDATES,
+    ]
+    leak = [
         LEAK_KEY_CANDIDATES,
         LEAK_ADDRESS_CANDIDATES,
+        LEAK_LOCATION_CANDIDATES,
         LEAK_DATE_CANDIDATES,
+    ]
+    pipe = [
         PIPE_DIAMETER_CANDIDATES,
         PIPE_PRESSURE_CANDIDATES,
         PIPE_MATERIAL_FIELDS,
         PIPE_CREATED_CANDIDATES,
         PIPE_RETIRED_CANDIDATES,
-        GLOBALID_CANDIDATES,
-        OBJECTID_CANDIDATES,
-        JURISDICTION_CANDIDATES,
     ]
+    if layer_name is None:
+        groups = shared + leak + pipe
+    elif is_leak_layer_name(layer_name):
+        groups = shared + leak
+    else:
+        groups = shared + pipe
     # Case and order within a group are irrelevant to what comes back, so they
     # are normalised out: a rename that the resolver would treat as the same
     # name must not invalidate every cache.
@@ -1001,7 +1047,23 @@ def out_field_request_signature():
     return hashlib.sha256(payload).hexdigest()[:16]
 
 
-def read_layer_cache(layer_name, layer_url, where_clause):
+def missing_requested_columns(gdf, required_fields):
+    """Which requested fields this frame does not have.
+
+    Returns None when the answer is unknown - no field list, or a request for
+    every field - so the caller refreshes rather than assuming.
+    """
+    if not required_fields or required_fields == "*":
+        return None
+    if isinstance(required_fields, str):
+        wanted = [name.strip() for name in required_fields.split(",") if name.strip()]
+    else:
+        wanted = list(required_fields)
+    present = {str(column).lower() for column in gdf.columns}
+    return [name for name in wanted if name.lower() not in present]
+
+
+def read_layer_cache(layer_name, layer_url, where_clause, required_fields=None):
     if not USE_LAYER_CACHE or FORCE_LAYER_REFRESH:
         return None, None
     data_path, meta_path = layer_cache_paths(layer_name)
@@ -1017,17 +1079,25 @@ def read_layer_cache(layer_name, layer_url, where_clause):
         if meta.get("where_clause") != where_clause:
             log(f"{layer_name}: cache WHERE changed. Refreshing layer.")
             return None, None
-        signature = out_field_request_signature()
-        if meta.get("out_field_signature") != signature:
-            # Returning None here sends the caller down the full-download path,
-            # which is the only one that can bring a new column in for every
-            # record. A cache written before this check existed has no signature
-            # at all and is refreshed once.
-            log(f"{layer_name}: the requested fields have changed since this "
-                f"cache was written. Refreshing the layer in full so the new "
-                f"fields are populated for every record.")
-            return None, None
+        signature = out_field_request_signature(layer_name)
+        stale_fields = meta.get("out_field_signature") != signature
         gdf = pd.read_pickle(data_path, compression="gzip")
+        if stale_fields:
+            # The signature says the request has changed, but the question that
+            # actually matters is whether this cache already holds what is now
+            # asked for. Checking the columns answers it exactly, and saves
+            # re-downloading 1.27 million service pipes because the signature was
+            # reorganised or a leak field was added.
+            missing = missing_requested_columns(gdf, required_fields)
+            if missing is None or missing:
+                log(f"{layer_name}: the requested fields have changed since this "
+                    f"cache was written"
+                    + (f" and it has no {', '.join(missing)}" if missing else "")
+                    + ". Refreshing the layer in full so the new fields are "
+                    "populated for every record.")
+                return None, None
+            log(f"{layer_name}: the requested fields have changed, but this cache "
+                f"already carries every one of them. Keeping it.")
         log(f"{layer_name}: loaded {len(gdf):,} records from local cache: {data_path}")
         return gdf, meta
     except Exception as ex:  # noqa: BLE001 - see below
@@ -1062,7 +1132,7 @@ def write_layer_cache(
             else None,
             "cached_utc": dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z"),
             "record_count_written": len(gdf),
-            "out_field_signature": out_field_request_signature(),
+            "out_field_signature": out_field_request_signature(layer_name),
         }
         with open(meta_path, "w", encoding="utf-8") as handle:
             json.dump(meta, handle, indent=2)
@@ -1329,7 +1399,8 @@ def query_arcgis_layer(session, layer_url, where_clause, layer_name):
     out_fields = build_out_fields(meta, layer_name)
     server_count = query_count(session, layer_url, where_clause, layer_name)
 
-    cached_gdf, cached_meta = read_layer_cache(layer_name, layer_url, where_clause)
+    cached_gdf, cached_meta = read_layer_cache(
+        layer_name, layer_url, where_clause, out_fields)
 
     if cached_gdf is not None and modified_field and cached_meta:
         last_epoch_ms = cached_meta.get("max_modified_epoch_ms")
@@ -1522,6 +1593,22 @@ def load_retired_pipes(session):
         return None
 
 
+def leak_location(row, fields):
+    """The best location this leak actually has, for LeakAddress.
+
+    `fields` maps the name leakrelocation.leak_location knows to the column this
+    cache actually carries, which is not always the same spelling. The rule
+    itself lives there, shared with the map server so the popup and the audit
+    cannot disagree about where a leak is.
+
+    This is a fallback for rows that lack a street address, not a replacement
+    for one. Whether the MA rows genuinely lack it is what
+    scripts/probe_leak_fields.py answers.
+    """
+    return location.from_values(
+        {name: row.get(column) for name, column in fields.items()})
+
+
 def prepare_leaks(leaks_gdf, supplemental):
     step("Preparing leak records")
     leak_oid_field = resolved_field(
@@ -1536,15 +1623,20 @@ def prepare_leaks(leaks_gdf, supplemental):
     leak_globalid_field = resolved_field(
         leaks_gdf.columns, GLOBALID_CANDIDATES, True, "leak GlobalID"
     )
-    # Optional for the same reason as the date: a cache written before the field
-    # was requested has no such column. The address identifies the leak, it is
-    # not matched on, so a run without it is still a correct run.
-    leak_address_field = resolved_field(
-        leaks_gdf.columns, LEAK_ADDRESS_CANDIDATES, False, "leak address"
-    )
-    if not leak_address_field:
-        warn("No leak address column. Re-download the leak layer to include it: "
-             "python run.py --refresh")
+    # Optional for the same reason as the date: a cache written before a field
+    # was requested has no such column. None of these is matched on - they say
+    # where the leak is - so a run without them is still a correct run.
+    #
+    # The map of wanted name -> this cache's spelling of it. ADDRESS is the one
+    # that matters and the rest are what a row without one still has.
+    location_fields = {}
+    for name in location.SERVICE_FIELDS:
+        column = resolved_field(leaks_gdf.columns, [name], False, f"leak {name}")
+        if column:
+            location_fields[name] = column
+    if not location_fields:
+        warn("No leak address or location column. Re-download the leak layer to "
+             "include them: python run.py --refresh")
     # Optional: a cache downloaded before the date rule existed has no such
     # column, and every leak then matches unfiltered rather than not at all.
     leak_date_field = resolved_field(
@@ -1584,9 +1676,7 @@ def prepare_leaks(leaks_gdf, supplemental):
                 # No longer conditional: the GlobalID is the supplemental join
                 # key, so a leak without one never reaches this point.
                 "leak_globalid": clean(row.get(leak_globalid_field)),
-                "leak_address": clean(row.get(leak_address_field))
-                if leak_address_field
-                else "",
+                "leak_address": leak_location(row, location_fields),
                 "leak_info": leak_info,
                 "leak_date_ms": leak_date_ms,
                 "allowed_layers": route_layers(leak_info["facility"]),

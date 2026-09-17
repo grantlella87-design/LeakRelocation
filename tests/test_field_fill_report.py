@@ -100,11 +100,19 @@ class TestTheCandidateFields:
             assert name in offered
             assert name in leak_fields
 
-    def test_the_other_location_fields_are_offered(self, leak_fields):
-        offered = set(report.CANDIDATES["historic_leaks"])
+    def test_the_other_location_fields_are_reported_from_the_cache(self, leak_fields):
+        """They were candidates while the answer was unknown. The project now
+        requests them, so they belong in the cache report - where a blank column
+        is a fact about the download rather than a question about the service."""
+        expected = set(report.EXPECTED["historic_leaks"])
         for name in ("NEARESTXSTREET", "CITY"):
-            assert name in offered
+            assert name in expected
             assert name in leak_fields
+
+    def test_every_expected_leak_field_exists_on_layer_206(self, leak_fields):
+        unknown = [name for name in report.EXPECTED["historic_leaks"]
+                   if name not in leak_fields]
+        assert unknown == [], f"layer 206 has no such field: {unknown}"
 
 
 class TestAskingTheService:

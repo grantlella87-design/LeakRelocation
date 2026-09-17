@@ -41,7 +41,7 @@ PIPE_META = {"fields": [{"name": name} for name in [
 
 LEAK_META = {"fields": [{"name": name} for name in [
     "OBJECTID", "GlobalID", "LASTUPDATE", "LMSLEAKNUMBER", "jurisdiction",
-    "ADDRESS", "REVISEDLEAKDATE",
+    "ADDRESS", "REVISEDLEAKDATE", "NEARESTXSTREET", "CITY",
 ]]}
 
 
@@ -74,6 +74,32 @@ class TestBuildOutFields:
         with redirect_stdout(io.StringIO()):
             out_fields = lr.build_out_fields(LEAK_META, "historic leaks")
         assert "ADDRESS" in out_fields
+
+    def test_every_location_field_is_requested_not_just_the_first(self, lr):
+        """These are alternatives for a reader, not for the request: which of
+        them this service populates is the open question, so one refresh has to
+        collect all of them rather than resolve to the first that exists."""
+        with redirect_stdout(io.StringIO()):
+            out_fields = lr.build_out_fields(LEAK_META, "historic leaks")
+        for name in lr.LEAK_LOCATION_CANDIDATES:
+            assert name in out_fields, name
+
+    def test_a_leak_layer_without_the_location_fields_still_resolves(self, lr):
+        """Unlike ASSETTYPE these are optional, so a layer that lacks them must
+        not fail the run - it just has less to say about where a leak is."""
+        meta = {"fields": [{"name": name} for name in [
+            "OBJECTID", "GlobalID", "LASTUPDATE", "LMSLEAKNUMBER",
+            "jurisdiction", "ADDRESS"]]}
+        with redirect_stdout(io.StringIO()):
+            out_fields = lr.build_out_fields(meta, "historic leaks")
+        assert "ADDRESS" in out_fields
+        assert "NEARESTXSTREET" not in out_fields
+
+    def test_the_location_fields_are_not_asked_of_a_pipe_layer(self, lr):
+        with redirect_stdout(io.StringIO()):
+            out_fields = lr.build_out_fields(PIPE_META, "distribution pipes")
+        for name in lr.LEAK_LOCATION_CANDIDATES:
+            assert name.lower() not in out_fields.lower(), name
 
     def test_the_address_is_not_asked_of_a_pipe_layer(self, lr):
         """The pipe layers have no address field, and asking for a field a layer
@@ -187,8 +213,78 @@ class TestCacheKnowsWhichFieldsItHolds:
         with redirect_stdout(io.StringIO()):
             lr.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
             loaded, meta = lr.read_layer_cache("leaks", "http://x/206", "1=1")
-        assert meta["out_field_signature"] == lr.out_field_request_signature()
+        # Per layer kind: the digest a leak cache carries is the leak one, and a
+        # pipe cache's is not, so adding a leak field cannot invalidate the
+        # 1.27 million row service pipe cache.
+        assert meta["out_field_signature"] == lr.out_field_request_signature("leaks")
+        assert meta["out_field_signature"] != lr.out_field_request_signature(
+            "service pipes")
         assert loaded is not None and len(loaded) == 1
+
+    def test_a_leak_field_does_not_invalidate_the_pipe_caches(self, lr, monkeypatch):
+        """Collecting one more leak column used to mean re-downloading 1.27
+        million service pipes as well, over the same connection that was
+        resetting mid-download. The pipe layers are not affected by a leak field
+        and their digest must not move for one."""
+        before = lr.out_field_request_signature("service pipes")
+        monkeypatch.setattr(lr, "LEAK_LOCATION_CANDIDATES",
+                            [*lr.LEAK_LOCATION_CANDIDATES, "NEWFIELD"])
+        assert lr.out_field_request_signature("service pipes") == before
+        assert lr.out_field_request_signature("historic leaks") != before
+
+    def test_a_pipe_field_does_not_invalidate_the_leak_cache(self, lr, monkeypatch):
+        before = lr.out_field_request_signature("historic leaks")
+        monkeypatch.setattr(lr, "PIPE_DIAMETER_CANDIDATES",
+                            [*lr.PIPE_DIAMETER_CANDIDATES, "NEWFIELD"])
+        assert lr.out_field_request_signature("historic leaks") == before
+
+    def test_a_shared_field_still_invalidates_both(self, lr, monkeypatch):
+        before = {name: lr.out_field_request_signature(name)
+                  for name in ("historic leaks", "service pipes")}
+        monkeypatch.setattr(lr, "JURISDICTION_CANDIDATES",
+                            [*lr.JURISDICTION_CANDIDATES, "NEWFIELD"])
+        for name, digest in before.items():
+            assert lr.out_field_request_signature(name) != digest, name
+
+    def test_a_cache_that_already_has_the_new_columns_is_kept(
+            self, lr, tmp_path, monkeypatch):
+        """The signature says the request changed; the columns say this cache
+        already answers it. Re-downloading then buys nothing at all."""
+        import geopandas as gpd
+        from shapely.geometry import Point
+        monkeypatch.setattr(lr, "LAYER_CACHE_FOLDER", str(tmp_path))
+        monkeypatch.setattr(lr, "USE_LAYER_CACHE", True)
+        monkeypatch.setattr(lr, "FORCE_LAYER_REFRESH", False)
+        gdf = gpd.GeoDataFrame({"OBJECTID": [1], "ADDRESS": ["12 Elm St"]},
+                               geometry=[Point(0, 0)], crs="EPSG:4326")
+        with redirect_stdout(io.StringIO()):
+            lr.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
+        monkeypatch.setattr(lr, "LEAK_ADDRESS_CANDIDATES", ["ADDRESS", "ADDRESS2"])
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            loaded, meta = lr.read_layer_cache("leaks", "http://x/206", "1=1",
+                                               "OBJECTID,ADDRESS")
+        assert loaded is not None and len(loaded) == 1
+        assert "already carries every one of them" in buffer.getvalue()
+
+    def test_a_cache_missing_a_requested_column_is_still_refused(
+            self, lr, tmp_path, monkeypatch):
+        import geopandas as gpd
+        from shapely.geometry import Point
+        monkeypatch.setattr(lr, "LAYER_CACHE_FOLDER", str(tmp_path))
+        monkeypatch.setattr(lr, "USE_LAYER_CACHE", True)
+        monkeypatch.setattr(lr, "FORCE_LAYER_REFRESH", False)
+        gdf = gpd.GeoDataFrame({"OBJECTID": [1]}, geometry=[Point(0, 0)],
+                               crs="EPSG:4326")
+        with redirect_stdout(io.StringIO()):
+            lr.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
+        monkeypatch.setattr(lr, "LEAK_ADDRESS_CANDIDATES", ["ADDRESS", "ADDRESS2"])
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            loaded, meta = lr.read_layer_cache("leaks", "http://x/206", "1=1",
+                                               "OBJECTID,ADDRESS")
+        assert loaded is None and meta is None
+        assert "no ADDRESS" in buffer.getvalue()
 
     def test_a_cache_written_for_different_fields_is_refused(
             self, lr, tmp_path, monkeypatch):
@@ -336,3 +432,76 @@ class TestNarrowedExceptionHandlers:
         with redirect_stdout(io.StringIO()):
             result = lr.epoch_ms_to_sql_timestamp(1640995200000)
         assert result == "timestamp '2022-01-01 00:00:00'"
+
+
+class TestWhichColumnsACacheAlreadyHas:
+    """The signature says the request changed; this says whether it matters.
+
+    Without it, reorganising the signature or adding one leak field meant
+    re-downloading every layer, including 1.27 million service pipes over the
+    connection whose resets started all of this.
+    """
+
+    def frame(self, lr, columns):
+        import geopandas as gpd
+        from shapely.geometry import Point
+        return gpd.GeoDataFrame({name: [1] for name in columns},
+                                geometry=[Point(0, 0)], crs="EPSG:4326")
+
+    def test_nothing_missing_when_every_column_is_there(self, lr):
+        gdf = self.frame(lr, ["OBJECTID", "ADDRESS", "CITY"])
+        assert lr.missing_requested_columns(gdf, "OBJECTID,ADDRESS") == []
+
+    def test_the_missing_one_is_named(self, lr):
+        gdf = self.frame(lr, ["OBJECTID"])
+        assert lr.missing_requested_columns(gdf, "OBJECTID,ADDRESS") == ["ADDRESS"]
+
+    def test_case_does_not_matter(self, lr):
+        """The service answers with its own spelling - GLOBALID on the pipe
+        layers, GlobalID on the leaks - so matching case-sensitively would
+        condemn a perfectly good cache."""
+        gdf = self.frame(lr, ["OBJECTID", "GLOBALID"])
+        assert lr.missing_requested_columns(gdf, "OBJECTID,GlobalID") == []
+
+    def test_a_list_is_accepted_as_well_as_a_string(self, lr):
+        gdf = self.frame(lr, ["OBJECTID"])
+        assert lr.missing_requested_columns(gdf, ["OBJECTID"]) == []
+
+    @pytest.mark.parametrize("required", ["*", "", None])
+    def test_an_unanswerable_request_is_not_answered(self, lr, required):
+        """None means the caller did not say what it wants and "*" means
+        everything; in neither case can the columns prove the cache is current,
+        so it reports unknown and the caller refreshes rather than assuming."""
+        gdf = self.frame(lr, ["OBJECTID"])
+        assert lr.missing_requested_columns(gdf, required) is None
+
+
+class TestWhereALeakIs:
+    """leak_location maps this cache's column spellings onto the shared rule.
+
+    The rule itself is tested in tests/test_leak_location.py; what matters here
+    is that the mapping reaches it, because a cache carries whatever spelling
+    the service answered with.
+    """
+
+    def test_the_columns_are_mapped_onto_the_rule(self, lr):
+        row = {"addr": "12 Elm St", "town": "WATERTOWN"}
+        fields = {"ADDRESS": "addr", "CITY": "town"}
+        assert lr.leak_location(row, fields) == "12 Elm St / WATERTOWN"
+
+    def test_a_cache_without_the_address_column_still_places_the_leak(self, lr):
+        """A cache downloaded before ADDRESS was requested has no such column,
+        and resolved_field leaves it out of the mapping entirely."""
+        row = {"NEARESTXSTREET": "OAK ST", "CITY": "WATERTOWN"}
+        fields = {"NEARESTXSTREET": "NEARESTXSTREET", "CITY": "CITY"}
+        assert lr.leak_location(row, fields) == "OAK ST / WATERTOWN"
+
+    def test_no_location_columns_at_all_is_empty_not_an_error(self, lr):
+        assert lr.leak_location({}, {}) == ""
+
+    def test_only_the_service_fields_are_requested(self, lr):
+        """SuppTown is read from the supplemental CSV. Asking the service for a
+        field the layer does not have makes it reject the whole query."""
+        assert "SuppTown" not in lr.LEAK_LOCATION_CANDIDATES
+        assert "ADDRESS" not in lr.LEAK_LOCATION_CANDIDATES  # already requested
+        assert lr.LEAK_LOCATION_CANDIDATES == ["NEARESTXSTREET", "CITY"]
