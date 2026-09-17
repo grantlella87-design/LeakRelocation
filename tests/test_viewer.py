@@ -541,3 +541,115 @@ class TestTheLeakFieldNotes:
                 lowest = min(lowest, depth)
         assert depth == 0, f"updateInfo braces are unbalanced by {depth}"
         assert lowest == 0, "updateInfo closes a brace it never opened"
+
+
+class TestTheDistanceDashboardRoute:
+    """run.py starts the map server, so the dashboard is served from it too -
+    otherwise it is a second thing to know to run. The route reads the audit
+    layer itself: it is not one of the map layers."""
+
+    @pytest.fixture
+    def server(self):
+        pytest.importorskip("geopandas")
+        sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+        import leaflet_bbox_server
+        return leaflet_bbox_server
+
+    @pytest.fixture
+    def gpkg(self, tmp_path, server, monkeypatch):
+        """A small audit layer written where the server expects the output."""
+        import geopandas as gpd
+        import pandas as pd
+        from shapely.geometry import Point
+        rows = []
+        for index, distance in enumerate([0.0, 3.0, 40.0, 250.0, 2500.0]):
+            rows.append({
+                "LeakKey": str(index), "LeakAddress": "", "DistanceFt": distance,
+                "SearchRadiusFt": 100.0, "LinkedLayer": "distribution",
+                "LeakMaterial": "Cast Iron", "PipeMaterial": "Cast Iron",
+                "LeakDiameter": 6.0, "PipeDiameter": 6.0, "FacilityType": "Main",
+                "MatchStatus": "Matched", "NoMatchReason": "", "DateCheck": "ok",
+                "LeakDate": "", "RunUTC": "2026-09-16T04:12:55Z",
+            })
+        frame = pd.DataFrame(rows)
+        gdf = gpd.GeoDataFrame(
+            frame, geometry=[Point(-71, 42)] * len(frame), crs="EPSG:4326")
+        path = tmp_path / "HistoricLeakRelocation.gpkg"
+        gdf.to_file(str(path), layer="leak_relocation_audit", driver="GPKG")
+        monkeypatch.setattr(server, "OUTPUT_GPKG", path)
+        monkeypatch.setattr(server, "_DASHBOARD", {"key": None, "html": None})
+        return path
+
+    def test_the_page_is_built_from_the_audit_layer(self, server, gpkg):
+        page = server.dashboard_page()
+        assert "How many moved further" in page
+        assert 'id="thresh"' in page
+        assert "window.REPORT" in page
+
+    def test_the_map_links_to_it(self, server, monkeypatch):
+        monkeypatch.setattr(server, "BOUNDS", {
+            "west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
+            "center_lat": 42.5, "center_lon": -71.5,
+        })
+        page = server.html_page()
+        assert 'href="/dashboard"' in page
+        assert "Distance dashboard" in page
+
+    def test_the_link_is_its_own_control(self, server):
+        """Not a line inside updateInfo. Adding to that function has twice left
+        a brace unbalanced, which only the browser caught."""
+        source = read_source("src/leaflet_bbox_server.py")
+        info = source[source.index("function updateInfo()"):]
+        info = info[:info.index("div.innerHTML=html}")]
+        assert "/dashboard" not in info
+
+    def test_it_is_cached_on_the_file_rather_than_rebuilt(self, server, gpkg):
+        """Building it reads the whole audit layer. A reload should not."""
+        first = server.dashboard_page()
+        assert server._DASHBOARD["key"] is not None
+        server._DASHBOARD["html"] = "SENTINEL"
+        assert server.dashboard_page() == "SENTINEL"
+        assert first != "SENTINEL"
+
+    def test_a_rewritten_geopackage_invalidates_the_cache(self, server, gpkg):
+        """Re-running the workflow must not leave a stale dashboard behind."""
+        server.dashboard_page()
+        server._DASHBOARD["html"] = "SENTINEL"
+        os.utime(gpkg, (0, 0))
+        assert server.dashboard_page() != "SENTINEL"
+
+    def test_a_missing_geopackage_says_what_to_run(self, server, tmp_path,
+                                                   monkeypatch):
+        monkeypatch.setattr(server, "OUTPUT_GPKG", tmp_path / "nothing.gpkg")
+        monkeypatch.setattr(server, "_DASHBOARD", {"key": None, "html": None})
+        page = server.dashboard_page()
+        assert "no output GeoPackage" in page
+        assert "python run.py" in page
+        assert "<!doctype html>" in page
+
+    def test_an_unreadable_geopackage_does_not_raise(self, server, tmp_path,
+                                                     monkeypatch):
+        """A 500 from the route would look like a broken dashboard rather than a
+        missing input."""
+        broken = tmp_path / "HistoricLeakRelocation.gpkg"
+        broken.write_bytes(b"this is not a GeoPackage")
+        monkeypatch.setattr(server, "OUTPUT_GPKG", broken)
+        monkeypatch.setattr(server, "_DASHBOARD", {"key": None, "html": None})
+        page = server.dashboard_page()
+        assert "Could not read" in page or "cannot be reported on" in page
+
+    def test_a_geopackage_without_the_distance_column_is_explained(
+            self, server, tmp_path, monkeypatch):
+        """An output from a run before the audit carried DistanceFt."""
+        import geopandas as gpd
+        import pandas as pd
+        from shapely.geometry import Point
+        frame = pd.DataFrame([{"LeakKey": "1", "MatchStatus": "Matched"}])
+        gdf = gpd.GeoDataFrame(frame, geometry=[Point(-71, 42)], crs="EPSG:4326")
+        path = tmp_path / "HistoricLeakRelocation.gpkg"
+        gdf.to_file(str(path), layer="leak_relocation_audit", driver="GPKG")
+        monkeypatch.setattr(server, "OUTPUT_GPKG", path)
+        monkeypatch.setattr(server, "_DASHBOARD", {"key": None, "html": None})
+        page = server.dashboard_page()
+        assert "cannot be reported on" in page
+        assert "DistanceFt" in page

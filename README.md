@@ -146,6 +146,7 @@ files anything read. Re-copy from the URL above if another layer is ever needed.
 | `describe_layer.py` | Print a layer's fields, dates and subtype domains; `--save` writes it into `reference/`. |
 | `field_fill_report.py` | Which fields actually hold values, in the caches and (with `--service`) in the service. |
 | `probe_leak_fields.py` | Why a leak field is empty: counts it with and without the `jurisdiction = 'MA'` filter, null against blank, and shows real values. |
+| `relocation_dashboard.py` | Build the relocation-distance dashboard as one self-contained HTML file. |
 | `enrich_assettype_cache.py` | Repair an existing cache. Not needed for a normal run — `run.py` decodes the material itself. |
 
 The viewer builders, the audit and the inspect scripts are gone: `run.py` serves
@@ -305,6 +306,52 @@ So a leak reads `12 Elm St / WATERTOWN` when the service has an address and
 popup over a leak and its row in the GeoPackage cannot describe it differently.
 This is a fallback for rows that lack a street address — not a replacement for
 one.
+
+### The relocation-distance dashboard
+
+How far each leak moved is the only measure of how much its original record was
+trusted. A few feet is a snap onto the right main; two thousand feet is not a
+relocation but a guess that happened to find a pipe. The dashboard draws that
+line wherever the reader wants it.
+
+It is served by the map server, so `python run.py` already has it — the
+**Distance dashboard** link sits top-left on the map, at
+<http://127.0.0.1:8000/dashboard>. For a copy to keep or send on:
+
+```bat
+python scripts\relocation_dashboard.py
+python scripts\relocation_dashboard.py --open
+```
+
+That writes `relocation_distance_dashboard.html` beside the GeoPackage and
+prints the headline numbers to the terminal.
+
+**The sliding scale** is the centre of it: drag it and the page reports, exactly,
+how many relocations fall on each side — overall and split by pipe layer. It
+steps in 0.1 ft up to 100 ft and in 5 ft beyond, because production distances run
+from 0.036 ft to the 3,000 ft maximum search radius and a flat grid would put a
+third of the data in one bin. Every figure is a stored count, never an
+interpolation, and the fixed-threshold table is computed separately from the
+curve so the two disagreeing would fail a test rather than mislead a reader.
+
+Alongside it:
+
+| Panel | What it answers |
+| --- | --- |
+| Median, p90, p95, p99, furthest | the report-ready "95% of leaks moved less than X ft" |
+| Where the relocations fall | the shape of the distribution, with the threshold drawn on it |
+| Share within a distance | the cumulative curve, overall and per pipe layer |
+| Which pass found the pipe | how many needed the search widened past its first 100 ft — a leak with nothing eligible nearby is a different result from a close snap |
+| By pipe layer / facility / leak material | mains are sparser than services, so those rows differing is expected; a material whose median move is far above the rest is a sign its records are placed less reliably |
+| Material agreement | what share sit on a pipe of exactly the recorded material, against the family fallback |
+| Why a leak did not match | the leaks that were never relocated, and so appear in no distance figure |
+| Date check | `no_leak_date` on 98% of a production run, marked so the panel is not read as a clean bill of health |
+| The furthest 50 | the review queue, row by row |
+
+Nothing is fetched from the internet — no CDN, no web font — for the same reason
+Leaflet is vendored: the proxy would not serve it. The file embeds aggregate
+counts, group statistics and those 50 rows, not the 90,987-row table, so it is
+safe to send and small enough to mail (~130 KB).
 
 ### If the network drops a request
 

@@ -657,6 +657,77 @@ def load_all():
     log(f"Bounds: {BOUNDS}")
 
 
+AUDIT_LAYER = "leak_relocation_audit"
+
+# The rendered dashboard, keyed on the GeoPackage's modification time. Building
+# it reads 92,707 rows and takes a second or two, which is fine for a click and
+# wasteful for every reload. Re-running the workflow changes the mtime, so a
+# rebuilt GeoPackage invalidates this without anyone having to remember.
+_DASHBOARD = {"key": None, "html": None}
+
+
+def dashboard_page():
+    """The relocation-distance dashboard, as HTML.
+
+    Served rather than only written to a file so `python run.py` - which starts
+    this server - puts it one click from the map it describes.
+    """
+    from leakrelocation import distance_dashboard, distance_report
+
+    try:
+        key = OUTPUT_GPKG.stat().st_mtime_ns if OUTPUT_GPKG.exists() else None
+    except OSError:
+        key = None
+    if key is not None and _DASHBOARD["key"] == key and _DASHBOARD["html"]:
+        return _DASHBOARD["html"]
+
+    if not OUTPUT_GPKG.exists():
+        return _dashboard_placeholder(
+            f"There is no output GeoPackage at {OUTPUT_GPKG}.",
+            "Run the workflow to write one: <code>python run.py</code>")
+    try:
+        audit = gpd.read_file(str(OUTPUT_GPKG), layer=AUDIT_LAYER)
+    except Exception as ex:  # noqa: BLE001 - reported, not swallowed
+        # Same breadth as read_gpkg, and for the same reason: which exception an
+        # unreadable layer raises depends on whether geopandas is on pyogrio or
+        # fiona, and a half-written GeoPackage can fail inside GDAL in ways
+        # neither documents. The dashboard says so instead of 500-ing.
+        log(f"WARNING could not read {AUDIT_LAYER} for the dashboard: {ex}")
+        return _dashboard_placeholder(
+            f"Could not read the {AUDIT_LAYER} layer.", escape(str(ex)))
+    try:
+        report = distance_report.build_report(
+            audit, source=str(OUTPUT_GPKG), max_radius_ft=config.MAX_RADIUS_FT)
+        html = distance_dashboard.dashboard_html(report)
+    except (KeyError, ValueError) as ex:
+        # A GeoPackage from a run before the audit carried DistanceFt.
+        return _dashboard_placeholder("This GeoPackage cannot be reported on.",
+                                      escape(str(ex)))
+    _DASHBOARD.update(key=key, html=html)
+    return html
+
+
+def escape(value):
+    return (str(value).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+def _dashboard_placeholder(headline, detail):
+    """A page that says why there is no dashboard, rather than an empty one."""
+    return (
+        '<!doctype html><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        "<title>Leak relocation distance</title>"
+        "<style>body{font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',"
+        "Arial,sans-serif;max-width:640px;margin:14vh auto;padding:0 20px;"
+        "color:#15181d}h1{font-size:19px}code{background:#eceff4;padding:1px 5px;"
+        "border-radius:4px}a{color:#1f6feb}"
+        "@media(prefers-color-scheme:dark){body{background:#101317;color:#e8ebf0}"
+        "code{background:#222831}}</style>"
+        f"<h1>{escape(headline)}</h1><p>{detail}</p>"
+        '<p><a href="/">Back to the map</a></p>')
+
+
 def gdf_to_geojson(gdf):
     if len(gdf) == 0:
         return {"type": "FeatureCollection", "features": []}
@@ -759,7 +830,7 @@ def html_page():
     css_ref, js_ref = leaflet_refs()
     parts.append(f'<link rel="stylesheet" href="{css_ref}"/>')
     parts.append(
-        "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}.grouped-layers{padding:6px 10px;background:#fff;max-height:72vh;overflow:auto;font-size:12px}.grouped-layers .group{margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #ddd}.grouped-layers label{display:block;white-space:nowrap}.grouped-layers .child{padding-left:16px}" + PANE_CSS + "</style>"
+        "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}.grouped-layers{padding:6px 10px;background:#fff;max-height:72vh;overflow:auto;font-size:12px}.grouped-layers .group{margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #ddd}.grouped-layers label{display:block;white-space:nowrap}.grouped-layers .child{padding-left:16px}.dash-link a{display:block;padding:6px 10px;background:#fff;color:#1f6feb;font-size:13px;font-weight:bold;text-decoration:none;white-space:nowrap}.dash-link a:hover{background:#f4f4f4}" + PANE_CSS + "</style>"
     )
     parts.append(
         '</head><body><div id="map"></div>' + PANE_HTML
@@ -834,6 +905,19 @@ def html_page():
         # a flat list, so MAINS and SERVICES could not be parents of anything:
         # a child added to the map through a parent group is not on the map as
         # itself, and its checkbox then contradicts what is drawn.
+        # Its own control rather than a line inside updateInfo. That function is
+        # built as one long Python string and adding to it has twice left a brace
+        # unbalanced - which every unit test passed and only the browser caught,
+        # as "Unexpected token '}'" with the whole pane dead. A separate control
+        # cannot do that to it.
+        "const dashLink=L.control({position:'topleft'});"
+        "dashLink.onAdd=function(){"
+        " const div=L.DomUtil.create('div','leaflet-bar dash-link');"
+        " L.DomEvent.disableClickPropagation(div);"
+        " div.innerHTML='<a href=\"/dashboard\" target=\"_blank\" rel=\"noopener\""
+        " title=\"How far each leak was relocated\">Distance dashboard</a>';"
+        " return div};"
+        "dashLink.addTo(map);"
         "const GROUP_CONTROL_HTML=" + json.dumps(grouped_control_html()) + ";"
         "const groupControl=L.control({position:'topright'});"
         "groupControl.onAdd=function(){"
@@ -921,6 +1005,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parsed.path in ["/", "/index.html"]:
                 self.send_text(html_page(), "text/html")
+            elif parsed.path in ["/dashboard", "/dashboard/"]:
+                self.send_text(dashboard_page(), "text/html")
             elif parsed.path.startswith("/leaflet/"):
                 folder = leaflet_dir()
                 if folder is None:
