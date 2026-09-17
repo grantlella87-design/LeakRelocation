@@ -206,11 +206,138 @@ def material_matches(leak_value, pipe_value):
             and material_family(leak_text) == material_family(pipe_text))
 
 
-def diameter_matches(leak_diameter, pipe_diameter):
-    """Diameters must match exactly; a missing value never matches."""
+# --- Diameter matching ------------------------------------------------------
+#
+# Two modes, so the strict output and the widened one can be produced from the
+# same code and compared:
+#
+#   EXACT   the leak's diameter equals the pipe's. The original rule.
+#   FUZZY   the pipe may also be one nominal size up or down.
+DIAMETER_EXACT = "exact"
+DIAMETER_FUZZY = "fuzzy"
+DIAMETER_MODES = (DIAMETER_EXACT, DIAMETER_FUZZY)
+
+# The nominal pipeline sizes, in inches. This is the ladder "one size up or
+# down" is counted on.
+NOMINAL_DIAMETERS_IN = (
+    1.0, 1.25, 1.5, 2.0, 4.0, 6.0, 8.0, 12.0, 16.0, 20.0, 24.0, 30.0, 36.0,
+    42.0, 48.0,
+)
+
+# How a candidate's diameter related to the leak's, for the audit column.
+DIAMETER_MATCH_EXACT = "exact"
+DIAMETER_MATCH_UP = "one_size_up"
+DIAMETER_MATCH_DOWN = "one_size_down"
+
+# Floats read back from a GeoPackage and a CSV do not compare cleanly - 6.0
+# from one and 5.999999999999999 from the other are the same pipe. A
+# thousandth of an inch is far below any real difference in nominal size.
+DIAMETER_TOLERANCE_IN = 0.001
+
+
+def diameters_equal(left, right, tolerance=DIAMETER_TOLERANCE_IN):
+    return abs(float(left) - float(right)) <= tolerance
+
+
+def adjacent_nominal_sizes(diameter, ladder=NOMINAL_DIAMETERS_IN):
+    """The nominal sizes one step below and above `diameter`.
+
+    Either may be None at the ends of the ladder. A diameter that is not itself
+    a nominal size is located in the gap it falls in, so the 10 in pipe that
+    exists in the data but not on the ladder brackets to (8, 12).
+    """
+    value = float(diameter)
+    below = max((size for size in ladder if size < value - DIAMETER_TOLERANCE_IN),
+                default=None)
+    above = min((size for size in ladder if size > value + DIAMETER_TOLERANCE_IN),
+                default=None)
+    return below, above
+
+
+def diameter_within_one_size(leak_diameter, pipe_diameter,
+                             ladder=NOMINAL_DIAMETERS_IN):
+    """True when the two diameters are the same nominal size or adjacent ones.
+
+    Stated as: there is no nominal size strictly between them.
+
+    For diameters that are on the ladder this is exactly "one size up or down" -
+    8 in reaches 6 and 12, and not 16, because 12 sits between 8 and 16.
+
+    It is written this way rather than as "look up my neighbours" because of the
+    uncommon sizes. The data carries diameters the ladder does not list: 0.5 and
+    0.75 on service pipes, 3 and 10 on mains. Taking each value's own
+    neighbours would make the rule asymmetric at those sizes - a 0.75 in leak
+    would reach 1 in, while a 1 in leak would not reach back down to 0.75,
+    because 1 is the bottom rung. "Nothing standard in between" gives the same
+    answer whichever side you ask from, and applies the same rule to an
+    uncommon size as to a listed one.
+    """
+    low, high = sorted((float(leak_diameter), float(pipe_diameter)))
+    if diameters_equal(low, high):
+        return True
+    return not any(low + DIAMETER_TOLERANCE_IN < size < high - DIAMETER_TOLERANCE_IN
+                   for size in ladder)
+
+
+def diameter_match(leak_diameter, pipe_diameter, mode=None,
+                   ladder=NOMINAL_DIAMETERS_IN):
+    """How this pipe's diameter matches the leak's, or None if it does not.
+
+    Returns DIAMETER_MATCH_EXACT, DIAMETER_MATCH_UP or DIAMETER_MATCH_DOWN, so
+    the audit can record not just that a leak matched but how much slack it
+    took to match it. A missing value on either side never matches: a leak with
+    no diameter has nothing to compare, and widening the rule does not change
+    that.
+    """
     if leak_diameter is None or pipe_diameter is None:
-        return False
-    return float(leak_diameter) == float(pipe_diameter)
+        return None
+    try:
+        leak = float(leak_diameter)
+        pipe = float(pipe_diameter)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(leak) or math.isnan(pipe):
+        return None
+    if diameters_equal(leak, pipe):
+        return DIAMETER_MATCH_EXACT
+    if (mode or config.DIAMETER_MATCH_MODE) != DIAMETER_FUZZY:
+        return None
+    if not diameter_within_one_size(leak, pipe, ladder):
+        return None
+    return DIAMETER_MATCH_UP if pipe > leak else DIAMETER_MATCH_DOWN
+
+
+def diameter_matches(leak_diameter, pipe_diameter, mode=None):
+    """Whether this pipe's diameter is acceptable for this leak.
+
+    Kept as the boolean form; diameter_match says how.
+    """
+    return diameter_match(leak_diameter, pipe_diameter, mode) is not None
+
+
+# An exact diameter beats an adjacent one however far away it is, so a leak
+# that already relocated keeps the pipe it had. Sorting purely by distance
+# would let a nearer wrong-size pipe steal a match the strict run had made
+# correctly, and the two outputs would then differ in ways that have nothing
+# to do with the leaks the widened rule was meant to rescue.
+DIAMETER_MATCH_RANK = {
+    DIAMETER_MATCH_EXACT: 0,
+    DIAMETER_MATCH_UP: 1,
+    DIAMETER_MATCH_DOWN: 1,
+}
+
+
+def candidate_sort_key(candidate):
+    """Best candidate first: exact diameter, then nearest.
+
+    With PREFER_EXACT_DIAMETER off this is distance alone, which makes the
+    widened run pick the nearest pipe in the size window even when a further
+    exact one exists.
+    """
+    if not config.PREFER_EXACT_DIAMETER:
+        return (0, candidate["distance_ft"])
+    rank = DIAMETER_MATCH_RANK.get(candidate.get("diameter_match"), 1)
+    return (rank, candidate["distance_ft"])
 
 
 def pressure_matches(leak_pressure, pipe_pressure):

@@ -333,8 +333,29 @@ def radius_passes(frame):
     return rows
 
 
-def build_report(audit, source="", max_radius_ft=None):
-    """The whole report, from the audit frame alone."""
+def diameter_mode_of(audit):
+    """Which diameter rule wrote this output, read off the rows themselves.
+
+    Recorded per row by the workflow, so a GeoPackage says which rule produced
+    it rather than the reader having to remember which file is which.
+    """
+    if schema.DIAMETER_MODE not in audit.columns or not len(audit):
+        return None
+    seen = {label(value, "") for value in audit[schema.DIAMETER_MODE].tolist()}
+    seen.discard("")
+    if len(seen) == 1:
+        return seen.pop()
+    return "/".join(sorted(seen)) if seen else None
+
+
+def build_report(audit, source="", max_radius_ft=None, compare_audit=None,
+                 compare_source=""):
+    """The whole report, from the audit frame alone.
+
+    Given `compare_audit` - the other diameter rule's output - it also carries
+    the difference between the two, which is what makes switching between them
+    reviewable rather than a matter of trust.
+    """
     warnings = []
     total = len(audit)
     if schema.DISTANCE_FT not in audit.columns:
@@ -387,6 +408,30 @@ def build_report(audit, source="", max_radius_ft=None):
             "figure below is empty. Run the workflow to write the outputs: "
             "python run.py")
 
+    comparison = None
+    if compare_audit is not None and len(compare_audit):
+        mine = diameter_mode_of(audit) or "this run"
+        theirs = diameter_mode_of(compare_audit) or "the other run"
+        # Strict first, always. Which output is on screen must not change the
+        # sign of the difference.
+        if stricter_first(mine, theirs):
+            comparison = compare_outputs(audit, compare_audit, mine, theirs)
+        else:
+            comparison = compare_outputs(compare_audit, audit, theirs, mine)
+        if comparison.get("usable") and comparison["lost"]:
+            warnings.append(
+                f"{comparison['lost']:,} leaks relocated under {mine} and not "
+                f"under {theirs}. Widening the diameter rule is meant to add "
+                f"relocations, never remove them, so this is worth "
+                f"investigating before either output is used.")
+        if comparison.get("usable") and comparison["moved_to_another_pipe"]:
+            comparison_note = (
+                f"{comparison['moved_to_another_pipe']:,} leaks matched in both "
+                f"runs but to a different pipe. With PREFER_EXACT_DIAMETER on "
+                f"an exact diameter outranks an adjacent one at any distance, "
+                f"so this should be zero.")
+            warnings.append(comparison_note)
+
     return {
         "generated_utc": dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z"),
         "source": str(source),
@@ -412,12 +457,171 @@ def build_report(audit, source="", max_radius_ft=None):
         "by_facility": grouped(matched, "FacilityType"),
         "by_radius": radius_passes(matched),
         "material_agreement": material_agreement(matched),
+        "diameter_mode": diameter_mode_of(audit),
+        "diameter_match": counted(matched, schema.DIAMETER_MATCH),
+        "by_diameter_match": grouped(matched, schema.DIAMETER_MATCH),
         "date_check": counted(matched, "DateCheck"),
         "no_match_reasons": counted(audit[audit.index.isin(
             audit.index.difference(matched.index))], "NoMatchReason"),
         "furthest": furthest(matched),
+        "comparison": comparison,
+        "compare_source": str(compare_source),
         "warnings": warnings,
     }
+
+
+# The leak identity two outputs are compared on. LeakKey is the leak *number*,
+# which is not unique - 25,733 rows of the supplemental file share a number with
+# another row - so joining two runs on it would pair up different leaks. The
+# OBJECTID is one row of layer 206, and the GlobalID is its stable id.
+COMPARE_KEYS = ("LeakOID", "LeakGlobalID", schema.LEAK_KEY)
+
+# How permissive each diameter rule is. The comparison is always oriented from
+# the stricter rule to the wider one, whichever output the reader happens to
+# have open - otherwise the same pair of files reads as "+1,104 gained" from one
+# page and "1,104 lost" from the other, and the second of those looks like an
+# alarm when nothing is wrong.
+MODE_STRICTNESS = {"exact": 0, "fuzzy": 1}
+
+
+def stricter_first(left_mode, right_mode):
+    """True when `left_mode` is the stricter of the two, so it is the baseline."""
+    return (MODE_STRICTNESS.get(left_mode, 99)
+            <= MODE_STRICTNESS.get(right_mode, 99))
+
+
+def compare_key(frame):
+    """Which column to join two outputs on, most trustworthy first."""
+    for name in COMPARE_KEYS:
+        if name in frame.columns:
+            return name
+    return None
+
+
+def _matched_by_key(audit, key):
+    """key -> the matched row's figures, for one output."""
+    rows = matched_rows(audit)
+    out = {}
+    for record in rows[[
+            column for column in
+            (key, schema.DISTANCE_FT, schema.LINKED_LAYER, "MatchedPipeOID",
+             schema.DIAMETER_MATCH, schema.LEAK_DIAMETER, schema.PIPE_DIAMETER)
+            if column in rows.columns]].to_dict("records"):
+        identity = label(record.get(key), "")
+        if identity:
+            out[identity] = record
+    return out
+
+
+def same_identity(left, right):
+    """Whether two id values name the same thing, across dtypes.
+
+    A pipe OID read from an output whose column holds a null comes back as a
+    float and one from a column of whole numbers comes back as an int, so 900.0
+    and 900 are the same pipe arriving from two files. Comparing their text
+    forms made every unchanged relocation look as though it had moved to
+    another pipe - 90,987 false findings on a real pair of outputs.
+    """
+    if _is_number(left) and _is_number(right):
+        return float(left) == float(right)
+    return label(left, "") == label(right, "")
+
+
+def compare_outputs(base_audit, other_audit, base_label="exact",
+                    other_label="fuzzy"):
+    """What changed between two runs of different diameter rules.
+
+    This is the whole point of having both outputs: not two sets of numbers but
+    the difference between them. Keyed per leak, so "3,412 more leaks relocated"
+    is backed by which leaks, how far they moved, and how much diameter slack
+    each one took.
+
+    `lost` and `moved_to_another_pipe` should both be zero while
+    PREFER_EXACT_DIAMETER is on, because an exact diameter outranks an adjacent
+    one at any distance. They are counted rather than assumed: if either is not
+    zero the widened run has taken a relocation away from the strict one, and
+    that is the one outcome nobody would want to discover from a map.
+    """
+    base_key = compare_key(base_audit)
+    other_key = compare_key(other_audit)
+    if not base_key or base_key != other_key:
+        return {"usable": False,
+                "why": "The two outputs carry no common leak identity column, "
+                       "so their rows cannot be paired."}
+
+    base = _matched_by_key(base_audit, base_key)
+    other = _matched_by_key(other_audit, other_key)
+
+    gained_keys = sorted(set(other) - set(base))
+    lost_keys = sorted(set(base) - set(other))
+    both_keys = sorted(set(base) & set(other))
+
+    gained = [other[key] for key in gained_keys]
+    gained_distances = [float(row[schema.DISTANCE_FT]) for row in gained
+                        if _is_number(row.get(schema.DISTANCE_FT))]
+
+    changed_pipe = []
+    for key in both_keys:
+        left, right = base[key], other[key]
+        if "MatchedPipeOID" not in left or "MatchedPipeOID" not in right:
+            continue
+        if not same_identity(left["MatchedPipeOID"], right["MatchedPipeOID"]):
+            changed_pipe.append({
+                "key": key,
+                "from_pipe": _plain(left["MatchedPipeOID"]),
+                "to_pipe": _plain(right["MatchedPipeOID"]),
+                "from_ft": _plain(left.get(schema.DISTANCE_FT)),
+                "to_ft": _plain(right.get(schema.DISTANCE_FT)),
+            })
+
+    tiers = {}
+    for row in gained:
+        tiers[label(row.get(schema.DIAMETER_MATCH))] = \
+            tiers.get(label(row.get(schema.DIAMETER_MATCH)), 0) + 1
+
+    sizes = {}
+    for row in gained:
+        leak = row.get(schema.LEAK_DIAMETER)
+        pipe = row.get(schema.PIPE_DIAMETER)
+        if not (_is_number(leak) and _is_number(pipe)):
+            continue
+        name = f"{float(leak):g}″ → {float(pipe):g}″"
+        sizes[name] = sizes.get(name, 0) + 1
+    size_rows = sorted(({"name": name, "count": count}
+                        for name, count in sizes.items()),
+                       key=lambda row: (-row["count"], row["name"]))
+
+    return {
+        "usable": True,
+        "key": base_key,
+        "base_label": base_label,
+        "other_label": other_label,
+        "base_audited": len(base_audit),
+        "other_audited": len(other_audit),
+        "base_relocated": len(base),
+        "other_relocated": len(other),
+        "gained": len(gained_keys),
+        "lost": len(lost_keys),
+        "unchanged": len(both_keys) - len(changed_pipe),
+        "moved_to_another_pipe": len(changed_pipe),
+        "moved_examples": changed_pipe[:20],
+        "gained_distance": summarise(gained_distances),
+        "gained_by_tier": sorted(
+            ({"name": name, "count": count} for name, count in tiers.items()),
+            key=lambda row: (-row["count"], row["name"])),
+        "gained_by_size_step": size_rows[:25],
+        "gained_by_layer": _counts_of(gained, schema.LINKED_LAYER),
+    }
+
+
+def _counts_of(records, column):
+    buckets = {}
+    for record in records:
+        name = label(record.get(column))
+        buckets[name] = buckets.get(name, 0) + 1
+    return sorted(({"name": name, "count": count}
+                   for name, count in buckets.items()),
+                  key=lambda row: (-row["count"], row["name"]))
 
 
 def _run_stamp(audit):

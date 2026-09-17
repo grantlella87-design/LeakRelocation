@@ -505,3 +505,65 @@ class TestWhereALeakIs:
         assert "SuppTown" not in lr.LEAK_LOCATION_CANDIDATES
         assert "ADDRESS" not in lr.LEAK_LOCATION_CANDIDATES  # already requested
         assert lr.LEAK_LOCATION_CANDIDATES == ["NEARESTXSTREET", "CITY"]
+
+
+class TestTheDiameterRuleReachesTheMatcher:
+    """The rule is chosen by configuration and read at import, because the
+    workflow module binds OUTPUT_GPKG from it - so setting the mode after the
+    import would write the widened output over the strict one."""
+
+    def test_the_default_is_the_strict_rule(self, lr):
+        assert lr.DIAMETER_MATCH_MODE == "exact"
+        assert lr.OUTPUT_GPKG.endswith("HistoricLeakRelocation.gpkg")
+
+    def test_the_mode_is_passed_to_every_candidate(self, lr):
+        """Not read from config inside diameter_match: the matcher runs in
+        worker processes, and passing it keeps the rule with the run."""
+        source = open(
+            os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py"),
+            encoding="utf-8").read()
+        call = source[source.index("diameter_result = diameter_match("):]
+        call = call[:call.index(")") + 1]
+        assert "DIAMETER_MATCH_MODE" in call
+
+    def test_the_candidates_are_sorted_by_the_shared_key(self, lr):
+        """Sorting by distance alone would let the widened run take a match
+        away from the strict one."""
+        source = open(
+            os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py"),
+            encoding="utf-8").read()
+        assert "candidates.sort(key=candidate_sort_key)" in source
+        assert 'candidates.sort(key=lambda item: item["distance_ft"])' not in source
+
+    def test_a_widened_run_writes_a_different_file(self, lr, monkeypatch):
+        import importlib
+        monkeypatch.setenv("LEAKRELOCATION_DIAMETER_MODE", "fuzzy")
+        from leakrelocation import config as live
+        importlib.reload(live)
+        try:
+            assert live.DIAMETER_MATCH_MODE == "fuzzy"
+            assert live.output_gpkg_for() != live.OUTPUT_GPKG
+        finally:
+            monkeypatch.delenv("LEAKRELOCATION_DIAMETER_MODE")
+            importlib.reload(live)
+
+    def test_the_audit_records_the_rule_and_the_slack(self, lr):
+        """Without both columns a GeoPackage cannot say which rule produced it,
+        and a row cannot say whether its diameter was a fact or an assumption."""
+        source = open(
+            os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py"),
+            encoding="utf-8").read()
+        assert source.count('"DiameterMode": DIAMETER_MATCH_MODE') == 3
+        assert '"DiameterMatch"' in source
+        from leakrelocation import schema
+        assert schema.DIAMETER_MATCH == "DiameterMatch"
+        assert schema.DIAMETER_MODE == "DiameterMode"
+
+    def test_the_no_match_reason_names_the_rule_that_was_applied(self, lr):
+        """"No exact diameter match" on a widened run would be a lie about what
+        was tried."""
+        source = open(
+            os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py"),
+            encoding="utf-8").read()
+        assert "diameter within one nominal size" in source
+        assert 'reason = ("No exact diameter/material/pressure match' not in source

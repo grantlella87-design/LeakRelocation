@@ -334,3 +334,148 @@ class TestItFitsOnAPhone:
     def test_the_readout_stacks_on_a_narrow_screen(self, page):
         narrow = dash.PAGE_CSS.split("@media (max-width:640px)")[1]
         assert "grid-template-columns:1fr" in narrow
+
+
+AUDIT_BASE = {
+    "LeakAddress": "", "LeakMaterial": "Cast Iron", "PipeMaterial": "Cast Iron",
+    "LeakDiameter": 6.0, "PipeDiameter": 6.0, "FacilityType": "Main",
+    "LinkedLayer": "distribution", "SearchRadiusFt": 100.0,
+    "MatchStatus": "Matched", "NoMatchReason": "", "DateCheck": "ok",
+    "LeakDate": "", "RunUTC": "2026-09-16T04:12:55Z",
+}
+
+
+def audit_of(rows):
+    return pd.DataFrame([{**AUDIT_BASE, **row} for row in rows])
+
+
+def mode_pair(gained=2):
+    """One pair of outputs: the strict rule, and the widened rule on top of it.
+
+    Built once and viewed from either side, because "reads the same from either
+    output" is only a real check if both readings describe the same two files.
+    """
+    shared = [{"LeakOID": i, "LeakKey": str(i), "DistanceFt": 5.0 + i,
+               "DiameterMatch": "exact", "MatchedPipeOID": 900 + i}
+              for i in range(4)]
+    strict = [{**row, "DiameterMode": "exact"} for row in shared]
+    wide = [{**row, "DiameterMode": "fuzzy"} for row in shared]
+    for i in range(gained):
+        strict.append({
+            "LeakOID": 90 + i, "LeakKey": str(90 + i), "DistanceFt": None,
+            "MatchStatus": "NoMatch", "DiameterMode": "exact",
+            "DiameterMatch": "", "MatchedPipeOID": None,
+            "NoMatchReason": "no_pipe_within_max_radius"})
+        wide.append({
+            "LeakOID": 90 + i, "LeakKey": str(90 + i), "DistanceFt": 400.0 + i,
+            "DiameterMode": "fuzzy", "DiameterMatch": "one_size_up",
+            "LeakDiameter": 8.0, "PipeDiameter": 12.0,
+            "MatchedPipeOID": 700 + i})
+    return audit_of(strict), audit_of(wide)
+
+
+def report_viewed_from(mode, gained=2):
+    """The report a reader gets with one of the two outputs open."""
+    strict, wide = mode_pair(gained)
+    mine, theirs = (strict, wide) if mode == "exact" else (wide, strict)
+    return dr.build_report(mine, compare_audit=theirs)
+
+
+class TestTheModeBar:
+    """Two outputs exist side by side, so the page has to say which one it is.
+    Without it a reader has only the filename to go on and the pages are
+    otherwise identical."""
+
+    def test_it_names_the_rule_that_produced_the_output(self):
+        page = dash.dashboard_html(report_viewed_from("exact"))
+        assert "Exact diameter" in page
+        assert "the leak's diameter equals the pipe's" in page
+
+    def test_the_widened_rule_is_described_not_just_named(self):
+        page = dash.dashboard_html(report_viewed_from("fuzzy"))
+        assert "one nominal size up or down" in page
+
+    def test_a_switch_link_is_rendered_when_the_other_output_exists(self):
+        page = dash.dashboard_html(report_viewed_from("exact"),
+                                   switch_links={"fuzzy": "/dashboard?mode=fuzzy"})
+        assert 'href="/dashboard?mode=fuzzy"' in page
+        assert "Switch to" in page
+
+    def test_an_unwritten_rule_is_shown_as_unavailable_not_as_a_link(self):
+        page = dash.dashboard_html(report_viewed_from("exact"),
+                                   switch_links={"fuzzy": None})
+        assert "No fuzzy output yet" in page
+        assert 'href="/dashboard?mode=fuzzy"' not in page
+
+    def test_an_output_with_no_recorded_rule_gets_no_bar(self, report):
+        """A GeoPackage from before the modes existed. Better no bar than a
+        bar claiming a rule the file never recorded."""
+        assert report.get("diameter_mode") is None
+        assert 'class="modebar"' not in dash.dashboard_html(report)
+
+
+class TestTheComparisonPanel:
+    def test_it_leads_with_what_the_widening_added(self):
+        page = dash.dashboard_html(report_viewed_from("exact", gained=2))
+        assert "Against the other diameter rule" in page
+        assert "GAINED" in page.upper()
+        assert "+2" in page
+
+    def test_it_reads_the_same_from_either_output(self):
+        """The direction of the difference must not depend on which page is
+        open. Read from the widened side, the leaks it added once appeared as
+        Lost, which looks like an alarm when nothing is wrong."""
+        from_strict = dash.dashboard_html(report_viewed_from("exact"))
+        from_wide = dash.dashboard_html(report_viewed_from("fuzzy"))
+        for text in ("Relocated under exact", "Relocated under fuzzy", "+2"):
+            assert text in from_strict, text
+            assert text in from_wide, text
+
+    def test_it_describes_the_gained_leaks(self):
+        page = dash.dashboard_html(report_viewed_from("exact"))
+        assert "How much slack they took" in page
+        assert "one_size_up" in page
+        assert "Leak size to pipe size" in page
+        assert "How far they moved" in page
+
+    def test_a_clean_transition_does_not_carry_the_warning_note(self):
+        page = dash.dashboard_html(report_viewed_from("exact"))
+        assert "Read the two red figures first" not in page
+
+    def test_a_lost_relocation_is_called_out_on_the_page(self):
+        strict = pd.DataFrame([{
+            "LeakOID": 1, "LeakKey": "1", "DistanceFt": 5.0,
+            "DiameterMode": "exact", "DiameterMatch": "exact",
+            "MatchedPipeOID": 900, "MatchStatus": "Matched",
+            "LinkedLayer": "distribution", "LeakDiameter": 8.0,
+            "PipeDiameter": 8.0, "NoMatchReason": "", "SearchRadiusFt": 100.0,
+            "LeakMaterial": "Cast Iron", "PipeMaterial": "Cast Iron",
+            "FacilityType": "Main", "DateCheck": "ok", "LeakAddress": "",
+            "LeakDate": "", "RunUTC": "2026-09-16T04:12:55Z"}])
+        wide = strict.copy()
+        wide["DiameterMode"] = "fuzzy"
+        wide["MatchStatus"] = "NoMatch"
+        wide["DistanceFt"] = None
+        page = dash.dashboard_html(dr.build_report(strict, compare_audit=wide))
+        assert "Read the two red figures first" in page
+        assert "Worth knowing" in page
+
+    def test_no_other_output_means_no_panel(self, page):
+        assert "Against the other diameter rule" not in page
+
+    def test_identical_outputs_say_nothing_was_gained(self):
+        page = dash.dashboard_html(report_viewed_from("exact", gained=0))
+        assert "Nothing was gained by widening the diameter" in page
+
+    def test_it_states_what_the_two_outputs_were_paired_on(self):
+        page = dash.dashboard_html(report_viewed_from("exact"))
+        assert "LeakOID" in page
+        assert "is not unique in the supplemental data" in page
+
+
+class TestTheDiameterAgreementPanel:
+    def test_it_is_present(self, page):
+        assert "Diameter agreement" in page
+
+    def test_it_says_which_rows_rest_on_an_assumption(self, page):
+        assert "the diameter is an assumption rather than a fact" in page
