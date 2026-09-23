@@ -577,23 +577,34 @@ class TestTheDistanceDashboardRoute:
         path = tmp_path / "HistoricLeakRelocation.gpkg"
         gdf.to_file(str(path), layer="leak_relocation_audit", driver="GPKG")
         monkeypatch.setattr(server, "OUTPUT_GPKG", path)
-        monkeypatch.setattr(server, "_DASHBOARD", {"key": None, "html": None})
+        monkeypatch.setattr(server, "_DASHBOARD", {})
         return path
 
     def test_the_page_is_built_from_the_audit_layer(self, server, gpkg):
-        page = server.dashboard_page()
+        page = server.dashboard_page("exact")
         assert "How many moved further" in page
         assert 'id="thresh"' in page
         assert "window.REPORT" in page
 
-    def test_the_map_links_to_it(self, server, monkeypatch):
+    def test_the_map_links_to_it(self, server, gpkg, monkeypatch):
+        """The gpkg fixture is required: the link is only a link once that
+        output exists, and a command in a tooltip before then."""
         monkeypatch.setattr(server, "BOUNDS", {
             "west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
             "center_lat": 42.5, "center_lon": -71.5,
         })
         page = server.html_page()
-        assert 'href="/dashboard"' in page
+        # The link carries the rule, because there is an output per rule.
+        assert "/dashboard?mode=exact" in page
         assert "Distance dashboard" in page
+
+    def test_the_map_offers_the_dashboard_before_it_has_been_written(
+            self, server, tmp_path, monkeypatch):
+        monkeypatch.setattr(server, "OUTPUT_GPKG", tmp_path / "nothing.gpkg")
+        link = server.dash_link_html()
+        assert "href=" not in link
+        assert "python run.py" in link
+        assert "Distance dashboard" in link
 
     def test_the_link_is_its_own_control(self, server):
         """Not a line inside updateInfo. Adding to that function has twice left
@@ -605,25 +616,25 @@ class TestTheDistanceDashboardRoute:
 
     def test_it_is_cached_on_the_file_rather_than_rebuilt(self, server, gpkg):
         """Building it reads the whole audit layer. A reload should not."""
-        first = server.dashboard_page()
-        assert server._DASHBOARD["key"] is not None
-        server._DASHBOARD["html"] = "SENTINEL"
-        assert server.dashboard_page() == "SENTINEL"
+        first = server.dashboard_page("exact")
+        assert server._DASHBOARD["exact"]["key"][0] is not None
+        server._DASHBOARD["exact"]["html"] = "SENTINEL"
+        assert server.dashboard_page("exact") == "SENTINEL"
         assert first != "SENTINEL"
 
     def test_a_rewritten_geopackage_invalidates_the_cache(self, server, gpkg):
         """Re-running the workflow must not leave a stale dashboard behind."""
-        server.dashboard_page()
-        server._DASHBOARD["html"] = "SENTINEL"
+        server.dashboard_page("exact")
+        server._DASHBOARD["exact"]["html"] = "SENTINEL"
         os.utime(gpkg, (0, 0))
-        assert server.dashboard_page() != "SENTINEL"
+        assert server.dashboard_page("exact") != "SENTINEL"
 
     def test_a_missing_geopackage_says_what_to_run(self, server, tmp_path,
                                                    monkeypatch):
         monkeypatch.setattr(server, "OUTPUT_GPKG", tmp_path / "nothing.gpkg")
-        monkeypatch.setattr(server, "_DASHBOARD", {"key": None, "html": None})
-        page = server.dashboard_page()
-        assert "no output GeoPackage" in page
+        monkeypatch.setattr(server, "_DASHBOARD", {})
+        page = server.dashboard_page("exact")
+        assert "no exact-diameter output" in page
         assert "python run.py" in page
         assert "<!doctype html>" in page
 
@@ -634,8 +645,8 @@ class TestTheDistanceDashboardRoute:
         broken = tmp_path / "HistoricLeakRelocation.gpkg"
         broken.write_bytes(b"this is not a GeoPackage")
         monkeypatch.setattr(server, "OUTPUT_GPKG", broken)
-        monkeypatch.setattr(server, "_DASHBOARD", {"key": None, "html": None})
-        page = server.dashboard_page()
+        monkeypatch.setattr(server, "_DASHBOARD", {})
+        page = server.dashboard_page("exact")
         assert "Could not read" in page or "cannot be reported on" in page
 
     def test_a_geopackage_without_the_distance_column_is_explained(
@@ -649,7 +660,148 @@ class TestTheDistanceDashboardRoute:
         path = tmp_path / "HistoricLeakRelocation.gpkg"
         gdf.to_file(str(path), layer="leak_relocation_audit", driver="GPKG")
         monkeypatch.setattr(server, "OUTPUT_GPKG", path)
-        monkeypatch.setattr(server, "_DASHBOARD", {"key": None, "html": None})
-        page = server.dashboard_page()
+        monkeypatch.setattr(server, "_DASHBOARD", {})
+        page = server.dashboard_page("exact")
         assert "cannot be reported on" in page
         assert "DistanceFt" in page
+
+
+class TestSwitchingBetweenDiameterRules:
+    """Two outputs exist side by side, and the server shows either. This is the
+    transition: a link, not a re-run."""
+
+    @pytest.fixture
+    def server(self):
+        pytest.importorskip("geopandas")
+        sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+        import leaflet_bbox_server
+        return leaflet_bbox_server
+
+    def write_audit(self, path, rows):
+        import geopandas as gpd
+        import pandas as pd
+        from shapely.geometry import Point
+        base = {
+            "LeakAddress": "", "LeakMaterial": "Cast Iron",
+            "PipeMaterial": "Cast Iron", "LeakDiameter": 8.0,
+            "PipeDiameter": 8.0, "FacilityType": "Main",
+            "LinkedLayer": "distribution", "SearchRadiusFt": 100.0,
+            "MatchStatus": "Matched", "NoMatchReason": "", "DateCheck": "ok",
+            "LeakDate": "", "RunUTC": "2026-09-17T09:30:00Z",
+        }
+        frame = pd.DataFrame([{**base, **row} for row in rows])
+        gdf = gpd.GeoDataFrame(
+            frame, geometry=[Point(-71, 42)] * len(frame), crs="EPSG:4326")
+        gdf.to_file(str(path), layer="leak_relocation_audit", driver="GPKG")
+
+    @pytest.fixture
+    def both(self, tmp_path, server, monkeypatch):
+        """Both outputs on disk, the widened one with one extra relocation."""
+        exact = tmp_path / "HistoricLeakRelocation.gpkg"
+        fuzzy = tmp_path / "HistoricLeakRelocation_fuzzy_diameter.gpkg"
+        shared = [{"LeakOID": i, "LeakKey": str(i), "DistanceFt": 5.0 + i,
+                   "DiameterMatch": "exact", "MatchedPipeOID": 900 + i}
+                  for i in range(3)]
+        self.write_audit(exact, [
+            *[{**row, "DiameterMode": "exact"} for row in shared],
+            {"LeakOID": 9, "LeakKey": "9", "DistanceFt": None,
+             "MatchStatus": "NoMatch", "DiameterMode": "exact",
+             "DiameterMatch": "", "MatchedPipeOID": None,
+             "NoMatchReason": "no_pipe_within_max_radius"}])
+        self.write_audit(fuzzy, [
+            *[{**row, "DiameterMode": "fuzzy"} for row in shared],
+            {"LeakOID": 9, "LeakKey": "9", "DistanceFt": 420.0,
+             "DiameterMode": "fuzzy", "DiameterMatch": "one_size_up",
+             "LeakDiameter": 8.0, "PipeDiameter": 12.0,
+             "MatchedPipeOID": 700}])
+        monkeypatch.setattr(server, "OUTPUT_GPKG", exact)
+        monkeypatch.setattr(server, "_DASHBOARD", {})
+        return {"exact": exact, "fuzzy": fuzzy, "dir": tmp_path}
+
+    def test_each_rule_has_its_own_output_path(self, server, both):
+        assert server.dashboard_gpkg("exact") == both["exact"]
+        assert server.dashboard_gpkg("fuzzy") == both["fuzzy"]
+
+    def test_both_pages_render(self, server, both):
+        for mode in ("exact", "fuzzy"):
+            page = server.dashboard_page(mode)
+            assert 'id="thresh"' in page, mode
+            assert "window.REPORT" in page, mode
+
+    def test_each_page_names_its_own_rule(self, server, both):
+        assert "Exact diameter" in server.dashboard_page("exact")
+        assert "one nominal size up or down" in server.dashboard_page("fuzzy")
+
+    def test_each_page_links_to_the_other(self, server, both):
+        assert 'href="/dashboard?mode=fuzzy"' in server.dashboard_page("exact")
+        assert 'href="/dashboard?mode=exact"' in server.dashboard_page("fuzzy")
+
+    def test_the_comparison_reads_the_same_from_either_page(self, server, both):
+        """Whichever output is open, the widened rule gained the one leak. Read
+        from the widened side this once appeared as a loss."""
+        for mode in ("exact", "fuzzy"):
+            page = server.dashboard_page(mode)
+            assert "Against the other diameter rule" in page, mode
+            assert "+1" in page, mode
+            assert "Read the two red figures first" not in page, mode
+
+    def test_an_unwritten_rule_is_offered_with_the_command(self, server, both):
+        both["fuzzy"].unlink()
+        server._DASHBOARD.clear()
+        page = server.dashboard_page("exact")
+        assert "No fuzzy output yet" in page
+        assert 'href="/dashboard?mode=fuzzy"' not in page
+
+    def test_asking_for_an_unwritten_rule_says_how_to_write_it(self, server, both):
+        both["fuzzy"].unlink()
+        server._DASHBOARD.clear()
+        page = server.dashboard_page("fuzzy")
+        assert "python run.py --diameter fuzzy" in page
+        assert 'href="/dashboard?mode=exact"' in page
+
+    def test_an_unknown_rule_is_refused_clearly(self, server, both):
+        page = server.dashboard_page("wider")
+        assert "no diameter rule called" in page
+        assert "<code>exact</code>" in page
+
+    def test_writing_either_output_invalidates_the_cache(self, server, both):
+        """The page carries the comparison, so a change to either file changes
+        what it should say - not only to the one being displayed."""
+        server.dashboard_page("exact")
+        server._DASHBOARD["exact"]["html"] = "SENTINEL"
+        os.utime(both["fuzzy"], (0, 0))
+        assert server.dashboard_page("exact") != "SENTINEL"
+
+    def test_each_rule_is_cached_separately(self, server, both):
+        server.dashboard_page("exact")
+        server.dashboard_page("fuzzy")
+        assert set(server._DASHBOARD) == {"exact", "fuzzy"}
+        assert server._DASHBOARD["exact"]["html"] != server._DASHBOARD["fuzzy"]["html"]
+
+    def test_the_map_links_to_every_rule(self, server, both, monkeypatch):
+        monkeypatch.setattr(server, "BOUNDS", {
+            "west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
+            "center_lat": 42.5, "center_lon": -71.5,
+        })
+        page = server.html_page()
+        assert "/dashboard?mode=exact" in page
+        assert "/dashboard?mode=fuzzy" in page
+
+    def test_the_map_offers_a_rule_that_has_not_been_run(self, server, both,
+                                                         monkeypatch):
+        """The link is how someone finds out the widened output is available."""
+        both["fuzzy"].unlink()
+        link = server.dash_link_html()
+        assert "python run.py --diameter fuzzy" in link
+        assert 'href="/dashboard?mode=fuzzy"' not in link
+        assert 'href="/dashboard?mode=exact"' in link
+
+    def test_a_comparison_against_an_unreadable_output_is_skipped(
+            self, server, both):
+        """A half-written GeoPackage beside a good one must not take the good
+        page down with it."""
+        both["fuzzy"].write_bytes(b"not a GeoPackage")
+        server._DASHBOARD.clear()
+        page = server.dashboard_page("exact")
+        assert 'id="thresh"' in page
+        assert "Against the other diameter rule" not in page

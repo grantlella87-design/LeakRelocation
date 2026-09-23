@@ -451,3 +451,221 @@ class TestAgainstAProductionShapedFrame:
 
     def test_every_search_pass_bucket_is_accounted_for(self, report):
         assert sum(row["count"] for row in report["by_radius"]) == 20_000
+
+
+def mode_frame(rows, mode):
+    """An audit frame tagged with the diameter rule that produced it."""
+    return audit_frame([{**row, "DiameterMode": mode} for row in rows])
+
+
+def relocated(oid, distance, leak_d=8.0, pipe_d=8.0, tier="exact",
+              pipe_oid=None, layer="distribution"):
+    return {"LeakOID": oid, "LeakKey": str(oid), "DistanceFt": distance,
+            "LeakDiameter": leak_d, "PipeDiameter": pipe_d,
+            "DiameterMatch": tier, "MatchStatus": "Matched",
+            "LinkedLayer": layer,
+            "MatchedPipeOID": pipe_oid if pipe_oid is not None else 900000 + oid}
+
+
+def unrelocated(oid, reason="no_pipe_within_max_radius"):
+    return {"LeakOID": oid, "LeakKey": str(oid), "DistanceFt": None,
+            "LeakDiameter": 8.0, "PipeDiameter": None, "DiameterMatch": "",
+            "MatchStatus": "NoMatch", "NoMatchReason": reason,
+            "MatchedPipeOID": None}
+
+
+class TestWhichRuleWroteThisOutput:
+    def test_it_is_read_off_the_rows(self):
+        assert dr.diameter_mode_of(mode_frame([relocated(1, 5.0)], "fuzzy")) == "fuzzy"
+
+    def test_an_older_output_without_the_column_says_nothing(self):
+        frame = matched([5.0])
+        assert dr.diameter_mode_of(frame) is None
+
+    def test_a_mixed_output_is_reported_as_mixed(self):
+        """Two rules in one file should not read as either of them."""
+        frame = audit_frame([{**relocated(1, 5.0), "DiameterMode": "exact"},
+                             {**relocated(2, 5.0), "DiameterMode": "fuzzy"}])
+        assert dr.diameter_mode_of(frame) == "exact/fuzzy"
+
+
+class TestComparingTheTwoRules:
+    """The whole reason both outputs exist. What matters is the difference, and
+    that the difference reads the same whichever page the reader has open."""
+
+    def exact_and_fuzzy(self):
+        strict = mode_frame([relocated(1, 10.0), relocated(2, 20.0),
+                             unrelocated(3), unrelocated(4)], "exact")
+        wide = mode_frame([relocated(1, 10.0), relocated(2, 20.0),
+                           relocated(3, 300.0, 8.0, 12.0, "one_size_up"),
+                           unrelocated(4)], "fuzzy")
+        return strict, wide
+
+    def test_the_widened_rule_gains_the_leak_it_rescued(self):
+        strict, wide = self.exact_and_fuzzy()
+        result = dr.compare_outputs(strict, wide, "exact", "fuzzy")
+        assert result["usable"]
+        assert result["gained"] == 1
+        assert result["lost"] == 0
+        assert result["moved_to_another_pipe"] == 0
+        assert result["base_relocated"] == 2
+        assert result["other_relocated"] == 3
+
+    def test_the_gained_leaks_are_described(self):
+        strict, wide = self.exact_and_fuzzy()
+        result = dr.compare_outputs(strict, wide, "exact", "fuzzy")
+        assert result["gained_distance"]["count"] == 1
+        assert result["gained_distance"]["median"] == 300.0
+        assert result["gained_by_tier"] == [{"name": "one_size_up", "count": 1}]
+        assert result["gained_by_layer"] == [{"name": "distribution", "count": 1}]
+        assert result["gained_by_size_step"][0]["count"] == 1
+        assert "8" in result["gained_by_size_step"][0]["name"]
+        assert "12" in result["gained_by_size_step"][0]["name"]
+
+    def test_the_direction_does_not_depend_on_which_output_is_open(self):
+        """The bug this exists to stop: read from the fuzzy page, the 1,104
+        leaks the widened rule added were reported as Lost, which looks like an
+        alarm when nothing is wrong."""
+        strict, wide = self.exact_and_fuzzy()
+        from_strict = dr.build_report(strict, compare_audit=wide)["comparison"]
+        from_wide = dr.build_report(wide, compare_audit=strict)["comparison"]
+        for field in ("gained", "lost", "moved_to_another_pipe",
+                      "base_label", "other_label", "base_relocated",
+                      "other_relocated"):
+            assert from_strict[field] == from_wide[field], field
+        assert from_strict["gained"] == 1
+        assert from_strict["base_label"] == "exact"
+        assert from_strict["other_label"] == "fuzzy"
+
+    def test_neither_page_warns_when_nothing_was_lost(self):
+        strict, wide = self.exact_and_fuzzy()
+        for base, other in ((strict, wide), (wide, strict)):
+            report = dr.build_report(base, compare_audit=other)
+            assert not [text for text in report["warnings"] if "not under" in text]
+
+    def test_a_lost_relocation_is_warned_about(self):
+        """Widening should only add. If it removed one, that is the finding."""
+        strict = mode_frame([relocated(1, 10.0), relocated(2, 20.0)], "exact")
+        wide = mode_frame([relocated(1, 10.0), unrelocated(2)], "fuzzy")
+        report = dr.build_report(strict, compare_audit=wide)
+        assert report["comparison"]["lost"] == 1
+        assert any("never remove them" in text for text in report["warnings"])
+
+    def test_a_changed_pipe_is_counted_and_warned_about(self):
+        strict = mode_frame([relocated(1, 90.0, pipe_oid=111)], "exact")
+        wide = mode_frame([relocated(1, 9.0, 8.0, 6.0, "one_size_down",
+                                     pipe_oid=222)], "fuzzy")
+        report = dr.build_report(strict, compare_audit=wide)
+        comparison = report["comparison"]
+        assert comparison["moved_to_another_pipe"] == 1
+        assert comparison["unchanged"] == 0
+        assert comparison["moved_examples"][0]["from_pipe"] == 111
+        assert comparison["moved_examples"][0]["to_pipe"] == 222
+        assert any("should be zero" in text for text in report["warnings"])
+
+    def test_identical_outputs_gain_nothing(self):
+        strict = mode_frame([relocated(1, 10.0)], "exact")
+        result = dr.compare_outputs(strict, strict.copy(), "exact", "fuzzy")
+        assert result["gained"] == 0 and result["lost"] == 0
+        assert result["unchanged"] == 1
+
+    def test_it_pairs_on_the_leak_id_not_the_leak_number(self):
+        """25,733 rows of the supplemental file share a leak number, so joining
+        on the number would pair different leaks with each other."""
+        strict, wide = self.exact_and_fuzzy()
+        assert dr.compare_outputs(strict, wide)["key"] == "LeakOID"
+        assert dr.COMPARE_KEYS[0] == "LeakOID"
+
+    def test_it_falls_back_through_the_identity_columns(self):
+        strict, wide = self.exact_and_fuzzy()
+        strict = strict.drop(columns=["LeakOID"])
+        wide = wide.drop(columns=["LeakOID"])
+        assert dr.compare_outputs(strict, wide)["key"] == "LeakGlobalID" \
+            or dr.compare_outputs(strict, wide)["key"] == "LeakKey"
+
+    def test_outputs_with_no_common_identity_say_so(self):
+        strict, wide = self.exact_and_fuzzy()
+        stripped = wide.drop(columns=[c for c in dr.COMPARE_KEYS
+                                      if c in wide.columns])
+        result = dr.compare_outputs(strict, stripped)
+        assert result["usable"] is False
+        assert "cannot be paired" in result["why"]
+
+    def test_no_comparison_frame_means_no_comparison_block(self):
+        assert dr.build_report(matched([5.0]))["comparison"] is None
+
+    def test_an_empty_comparison_frame_is_not_compared_against(self):
+        """An output that exists but holds nothing would otherwise read as
+        every relocation having been lost."""
+        import pandas as pd
+        empty = pd.DataFrame(columns=list(matched([5.0]).columns))
+        report = dr.build_report(mode_frame([relocated(1, 5.0)], "exact"),
+                                 compare_audit=empty)
+        assert report["comparison"] is None
+
+    def test_the_comparison_survives_json(self):
+        import json
+        strict, wide = self.exact_and_fuzzy()
+        json.dumps(dr.build_report(strict, compare_audit=wide), allow_nan=False)
+
+
+class TestTheDiameterBreakdown:
+    def test_the_tiers_are_counted(self):
+        frame = mode_frame([
+            relocated(1, 5.0), relocated(2, 6.0),
+            relocated(3, 40.0, 8.0, 12.0, "one_size_up"),
+            relocated(4, 50.0, 8.0, 6.0, "one_size_down"),
+        ], "fuzzy")
+        counts = {row["name"]: row["count"]
+                  for row in dr.build_report(frame)["diameter_match"]}
+        assert counts == {"exact": 2, "one_size_up": 1, "one_size_down": 1}
+
+    def test_the_tiers_carry_distance_statistics(self):
+        frame = mode_frame([
+            relocated(1, 5.0),
+            relocated(2, 100.0, 8.0, 12.0, "one_size_up"),
+            relocated(3, 200.0, 8.0, 12.0, "one_size_up"),
+        ], "fuzzy")
+        rows = {row["name"]: row for row in dr.build_report(frame)["by_diameter_match"]}
+        assert rows["one_size_up"]["count"] == 2
+        assert rows["one_size_up"]["median"] == 150.0
+
+    def test_an_older_output_has_an_empty_breakdown(self):
+        assert dr.build_report(matched([5.0]))["diameter_match"] == []
+
+
+class TestPipeIdentityAcrossOutputs:
+    """A pipe OID from an output whose column holds a null arrives as a float,
+    and one from a column of whole numbers arrives as an int. Comparing their
+    text forms reported every unchanged relocation as having moved to another
+    pipe - 90,987 false findings on a real pair of outputs, and the one figure
+    on the page that is meant to mean something is wrong."""
+
+    def test_the_same_pipe_across_dtypes_is_the_same_pipe(self):
+        assert dr.same_identity(900.0, 900) is True
+        assert dr.same_identity(900, 900.0) is True
+
+    def test_different_pipes_are_different(self):
+        assert dr.same_identity(900.0, 901) is False
+
+    def test_text_identities_still_compare(self):
+        assert dr.same_identity("{ABC}", "{ABC}") is True
+        assert dr.same_identity("{ABC}", "{DEF}") is False
+
+    def test_a_null_is_not_a_pipe(self):
+        assert dr.same_identity(None, 900) is False
+        assert dr.same_identity(None, None) is True
+
+    def test_an_unchanged_pair_reads_as_unchanged_across_dtypes(self):
+        """The end-to-end form: the strict output carries unmatched rows, which
+        makes its MatchedPipeOID column a float column."""
+        strict = mode_frame([relocated(1, 5.0, pipe_oid=900), unrelocated(2)],
+                            "exact")
+        wide = mode_frame([relocated(1, 5.0, pipe_oid=900),
+                           relocated(2, 60.0, 8.0, 12.0, "one_size_up",
+                                     pipe_oid=700)], "fuzzy")
+        assert strict["MatchedPipeOID"].dtype != wide["MatchedPipeOID"].dtype
+        result = dr.compare_outputs(strict, wide, "exact", "fuzzy")
+        assert result["moved_to_another_pipe"] == 0
+        assert result["unchanged"] == 1
+        assert result["gained"] == 1

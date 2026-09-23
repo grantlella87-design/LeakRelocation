@@ -113,6 +113,25 @@ tbody tr:hover{background:var(--line-soft)}
   grid-template-columns:repeat(auto-fit,minmax(min(430px,100%),1fr));}
 .pill{display:inline-block; padding:1px 7px; border-radius:999px; font-size:11px; border:1px solid var(--line); color:var(--muted)}
 .pill.hot{background:var(--over-soft); border-color:var(--over); color:var(--over)}
+.modebar{display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  background:var(--panel); border:1px solid var(--line); border-radius:999px;
+  padding:6px 8px 6px 14px; margin-bottom:16px; font-size:13px}
+.modebar .what{color:var(--muted)}
+.modebar .now{font-weight:650}
+.modebar a, .modebar span.off{
+  border:1px solid var(--line); border-radius:999px; padding:4px 11px;
+  font-size:12px; text-decoration:none; color:var(--muted)}
+.modebar a:hover{color:var(--ink); border-color:var(--muted)}
+.modebar span.off{opacity:.55}
+.delta{display:grid; gap:12px; margin:4px 0 16px;
+  grid-template-columns:repeat(auto-fit,minmax(min(160px,100%),1fr))}
+.delta div{border:1px solid var(--line); border-radius:9px; padding:12px 14px;
+  display:flex; flex-direction:column}
+.delta .v{margin-top:auto}
+.delta .k{color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em}
+.delta .v{font-size:22px; font-weight:650; padding-top:5px; font-variant-numeric:tabular-nums}
+.delta .gain .v{color:var(--under)}
+.delta .bad .v{color:var(--over)}
 .legend{display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--muted)}
 .legend i{width:10px; height:10px; border-radius:2px; display:inline-block; margin-right:5px; vertical-align:-1px}
 @media (max-width:640px){
@@ -512,7 +531,137 @@ def furthest_table(rows):
             f"{''.join(body)}</tbody></table></div>")
 
 
-def dashboard_html(report, title="Leak relocation distance"):
+# What each diameter rule is, in one line, for the mode bar.
+MODE_LABELS = {
+    "exact": ("Exact diameter",
+              "the leak's diameter equals the pipe's"),
+    "fuzzy": ("Diameter within one nominal size",
+              "the pipe may be one nominal size up or down"),
+}
+
+
+def mode_bar(report, switch_links=None):
+    """Which rule produced this output, and a way to the other one.
+
+    This is the transition: two outputs exist side by side and the bar says
+    which one is on screen. Without it a reader has only the filename to go on,
+    and the two pages are otherwise identical.
+    """
+    mode = report.get("diameter_mode")
+    if not mode and not switch_links:
+        return ""
+    title, gloss = MODE_LABELS.get(
+        mode, (mode or "Unrecorded diameter rule", ""))
+    parts = ['<span class="what">Diameter rule</span>'
+             f'<span class="now">{escape(title)}</span>']
+    if gloss:
+        parts.append(f'<span class="what">&mdash; {escape(gloss)}</span>')
+    for name, href in (switch_links or {}).items():
+        other_title = MODE_LABELS.get(name, (name, ""))[0]
+        if href:
+            parts.append(f'<a href="{escape(href)}">Switch to '
+                         f'{escape(other_title.lower())}</a>')
+        else:
+            parts.append(f'<span class="off" title="That output has not been '
+                         f'written yet">No {escape(name)} output yet</span>')
+    return f'<div class="modebar">{"".join(parts)}</div>'
+
+
+def delta_tile(key, value, kind=""):
+    return (f'<div class="{kind}"><div class="k">{escape(key)}</div>'
+            f'<div class="v">{value}</div></div>')
+
+
+def comparison_panel(report):
+    """The difference between the two diameter rules, per leak.
+
+    The point of having both outputs is not two sets of numbers but the change
+    between them, so this leads with what the widened rule added and states
+    plainly whether it took anything away.
+    """
+    comparison = report.get("comparison")
+    if not comparison:
+        return ""
+    if not comparison.get("usable"):
+        return ('<div class="panel"><h2>Against the other diameter rule</h2>'
+                f'<p class="note">{escape(comparison.get("why", ""))}</p></div>')
+
+    gained = comparison["gained"]
+    base, other = comparison["base_label"], comparison["other_label"]
+    distance = comparison["gained_distance"]
+    tiles = "".join([
+        delta_tile(f"Relocated under {base}", number(comparison["base_relocated"])),
+        delta_tile(f"Relocated under {other}", number(comparison["other_relocated"])),
+        delta_tile("Gained", f"+{number(gained)}", "gain"),
+        delta_tile("Lost", number(comparison["lost"]),
+                   "bad" if comparison["lost"] else ""),
+        delta_tile("Moved to another pipe",
+                   number(comparison["moved_to_another_pipe"]),
+                   "bad" if comparison["moved_to_another_pipe"] else ""),
+    ])
+
+    if gained:
+        # Built outside the f-string: a dict literal inside an f-string
+        # expression needs no brace doubling, and doubling it makes a set
+        # containing a dict.
+        gained_row = [{"name": "Gained relocations", **distance}]
+        body = f"""
+      <p class="note" style="margin:0 0 14px">
+        The {number(gained)} leaks below relocated under <b>{escape(other)}</b>
+        and not under <b>{escape(base)}</b>. They are the whole reason to widen
+        the rule, and they are also the rows where the diameter is an assumption
+        rather than a fact, so they are worth reviewing as a set.
+      </p>
+      <div class="grid2">
+        <div>
+          <h2>How much slack they took</h2>
+          {count_table(comparison["gained_by_tier"], "Diameter match")}
+        </div>
+        <div>
+          <h2>Which pipe layer found them</h2>
+          {count_table(comparison["gained_by_layer"], "Matched to")}
+        </div>
+        <div>
+          <h2>Leak size to pipe size</h2>
+          {count_table(comparison["gained_by_size_step"], "Step")}
+        </div>
+        <div>
+          <h2>How far they moved</h2>
+          {stats_table(gained_row, "Set")}
+          <p class="note">
+            Against a median of {number(report["distance"]["median"])} ft across
+            every relocation in this output.
+          </p>
+        </div>
+      </div>"""
+    else:
+        body = ('<p class="note">The two rules produced the same set of '
+                'relocations. Nothing was gained by widening the diameter.</p>')
+
+    lost_note = ""
+    if comparison["lost"] or comparison["moved_to_another_pipe"]:
+        lost_note = """
+      <p class="note">
+        <b>Read the two red figures first.</b> Widening the diameter rule should
+        only ever add relocations: an exact diameter outranks an adjacent one at
+        any distance, so every leak the strict run placed should keep the same
+        pipe. A non-zero Lost or Moved means that did not hold, and the cause is
+        worth finding before either output is used.
+      </p>"""
+
+    return f"""  <div class="panel">
+    <h2>Against the other diameter rule</h2>
+    <div class="delta">{tiles}</div>{lost_note}
+    {body}
+    <p class="note">Paired on <code>{escape(comparison["key"])}</code>. The leak
+      number is not unique in the supplemental data, so the two outputs are
+      joined on the leak's own id rather than on its number.</p>
+  </div>
+
+"""
+
+
+def dashboard_html(report, title="Leak relocation distance", switch_links=None):
     """The whole page, as one string."""
     totals = report["totals"]
     distance = report["distance"]
@@ -570,6 +719,7 @@ def dashboard_html(report, title="Leak relocation distance"):
     {escape(report["generated_utc"])}<br><code>{source}</code>
   </p>
 
+  {mode_bar(report, switch_links)}
   {warnings}
 
   <div class="tiles">
@@ -648,7 +798,7 @@ def dashboard_html(report, title="Leak relocation distance"):
     </p>
   </div>
 
-  <div class="grid2">
+{comparison_panel(report)}  <div class="grid2">
     <div class="panel">
       <h2>Fixed thresholds</h2>
       {threshold_table(report["thresholds"])}
@@ -696,6 +846,16 @@ def dashboard_html(report, title="Leak relocation distance"):
     <div class="panel">
       <h2>Material agreement</h2>
       {agreement_html}
+    </div>
+
+    <div class="panel">
+      <h2>Diameter agreement</h2>
+      {stats_table(report["by_diameter_match"], "Diameter match")}
+      <p class="note">
+        <code>exact</code> is the leak's own diameter. <code>one_size_up</code>
+        and <code>one_size_down</code> exist only under the widened rule, and on
+        those rows the diameter is an assumption rather than a fact.
+      </p>
     </div>
 
     <div class="panel">
