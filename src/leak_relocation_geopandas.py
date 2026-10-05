@@ -245,6 +245,8 @@ MODIFIED_FIELD_CANDIDATES = ["LASTUPDATE"]
 
 # LMSLEAKNUMBER is the leak key; LEAKNUMBER also exists on layer 206 and is
 # kept as the fallback.
+# The leak number a person uses. LMSLEAKNUMBER is layer 206's; the Maximo
+# query aliases its own to LEAKNUMBER, so one list serves both leak sources.
 LEAK_KEY_CANDIDATES = ["LMSLEAKNUMBER", "LEAKNUMBER"]
 
 # The street address of the leak, read out of layer 206's metadata: ADDRESS,
@@ -307,7 +309,9 @@ PIPE_PRESSURE_CANDIDATES = ["operatingpressure", "maopdesign"]
 # The retired layer lives on a different service, so its own field names are
 # resolved from its metadata at run time and the run stops if they are not there
 # - see resolve_pipe_date_fields.
-LEAK_DATE_CANDIDATES = ["REVISEDLEAKDATE"]
+# The date the relocation window is measured from. REVISEDLEAKDATE on layer
+# 206, MAXIMOLEAKDATE from the SQL query.
+LEAK_DATE_CANDIDATES = ["REVISEDLEAKDATE", "MAXIMOLEAKDATE"]
 PIPE_CREATED_CANDIDATES = ["CREATIONDATE"]
 PIPE_RETIRED_CANDIDATES = ["dateretired"]
 
@@ -320,7 +324,11 @@ LAYER_DATE_RULES = {
 
 # The pipe layers spell it GLOBALID and layer 206 spells it GlobalID. One entry
 # covers both: the resolver ignores case and returns the layer's own spelling.
-GLOBALID_CANDIDATES = ["GLOBALID"]
+# The leak's own unique id, and the key its attributes are looked up by. On
+# layer 206 that is the GlobalID; the Maximo query aliases its leak id to
+# MAXIMOLEAKID. Order matters only in that the first present wins, and no frame
+# carries both.
+GLOBALID_CANDIDATES = ["GLOBALID", "MAXIMOLEAKID"]
 OBJECTID_CANDIDATES = ["OBJECTID"]
 
 # Lower case on all three layers.
@@ -906,14 +914,40 @@ def query_count(session, layer_url, where_clause, layer_name):
     return int(count)
 
 
+def looks_numeric(value):
+    """Whether this value is a number, or a string that is nothing but one.
+
+    The distinction matters because the two leak sources deliver dates
+    differently. ArcGIS returns epoch milliseconds as a number; a SQL query
+    returns a datetime or an ISO string. parse_number takes the *first* number
+    out of anything, so "2019-04-02" came back as 2019 - which, read as epoch
+    milliseconds, is two seconds past midnight on 1 January 1970. Every Maximo
+    leak would then have failed the pipe-life check for being older than every
+    pipe, and nothing would have said why.
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return True
+    text = str(value).strip()
+    if not text:
+        return False
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True
+
+
 def date_value_to_epoch_ms(value):
     if value is None:
         return None
     if isinstance(value, float) and math.isnan(value):
         return None
-    parsed_number = parse_number(value)
-    if parsed_number is not None:
-        return int(parsed_number)
+    if looks_numeric(value):
+        parsed_number = parse_number(value)
+        if parsed_number is not None:
+            return int(parsed_number)
     try:
         parsed = pd.to_datetime(value, utc=True)
         if pd.isna(parsed):
@@ -1998,6 +2032,17 @@ def pipe_lookup(pipe_sources):
     return lookup
 
 
+def empty_or_frame(rows, crs):
+    """A GeoDataFrame from these rows, or an empty one that still has geometry.
+
+    gpd.GeoDataFrame([], geometry="geometry") raises, because there is no such
+    column to promote. An empty frame has to be built the other way round.
+    """
+    if not rows:
+        return gpd.GeoDataFrame([], geometry=[], crs=crs)
+    return gpd.GeoDataFrame(rows, geometry="geometry", crs=crs)
+
+
 def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
     step("Writing GeoPackage outputs")
     task_lookup = {task["leak_oid"]: task for task in leak_tasks}
@@ -2136,8 +2181,21 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
     if os.path.exists(OUTPUT_GPKG):
         os.remove(OUTPUT_GPKG)
         log(f"Deleted old GeoPackage: {OUTPUT_GPKG}")
-    relocated_gdf = gpd.GeoDataFrame(point_rows, geometry="geometry", crs=TARGET_CRS)
-    lines_gdf = gpd.GeoDataFrame(line_rows, geometry="geometry", crs=TARGET_CRS)
+    # A run that matched nothing still has to write its outputs and say so.
+    # Building a GeoDataFrame from an empty list and naming a geometry column
+    # that is not there raises "Unknown column geometry", so the whole run died
+    # at the last step with a message about a column rather than the news that
+    # nothing matched. That is the shape of a first run against a new leak
+    # source whose coordinates are being read in the wrong CRS: every leak lands
+    # somewhere there are no pipes, nothing matches, and the error says nothing
+    # about it. The audit layer below already handled this; these two did not.
+    relocated_gdf = empty_or_frame(point_rows, TARGET_CRS)
+    lines_gdf = empty_or_frame(line_rows, TARGET_CRS)
+    if not point_rows:
+        warn("No leak was relocated. The outputs are written and empty.\n"
+             "  Check that the leaks and the pipes are in the same part of the "
+             "world: a leak layer read in the wrong CRS lands where there are "
+             "no pipes and matches nothing.")
     audit_df = pd.DataFrame(audit_rows)
     if len(audit_df):
         audit_gdf = gpd.GeoDataFrame(
@@ -2158,10 +2216,11 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
     return counters
 
 
-def main():
+def banner(leak_source, output_gpkg):
+    """What this run is about to do, before it does any of it."""
     step("Starting non-ArcPy GeoPandas leak relocation")
-    log(f"Supplemental CSV: {SUPPLEMENTAL_CSV}")
-    log(f"Output GeoPackage: {OUTPUT_GPKG}")
+    log(f"Leak source: {leak_source}")
+    log(f"Output GeoPackage: {output_gpkg}")
     log("Analysis CRS: native per-layer (no reprojection before matching)")
     log(f"MA layer filter: {WHERE_MA}")
     log(f"Max radius ft: {MAX_RADIUS_FT}")
@@ -2174,6 +2233,107 @@ def main():
             f"{', '.join(format(size, 'g') for size in NOMINAL_DIAMETERS_IN)}")
         log(f"  Exact diameters still win over adjacent ones: "
             f"PREFER_EXACT_DIAMETER={config.PREFER_EXACT_DIAMETER}")
+
+
+def load_pipe_layers(session, with_leaks=None):
+    """The pipe layers, and optionally the historic leak layer alongside them.
+
+    `with_leaks` names the leak layer to download in the same parallel pass.
+    A leak set that does not come from the service - the Maximo leaks come from
+    SQL - passes None and only the pipes are fetched.
+    """
+    layer_specs = [
+        ("distribution pipes", DISTRIBUTION_PIPE_URL),
+        ("service pipes", SERVICE_PIPE_URL),
+    ]
+    if with_leaks:
+        layer_specs.insert(0, with_leaks)
+
+    if config.PARALLEL_LAYER_LOAD:
+        # Independent reads. Fetch the token once up front so the workers do
+        # not race into three interactive sign-ins.
+        get_arcgis_token(session)
+        with futures.ThreadPoolExecutor(max_workers=len(layer_specs)) as pool:
+            submitted = {
+                name: pool.submit(query_arcgis_layer, session, url, WHERE_MA, name)
+                for name, url in layer_specs
+            }
+            return {name: future.result() for name, future in submitted.items()}
+    return {
+        name: query_arcgis_layer(session, url, WHERE_MA, name)
+        for name, url in layer_specs
+    }
+
+
+def relocate(session, leaks, supplemental, distribution, service,
+             output_gpkg=None, leak_label="leaks"):
+    """Match a set of leaks to the pipes and write the outputs.
+
+    Everything after the leaks have been obtained, and the whole of what the
+    two leak sources share. The historic (LMS) leaks arrive from layer 206 and
+    the enterprise (Maximo) leaks from a SQL query, but by this point both are
+    a GeoDataFrame plus a mapping of leak key -> material, diameter, pressure
+    and facility type, and nothing below here can tell them apart.
+
+    `output_gpkg` keeps the two leak sets in separate files. Writing both to one
+    would mean the second run silently replacing the first.
+    """
+    previous_output = OUTPUT_GPKG
+    if output_gpkg:
+        globals()["OUTPUT_GPKG"] = str(output_gpkg)
+    try:
+        with timed("normalize CRS"):
+            leaks, distribution, service, ANALYSIS_CRS = (
+                normalize_loaded_layers_to_analysis_crs(
+                    session, leaks, distribution, service)
+            )
+        globals()["TARGET_CRS"] = ANALYSIS_CRS
+
+        detail("CRS sanity check after normalization:")
+        for label, gdf in [(leak_label, leaks),
+                           ("distribution pipes", distribution),
+                           ("service pipes", service)]:
+            detail(f"  {label}: CRS={gdf.crs} bounds={list(gdf.total_bounds)}")
+
+        with timed("decode pipe materials"):
+            distribution = decode_pipe_materials(
+                session, distribution, DISTRIBUTION_PIPE_URL, "distribution pipes")
+            service = decode_pipe_materials(
+                session, service, SERVICE_PIPE_URL, "service pipes")
+
+        retired = None
+        if USE_RETIRED_PIPE_LAYER:
+            with timed("load retired pipes"):
+                retired = load_retired_pipes(session)
+
+        with timed("prepare leaks"):
+            leak_tasks, initial_counters = prepare_leaks(leaks, supplemental)
+        with timed("build pipe indexes"):
+            pipe_sources = {
+                "distribution": prepare_pipes(distribution, "distribution"),
+                "service": prepare_pipes(service, "service"),
+            }
+            if retired is not None and len(retired):
+                pipe_sources["retired"] = prepare_pipes(retired, "retired")
+        with timed("match leaks to pipes"):
+            match_results = run_matching(leak_tasks, pipe_sources)
+        with timed("write outputs"):
+            counters = write_outputs(
+                leak_tasks, match_results, pipe_sources, initial_counters)
+
+        step("Finished")
+        for name in sorted(counters):
+            log(f"{name}: {counters[name]:,}")
+        log(f"GeoPackage: {OUTPUT_GPKG}")
+        report_timings()
+        return counters
+    finally:
+        globals()["OUTPUT_GPKG"] = previous_output
+
+
+def main():
+    banner(f"historic (LMS) leaks, layer 206 - {HIST_LEAK_URL}", OUTPUT_GPKG)
+    log(f"Supplemental CSV: {SUPPLEMENTAL_CSV}")
     ensure_output_folder()
 
     with timed("supplemental CSV"):
@@ -2181,74 +2341,18 @@ def main():
 
     session = make_session()
 
-    layer_specs = [
-        ("historic leaks", HIST_LEAK_URL),
-        ("distribution pipes", DISTRIBUTION_PIPE_URL),
-        ("service pipes", SERVICE_PIPE_URL),
-    ]
-
     with timed("load layers"):
-        if config.PARALLEL_LAYER_LOAD:
-            # Independent reads. Fetch the token once up front so the workers do
-            # not race into three interactive sign-ins.
-            get_arcgis_token(session)
-            with futures.ThreadPoolExecutor(max_workers=len(layer_specs)) as pool:
-                submitted = {
-                    name: pool.submit(query_arcgis_layer, session, url, WHERE_MA, name)
-                    for name, url in layer_specs
-                }
-                loaded = {name: future.result() for name, future in submitted.items()}
-        else:
-            loaded = {
-                name: query_arcgis_layer(session, url, WHERE_MA, name)
-                for name, url in layer_specs
-            }
+        loaded = load_pipe_layers(
+            session, with_leaks=("historic leaks", HIST_LEAK_URL))
 
-    leaks = loaded["historic leaks"]
-    distribution = loaded["distribution pipes"]
-    service = loaded["service pipes"]
-
-    with timed("normalize CRS"):
-        leaks, distribution, service, ANALYSIS_CRS = (
-            normalize_loaded_layers_to_analysis_crs(session, leaks, distribution, service)
-        )
-    globals()["TARGET_CRS"] = ANALYSIS_CRS
-
-    detail("CRS sanity check after normalization:")
-    for label, gdf in [("historic leaks", leaks), ("distribution pipes", distribution),
-                       ("service pipes", service)]:
-        detail(f"  {label}: CRS={gdf.crs} bounds={list(gdf.total_bounds)}")
-
-    with timed("decode pipe materials"):
-        distribution = decode_pipe_materials(
-            session, distribution, DISTRIBUTION_PIPE_URL, "distribution pipes")
-        service = decode_pipe_materials(
-            session, service, SERVICE_PIPE_URL, "service pipes")
-
-    retired = None
-    if USE_RETIRED_PIPE_LAYER:
-        with timed("load retired pipes"):
-            retired = load_retired_pipes(session)
-
-    with timed("prepare leaks"):
-        leak_tasks, initial_counters = prepare_leaks(leaks, supplemental)
-    with timed("build pipe indexes"):
-        pipe_sources = {
-            "distribution": prepare_pipes(distribution, "distribution"),
-            "service": prepare_pipes(service, "service"),
-        }
-        if retired is not None and len(retired):
-            pipe_sources["retired"] = prepare_pipes(retired, "retired")
-    with timed("match leaks to pipes"):
-        match_results = run_matching(leak_tasks, pipe_sources)
-    with timed("write outputs"):
-        counters = write_outputs(leak_tasks, match_results, pipe_sources, initial_counters)
-
-    step("Finished")
-    for name in sorted(counters):
-        log(f"{name}: {counters[name]:,}")
-    log(f"GeoPackage: {OUTPUT_GPKG}")
-    report_timings()
+    return relocate(
+        session,
+        loaded["historic leaks"],
+        supplemental,
+        loaded["distribution pipes"],
+        loaded["service pipes"],
+        leak_label="historic leaks",
+    )
 
 
 if __name__ == "__main__":

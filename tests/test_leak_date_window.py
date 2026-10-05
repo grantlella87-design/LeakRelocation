@@ -114,7 +114,10 @@ class TestTheFieldsAreRequestedAndPinned:
     tests/test_dnv_service_metadata.py, and requested here."""
 
     def test_the_leak_date_field(self, workflow):
-        assert workflow.LEAK_DATE_CANDIDATES == ["REVISEDLEAKDATE"]
+        """One name per leak source, strict order: layer 206's first, the
+        Maximo query's second. No frame carries both, so the order only decides
+        which is looked for first."""
+        assert workflow.LEAK_DATE_CANDIDATES == ["REVISEDLEAKDATE", "MAXIMOLEAKDATE"]
 
     def test_the_pipe_life_fields(self, workflow):
         assert workflow.PIPE_CREATED_CANDIDATES == ["CREATIONDATE"]
@@ -220,3 +223,61 @@ class TestTheAuditDateColumns:
 
     def test_an_unrepresentable_value_is_blank(self, workflow):
         assert workflow.epoch_ms_to_iso(1e30) == ""
+
+
+class TestADateIsReadWhateverShapeItArrivesIn:
+    """The two leak sources deliver dates differently and both have to work.
+
+    ArcGIS returns epoch milliseconds as a number. A SQL query returns a
+    datetime or an ISO string. parse_number takes the *first* number out of
+    anything, so "2019-04-02" came back as 2019 - which read as epoch
+    milliseconds is two seconds past midnight on 1 January 1970. Every Maximo
+    leak would then have been older than every pipe, failed the in-service
+    check, and nothing would have said why.
+    """
+
+    def test_epoch_milliseconds_still_read_as_epoch_milliseconds(self, workflow):
+        for value in (1_156_392_000_000.0, 1_156_392_000_000, "1156392000000"):
+            assert workflow.date_value_to_epoch_ms(value) == 1_156_392_000_000, value
+
+    @pytest.mark.parametrize("value,iso", [
+        ("2019-04-02", "2019-04-02"),
+        ("2019-04-02 14:30:00", "2019-04-02"),
+        ("2019-04-02T14:30:00Z", "2019-04-02"),
+    ])
+    def test_a_date_string_is_read_as_a_date(self, workflow, value, iso):
+        assert workflow.epoch_ms_to_iso(
+            workflow.date_value_to_epoch_ms(value)) == iso
+
+    def test_a_datetime_object_is_read_as_a_date(self, workflow):
+        import datetime as dt
+        for value in (dt.datetime(2019, 4, 2), dt.date(2019, 4, 2)):
+            assert workflow.epoch_ms_to_iso(
+                workflow.date_value_to_epoch_ms(value)) == "2019-04-02", value
+
+    def test_a_date_string_is_never_read_as_its_year(self, workflow):
+        """The specific failure: 2019 milliseconds is 1 January 1970."""
+        assert workflow.date_value_to_epoch_ms("2019-04-02") != 2019
+        assert workflow.epoch_ms_to_iso(2019) == "1970-01-01"
+
+    @pytest.mark.parametrize("value", [None, "", "   ", "not a date", float("nan")])
+    def test_a_non_date_is_no_date_rather_than_a_wrong_one(self, workflow, value):
+        assert workflow.date_value_to_epoch_ms(value) is None
+
+    def test_what_counts_as_numeric(self, workflow):
+        assert workflow.looks_numeric(5) is True
+        assert workflow.looks_numeric(5.0) is True
+        assert workflow.looks_numeric(" 1156392000000 ") is True
+        assert workflow.looks_numeric("2019-04-02") is False
+        assert workflow.looks_numeric("") is False
+        assert workflow.looks_numeric(True) is False, "a bool is not a timestamp"
+
+    def test_a_string_date_passes_the_pipe_life_check_it_should(self, workflow):
+        """End to end: a 2019 leak against a pipe recorded in 2000 is in
+        service. Read as the year 2019 it would have been rejected."""
+        leak_ms = workflow.date_value_to_epoch_ms("2019-04-02")
+        pipe_ms = workflow.date_value_to_epoch_ms(946_684_800_000.0)  # 2000-01-01
+        allowed, reason = date_rule_result(
+            IN_SERVICE_AT_LEAK, leak_ms, pipe_ms, None)
+        assert allowed is True
+        assert reason == "ok"

@@ -182,6 +182,37 @@ def output_gpkg_for(mode=None, base=None):
         return path
     return path.with_name(f"{path.stem}_{chosen}_diameter{path.suffix}")
 
+# --- Enterprise (Maximo) leaks ------------------------------------------------
+#
+# A second leak source. The historic (LMS) leaks come from ArcGIS layer 206 and
+# are supplemented from a committed CSV; these come from one SQL query that
+# returns their material and diameter with them.
+
+# The connection string is read from this variable and never written anywhere.
+# It carries credentials, so it is not a config value, not a file, and not a
+# command-line argument - all three persist.
+MAXIMO_DSN_ENV = "LEAKRELOCATION_MAXIMO_DSN"
+
+# The query itself lives in a file so a DBA can read and edit it without
+# touching Python. The committed template documents the column aliases the
+# project requires; point this at your own copy rather than editing it in place
+# if the real query is not something that should be committed.
+MAXIMO_QUERY_ENV = "LEAKRELOCATION_MAXIMO_QUERY"
+MAXIMO_QUERY_FILE = _path_from_env(
+    MAXIMO_QUERY_ENV, INPUT_DIR / "maximo_leaks.sql")
+
+# What the X and Y columns are in. Not a guess: reading a projected easting as
+# a longitude puts every leak in the wrong hemisphere, and the run would still
+# finish and still write a GeoPackage. EPSG:4326 is lon/lat; the MA state plane
+# in US feet is EPSG:2249.
+MAXIMO_LEAK_CRS = os.environ.get(
+    "LEAKRELOCATION_MAXIMO_CRS", "EPSG:4326").strip() or "EPSG:4326"
+
+# Its own output, so a Maximo run never overwrites the historic one.
+MAXIMO_OUTPUT_GPKG = _path_from_env(
+    "LEAKRELOCATION_MAXIMO_OUTPUT_GPKG",
+    OUTPUT_DIR / "MaximoLeakRelocation.gpkg")
+
 REQUEST_PAGE_SIZE = _int_from_env("LEAKRELOCATION_PAGE_SIZE", 2000)
 REQUEST_TIMEOUT_SECONDS = _int_from_env("LEAKRELOCATION_TIMEOUT", 120)
 # A layer download is hundreds of requests over many minutes through a

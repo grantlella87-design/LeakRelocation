@@ -184,14 +184,39 @@ class TestFieldNamesUsedByTheWorkflow:
         "JURISDICTION_CANDIDATES",
     ])
     def test_no_dead_spellings(self, workflow, distribution, service, leaks, attribute):
-        """Every candidate exists on at least one of the three layers.
+        """Every candidate is a real column somewhere.
 
         These lists used to carry 34 names that exist nowhere on this service,
         including a misspelled "LMSLEAKSUMBER".
+
+        "Somewhere" is now two places. The lists serve both leak sources: the
+        historic leaks come from these layers, and the enterprise (Maximo)
+        leaks come from a SQL query whose columns this project also names. A
+        candidate that is neither is still dead.
         """
         available = set(names(distribution)) | set(names(service)) | set(names(leaks))
+        # The column names maximo_sql.leak_records puts on its frame.
+        available |= {"MAXIMOLEAKID", "MAXIMOLEAKDATE", "LEAKNUMBER", "OBJECTID",
+                      "ADDRESS", "CITY", "NEARESTXSTREET"}
         dead = [name for name in getattr(workflow, attribute) if name not in available]
-        assert dead == [], f"{attribute} carries names no layer has: {dead}"
+        assert dead == [], f"{attribute} carries names nothing provides: {dead}"
+
+    def test_the_maximo_names_are_the_ones_the_reader_writes(self, workflow):
+        """Guards the allowance above: the extra names are not a free list, they
+        are the columns maximo_sql actually puts on its frame. If the reader
+        renames one, this fails rather than the candidate quietly going dead."""
+        from leakrelocation import maximo_sql
+        records, _, _ = maximo_sql.leak_records([{
+            maximo_sql.LEAK_ID: "WO-1", maximo_sql.LEAK_X: -71.0,
+            maximo_sql.LEAK_Y: 42.0, maximo_sql.LEAK_MATERIAL: "Cast Iron",
+            maximo_sql.LEAK_DIAMETER: 8.0,
+        }])
+        produced = set(records[0])
+        for name in ("MAXIMOLEAKID", "MAXIMOLEAKDATE", "LEAKNUMBER", "OBJECTID"):
+            assert name in produced, name
+        assert "MAXIMOLEAKID" in workflow.GLOBALID_CANDIDATES
+        assert "MAXIMOLEAKDATE" in workflow.LEAK_DATE_CANDIDATES
+        assert "LEAKNUMBER" in workflow.LEAK_KEY_CANDIDATES
 
     @pytest.mark.parametrize("attribute", [
         "MODIFIED_FIELD_CANDIDATES",

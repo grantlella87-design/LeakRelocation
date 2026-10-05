@@ -399,19 +399,29 @@ class TestNarrowedExceptionHandlers:
         assert lr.date_value_to_epoch_ms(1640995200000) == 1640995200000
 
     @pytest.mark.parametrize(("value", "result"), [
-        ("2022-01-01", 2022),
-        ("9999999-01-01", 9999999),
-        ({"a": 1}, 1),
+        ("2022-01-01", 1_640_995_200_000),   # read as the date it is
+        ("9999999-01-01", None),             # not a date, and not a number
+        ({"a": 1}, None),                    # neither
     ])
-    def test_a_value_containing_a_digit_returns_that_digit(self, lr, value, result):
-        """Recording existing behaviour, not endorsing it.
+    def test_a_value_with_a_digit_in_it_is_no_longer_read_as_that_digit(
+            self, lr, value, result):
+        """This used to record the opposite, as a known wart.
 
-        parse_number runs first and pulls the first number out of str(value), so
-        anything with a digit in it short-circuits the date parse: the ISO string
-        "2022-01-01" becomes 2022 milliseconds after the epoch. This is upstream
-        of the narrowed handler and unchanged by it. It only matters for the delta
-        watermark, and it fails safe - a garbage watermark falls back to a full
-        refresh - which is presumably why it has gone unnoticed.
+        parse_number ran first and pulled the first number out of str(value), so
+        anything with a digit short-circuited the date parse and the ISO string
+        "2022-01-01" became 2022 milliseconds after the epoch. The note here said
+        it only mattered for the delta watermark, where it failed safe - a
+        garbage watermark falls back to a full refresh - which is why it had gone
+        unnoticed.
+
+        It stopped being harmless when a second leak source arrived. The
+        enterprise (Maximo) leaks come from SQL, which returns dates as datetimes
+        and ISO strings rather than as epoch milliseconds, so every one of them
+        would have been read as its year: 1 January 1970, older than every pipe,
+        rejected by the in-service check, with nothing saying why.
+
+        A value is now treated as epoch milliseconds only when it is a number or
+        a string that is nothing but a number. See looks_numeric.
         """
         assert lr.date_value_to_epoch_ms(value) == result
 
@@ -567,3 +577,96 @@ class TestTheDiameterRuleReachesTheMatcher:
             encoding="utf-8").read()
         assert "diameter within one nominal size" in source
         assert 'reason = ("No exact diameter/material/pressure match' not in source
+
+
+class TestARunThatMatchesNothingStillWrites:
+    """It used to die at the last step with "Unknown column geometry" - a
+    message about a geopandas column, when the news was that nothing matched.
+
+    That is the shape of a first run against a new leak source whose
+    coordinates are being read in the wrong CRS: every leak lands where there
+    are no pipes, nothing matches, and the error says nothing about it.
+    """
+
+    def frame(self, lr, rows, geometry):
+        import geopandas as gpd
+        return gpd.GeoDataFrame(rows, geometry=geometry, crs="EPSG:2249")
+
+    def test_an_empty_frame_still_has_geometry(self, lr):
+        empty = lr.empty_or_frame([], "EPSG:2249")
+        assert len(empty) == 0
+        assert empty.geometry is not None
+        assert empty.crs is not None
+
+    def test_rows_build_the_frame_as_before(self, lr):
+        from shapely.geometry import Point
+        built = lr.empty_or_frame(
+            [{"LeakKey": "1", "geometry": Point(0, 0)}], "EPSG:2249")
+        assert len(built) == 1
+        assert built.crs.to_epsg() == 2249
+
+    def test_write_outputs_survives_zero_matches(self, lr, tmp_path, monkeypatch):
+        from shapely.geometry import LineString, Point
+        leaks = self.frame(lr, [{
+            "OBJECTID": 1, "GLOBALID": "{A}", "LMSLEAKNUMBER": "1",
+            "ADDRESS": "", "REVISEDLEAKDATE": None}], [Point(760000, 2960000)])
+        supplemental = {"A": {"material": "Cast Iron", "diameter": 8.0,
+                              "pressure": "", "facility": "Main"}}
+        # A pipe of the wrong diameter, so nothing can match.
+        pipe = self.frame(lr, [{
+            "OBJECTID": 1, "GLOBALID": "{P}", "material": "Cast Iron",
+            "nominaldiameter": 12.0, "operatingpressure": 0.5,
+            "CREATIONDATE": 946_684_800_000.0, "dateretired": None}],
+            [LineString([(760020, 2959500), (760020, 2960500)])])
+
+        monkeypatch.setattr(lr, "OUTPUT_GPKG",
+                            str(tmp_path / "ZeroMatches.gpkg"))
+        monkeypatch.setattr(lr, "TARGET_CRS", "EPSG:2249")
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            tasks, initial = lr.prepare_leaks(leaks, supplemental)
+            sources = {"distribution": lr.prepare_pipes(pipe, "distribution"),
+                       "service": lr.prepare_pipes(pipe.iloc[0:0], "service")}
+            lr.init_worker(sources)
+            results = [lr.match_one_leak(task) for task in tasks]
+            counters = lr.write_outputs(tasks, results, sources, initial)
+
+        assert counters["unmatched"] == 1
+        assert counters.get("matched", 0) == 0
+        assert "No leak was relocated" in buffer.getvalue()
+        assert "wrong CRS" in buffer.getvalue()
+
+    def test_the_three_layers_are_written_even_when_empty(
+            self, lr, tmp_path, monkeypatch):
+        """An empty output is still an output. A caller that reads the layers -
+        the map, the dashboard - should find them and show nothing, not fail to
+        open the file."""
+        import geopandas as gpd
+        from shapely.geometry import LineString, Point
+        leaks = self.frame(lr, [{
+            "OBJECTID": 1, "GLOBALID": "{A}", "LMSLEAKNUMBER": "1",
+            "ADDRESS": "", "REVISEDLEAKDATE": None}], [Point(760000, 2960000)])
+        supplemental = {"A": {"material": "Cast Iron", "diameter": 8.0,
+                              "pressure": "", "facility": "Main"}}
+        pipe = self.frame(lr, [{
+            "OBJECTID": 1, "GLOBALID": "{P}", "material": "Cast Iron",
+            "nominaldiameter": 12.0, "operatingpressure": 0.5,
+            "CREATIONDATE": 946_684_800_000.0, "dateretired": None}],
+            [LineString([(760020, 2959500), (760020, 2960500)])])
+        out = str(tmp_path / "ZeroMatches.gpkg")
+        monkeypatch.setattr(lr, "OUTPUT_GPKG", out)
+        monkeypatch.setattr(lr, "TARGET_CRS", "EPSG:2249")
+        with redirect_stdout(io.StringIO()):
+            tasks, initial = lr.prepare_leaks(leaks, supplemental)
+            sources = {"distribution": lr.prepare_pipes(pipe, "distribution"),
+                       "service": lr.prepare_pipes(pipe.iloc[0:0], "service")}
+            lr.init_worker(sources)
+            results = [lr.match_one_leak(task) for task in tasks]
+            lr.write_outputs(tasks, results, sources, initial)
+
+        assert len(gpd.read_file(out, layer="relocated_leaks")) == 0
+        assert len(gpd.read_file(out, layer="relocated_leak_offset_lines")) == 0
+        # The audit still records the leak and why it did not match.
+        audit = gpd.read_file(out, layer="leak_relocation_audit")
+        assert len(audit) == 1
+        assert audit.iloc[0]["MatchStatus"] == "NoMatch"

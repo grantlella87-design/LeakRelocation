@@ -42,6 +42,111 @@ those layers also carry `installationdate` and `inservicedate`. A pipe installed
 in 1960 and migrated into the system in 2015 has `CREATIONDATE` 2015, so a 2010
 leak fails the check even though the pipe was in the ground.
 
+## The two leak sources
+
+There are two sets of leaks and they arrive by completely different routes. Each
+has its own entry point and its own GeoPackage; everything between the leaks
+being read and the outputs being written is shared.
+
+| | Historic (LMS) | Enterprise (Maximo) |
+| --- | --- | --- |
+| Command | `python run.py` | `python scripts\maximo_leaks.py` |
+| Leaks from | ArcGIS layer 206 `Hist_GasLeak` | one SQL query |
+| Material & diameter | `input/HL_SupplementalData.csv`, joined on GlobalID | the same query |
+| Leak id | `GlobalID` | `LeakId` from the query |
+| Output | `HistoricLeakRelocation.gpkg` | `MaximoLeakRelocation.gpkg` |
+
+What they share is everything that matters: the pipe layers, the ASSETTYPE
+material decode, the diameter rule, the date rule, the search radii, the three
+output layers and the distance dashboard. `relocate()` in the workflow is the
+one copy of it, and both entry points call it. A second copy of the matching
+would drift from the first and the two leak sets would stop being comparable.
+
+### Enterprise (Maximo) leaks
+
+Because the query returns material and diameter with the leak, there is no
+supplemental join here at all — and none of the wrong-attribute risk that join
+carried on the historic side.
+
+Three things to set before the first run:
+
+```bat
+set LEAKRELOCATION_MAXIMO_DSN=Driver={ODBC Driver 18 for SQL Server};Server=HOST;Database=DB;Trusted_Connection=yes
+set LEAKRELOCATION_MAXIMO_QUERY=C:\path\to\your_query.sql
+set LEAKRELOCATION_MAXIMO_CRS=EPSG:4326
+```
+
+The DSN is read from the environment and **never written to a file or a log**.
+Anything that looks like a password is redacted before any message is printed,
+including a driver's own connection error — the same discipline the GIS token
+has, where only its length and expiry are ever shown.
+
+Then work up to a full run:
+
+```bat
+python scripts\maximo_leaks.py --check      connection, query and columns only
+python scripts\maximo_leaks.py --preview    read the leaks, relocate nothing
+python scripts\maximo_leaks.py              the whole run
+python scripts\maximo_leaks.py --diameter fuzzy
+```
+
+`--check` runs the query and stops. It is the cheap way to find out that a
+column is misnamed, before any pipe layer is downloaded.
+
+#### The query is a file, and its column names are a contract
+
+`input/maximo_leaks.sql` is a **template**: the tables in it are placeholders,
+the aliases are not. Point `LEAKRELOCATION_MAXIMO_QUERY` at your own copy rather
+than editing it in place if the real query should not be committed.
+
+Required — a query missing any of these is refused by name:
+
+| Alias | What it is |
+| --- | --- |
+| `LeakId` | unique per leak. A second row with the same value is skipped and counted, not merged |
+| `X`, `Y` | position, in `LEAKRELOCATION_MAXIMO_CRS` |
+| `Material` | the leaking pipe's material, as text |
+| `Diameter` | nominal diameter in inches |
+
+Optional — each one left out costs something the run names on screen:
+`LeakNumber`, `FacilityType`, `LeakDate`, `Pressure`, `Address`, `City`,
+`NearestXStreet`. The two worth watching are `FacilityType`, without which every
+leak is searched against both mains and services, and `LeakDate`, without which
+the date rule decides nothing.
+
+Everything under the aliases can be anything — tables, joins, views, a stored
+procedure. The project only reads the aliases.
+
+#### Set the CRS deliberately
+
+`LEAKRELOCATION_MAXIMO_CRS` is what the `X` and `Y` columns are in. It defaults
+to `EPSG:4326` — longitude then latitude. If they are MA state plane feet, set
+it to `EPSG:2249`.
+
+This is the one setting that fails quietly: coordinates read in the wrong CRS
+put every leak somewhere there are no pipes, nothing matches, and a GeoPackage
+is still written. A run that relocates nothing now says so and names this as the
+likely cause, but it is easier to set it right.
+
+#### Rows that cannot be used
+
+Counted and reported, never silently dropped and never placed at 0, 0:
+
+| Skipped | Why it cannot be relocated |
+| --- | --- |
+| no `LeakId` | nothing to key it on |
+| a `LeakId` already seen | the first wins; merging would take an arbitrary row's attributes, which is the bug the historic join had |
+| no usable `X`/`Y` | nowhere to put it |
+| no `Material` or no `Diameter` | nothing to match a pipe on |
+
+#### Reporting on it
+
+The distance dashboard is source-agnostic:
+
+```bat
+python scripts\relocation_dashboard.py --gpkg ...\MaximoLeakRelocation.gpkg
+```
+
 ## Diameter matching
 
 A leak carries a diameter from the supplemental CSV and a pipe carries one from
@@ -157,8 +262,10 @@ different leaks.
 | `src/leakrelocation/matching.py` | Pure material/diameter matching logic, including the nominal-size ladder. |
 | `src/leakrelocation/assettype.py` | ASSETGROUP/ASSETTYPE subtype decoding. |
 | `src/leakrelocation/viewer_pane.py` | Attribute table pane docked under the map. |
+| `scripts/maximo_leaks.py` | The enterprise (Maximo) leaks, read from SQL. |
+| `src/leakrelocation/maximo_sql.py` | The SQL boundary: connection, query, column contract. |
 | `scripts/` | Sign-in and cache-repair tools. |
-| `input/` | The supplemental leak CSV. Committed, so a run needs no share. |
+| `input/` | The supplemental leak CSV, and the Maximo query template. |
 | `reference/` | Service metadata copies the tests check against. |
 | `vendor/leaflet/` | Leaflet, committed so the map needs no internet. |
 | `tests/` | Tests that need no network and no shared drive. |
