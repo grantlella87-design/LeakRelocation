@@ -6,16 +6,27 @@ production asset system - layer 206's geometry, in place, for leaks that are
 already in service records. There is no undo button on the far side, so the
 whole module is arranged around that.
 
+**It updates geometry and nothing else.** Every feature keeps its GlobalID,
+because an update is not a delete and an add: the row is the same row, and the
+only field in the payload is the one that identifies it. Nothing here ever
+sends `adds` or `deletes`, and nothing puts an attribute in the payload beyond
+the object id - a GlobalID is minted when a feature is created, so a workflow
+that removed and re-inserted a leak would quietly renumber every downstream
+reference to it. geometry_only() enforces that on the way out, and the
+GlobalIDs are read before the edit and checked again after it.
+
 What it does, in order:
 
   1. reads the relocation outputs and pairs each relocated leak with its
-     OBJECTID on the layer;
-  2. re-reads the *current* geometry of those features from the service, so the
-     rollback is built from what is there now rather than from what was there
-     when the relocation ran;
+     object id on the layer;
+  2. re-reads the *current* geometry and GlobalID of those features from the
+     service, so the rollback is built from what is there now rather than from
+     what was there when the relocation ran;
   3. writes the rollback file, and refuses to go on if it cannot;
   4. prints what it is about to do and stops, unless told otherwise;
-  5. applies the updates in batches, checking every feature's result.
+  5. applies the updates in batches, checking every feature's result;
+  6. re-reads the edited features and confirms every GlobalID is the one it
+     was before.
 
 What stops it:
 
@@ -143,22 +154,30 @@ def to_service_crs(gdf, wkid):
     return gdf.to_crs(target)
 
 
-def current_geometry(workflow, session, layer_url, object_ids, wkid,
-                     batch_size=APPLY_BATCH_SIZE):
-    """Where the service has these features right now.
+def current_state(workflow, session, layer_url, object_ids, wkid,
+                  object_id_field="OBJECTID", globalid_field=None,
+                  batch_size=APPLY_BATCH_SIZE):
+    """Where the service has these features right now, and their GlobalIDs.
 
     Re-read rather than taken from the cache the relocation used. The rollback
     has to restore what is actually there, and a leak that someone moved by hand
     since the download must not be quietly reverted to a stale position.
+
+    The GlobalID comes back with it so the same features can be checked after
+    the edit. An update should not change it; reading it twice is how that
+    stops being an assumption.
+
+    Returns {object id: {"xy": (x, y), "globalid": value or None}}.
     """
     found = {}
     ids = list(object_ids)
+    wanted = [object_id_field] + ([globalid_field] if globalid_field else [])
     for start in range(0, len(ids), batch_size):
         chunk = ids[start:start + batch_size]
         params = {
             "f": "json",
             "objectIds": ",".join(str(value) for value in chunk),
-            "outFields": "",
+            "outFields": ",".join(wanted),
             "returnGeometry": "true",
             "outSR": wkid,
         }
@@ -170,15 +189,45 @@ def current_geometry(workflow, session, layer_url, object_ids, wkid,
         for feature in data.get("features") or []:
             geometry = feature.get("geometry") or {}
             attributes = feature.get("attributes") or {}
-            oid = attributes.get("OBJECTID")
+            oid = attributes.get(object_id_field)
             if oid is None:
-                # Some services answer objectIds queries without echoing the
-                # OID in attributes when outFields is empty.
+                # Matched without case: a service can answer with its own
+                # spelling of the field it was asked for.
+                oid = next((value for name, value in attributes.items()
+                            if name.lower() == object_id_field.lower()), None)
+            if oid is None:
                 continue
             if geometry.get("x") is None or geometry.get("y") is None:
                 continue
-            found[int(oid)] = (float(geometry["x"]), float(geometry["y"]))
+            globalid = None
+            if globalid_field:
+                globalid = next(
+                    (value for name, value in attributes.items()
+                     if name.lower() == globalid_field.lower()), None)
+            found[int(oid)] = {
+                "xy": (float(geometry["x"]), float(geometry["y"])),
+                "globalid": normalise_globalid(globalid),
+            }
     return found
+
+
+def normalise_globalid(value):
+    """A GlobalID comparable across two reads.
+
+    Services are inconsistent about the braces and the case, and {ABC} and
+    abc are the same id. Comparing them raw would report every feature as
+    renumbered.
+    """
+    if value is None:
+        return None
+    return str(value).strip().strip("{}").upper()
+
+
+def current_geometry(workflow, session, layer_url, object_ids, wkid, **kwargs):
+    """Just the positions, for callers that do not need the GlobalIDs."""
+    state = current_state(workflow, session, layer_url, object_ids, wkid,
+                          **kwargs)
+    return {oid: entry["xy"] for oid, entry in state.items()}
 
 
 def classify(moves, current, max_distance_ft, allow_long):
@@ -192,12 +241,17 @@ def classify(moves, current, max_distance_ft, allow_long):
     ready, held = [], []
     for move in moves:
         oid = move["object_id"]
-        was = current.get(oid)
-        if was is None:
+        state = current.get(oid)
+        if state is None:
             held.append({**move, "why": "not on the service any more"})
             continue
+        # current_state gives a dict; current_geometry's plain pairs are still
+        # accepted so a caller with positions alone keeps working.
+        was = state["xy"] if isinstance(state, dict) else state
+        globalid = state.get("globalid") if isinstance(state, dict) else None
         moved = distance_ft(was, (move["x"], move["y"]))
-        entry = {**move, "from_x": was[0], "from_y": was[1], "moves_by": moved}
+        entry = {**move, "from_x": was[0], "from_y": was[1], "moves_by": moved,
+                 "globalid": globalid}
         if moved <= SAME_POINT_FT:
             held.append({**entry, "why": "already at the relocated position"})
             continue
@@ -221,7 +275,56 @@ def endpoint_only(url):
     return str(url).split("?", 1)[0]
 
 
-def write_rollback(path, layer_url, wkid, ready, extra=None):
+def globalid_field_of(meta):
+    """The layer's GlobalID column, or None when it has none.
+
+    Read off the metadata rather than assumed to be called "GlobalID": the
+    pipe layers spell theirs GLOBALID, and a layer is free to use either.
+    """
+    for field in meta.get("fields") or []:
+        if str(field.get("type")) == "esriFieldTypeGlobalID":
+            return field.get("name")
+    return None
+
+
+def geometry_only(object_id_field, object_id, x, y, wkid):
+    """One applyEdits update that changes geometry and nothing else.
+
+    The attributes carry exactly one key, the object id, and it is there to say
+    *which* row to update - not to change it. Anything more in this dict is an
+    attribute edit nobody asked for, and the whole point of using `updates`
+    rather than a delete and an add is that the feature, and therefore its
+    GlobalID, survives.
+    """
+    return {
+        "attributes": {object_id_field: object_id},
+        "geometry": esri_point(x, y, wkid),
+    }
+
+
+def check_geometry_only(updates, object_id_field):
+    """Refuse a payload that would change anything but geometry.
+
+    A belt-and-braces check on the way out. It costs nothing and it is the last
+    place an attribute could be added by accident - including a GlobalID, which
+    some services will happily accept and which is exactly what must not move.
+    """
+    for update in updates:
+        attributes = update.get("attributes") or {}
+        extra = [name for name in attributes if name != object_id_field]
+        if extra:
+            fail(f"Refusing to send an update that changes {', '.join(extra)}. "
+                 f"This moves geometry and nothing else - an attribute edit "
+                 f"here would be a change nobody asked for, and a GlobalID in "
+                 f"the payload is how a feature gets renumbered.")
+        if "geometry" not in update:
+            fail("Refusing to send an update with no geometry: it would be an "
+                 "attribute-only edit.")
+    return updates
+
+
+def write_rollback(path, layer_url, wkid, ready, extra=None,
+                   object_id_field="OBJECTID"):
     """The file that puts every edited feature back, written before any edit.
 
     An applyEdits payload rather than a report, so undoing is running it rather
@@ -237,11 +340,15 @@ def write_rollback(path, layer_url, wkid, ready, extra=None):
             "POST the 'updates' list below to {layer_url}/applyEdits with "
             "f=json and a valid token to put every feature back where it was. "
             "scripts/apply_relocated_geometry.py --rollback FILE does it."),
+        "object_id_field": object_id_field,
+        # Recorded, not sent. The undo updates geometry only, exactly as the
+        # run it reverses did; these are here so the features it puts back can
+        # be confirmed to be the same features.
+        "globalids": {str(move["object_id"]): move.get("globalid")
+                      for move in ready if move.get("globalid")},
         "updates": [
-            {
-                "attributes": {"OBJECTID": move["object_id"]},
-                "geometry": esri_point(move["from_x"], move["from_y"], wkid),
-            }
+            geometry_only(object_id_field, move["object_id"],
+                          move["from_x"], move["from_y"], wkid)
             for move in ready
         ],
     }
@@ -354,6 +461,59 @@ def summarise(ready, held, succeeded=None, failed=None):
                 warn(f"  OBJECTID {entry['object_id']}: {entry['why']}")
             if len(failed) > 10:
                 warn(f"  ... and {len(failed) - 10:,} more")
+
+
+def verify_globalids(workflow, session, layer_url, ready, wkid,
+                     object_id_field="OBJECTID", globalid_field=None):
+    """Confirm every edited feature still has the GlobalID it had.
+
+    An update should not change it - the row is the same row - but "should not"
+    is not the same as "did not", and a GlobalID that moved means every
+    downstream reference to that leak now points at nothing. It costs one query
+    per batch at the end of a run to turn that into a fact.
+
+    Returns the list of features whose id changed, which should be empty.
+    """
+    if not globalid_field:
+        warn("The layer has no GlobalID field, so there is nothing to check "
+             "against. The edits were still geometry-only updates.")
+        return []
+    expected = {move["object_id"]: move.get("globalid")
+                for move in ready if move.get("globalid")}
+    if not expected:
+        warn("No GlobalID was read before the edit, so there is nothing to "
+             "compare against.")
+        return []
+    if len(expected) < len(ready):
+        # Said out loud rather than left as a gap between two numbers. A
+        # feature with no GlobalID to compare is not a feature that passed.
+        warn(f"{len(ready) - len(expected):,} of the {len(ready):,} edited "
+             f"features had no GlobalID recorded before the edit, so they "
+             f"cannot be checked. The rest can.")
+    after = current_state(workflow, session, layer_url, list(expected), wkid,
+                          object_id_field=object_id_field,
+                          globalid_field=globalid_field)
+    changed = []
+    for oid, before in expected.items():
+        now = after.get(oid, {}).get("globalid")
+        if now is None:
+            changed.append({"object_id": oid, "before": before,
+                            "after": "the feature could not be read back"})
+        elif now != before:
+            changed.append({"object_id": oid, "before": before, "after": now})
+    if changed:
+        warn(f"{len(changed):,} features do not have the GlobalID they had "
+             f"before this run. An update is not supposed to change it, so "
+             f"something other than this script has been editing the layer, "
+             f"or the service replaced the rows rather than updating them. "
+             f"Every reference to those leaks now points at nothing.")
+        for entry in changed[:10]:
+            warn(f"  {object_id_field} {entry['object_id']}: "
+                 f"{entry['before']} -> {entry['after']}")
+    else:
+        log(f"GlobalIDs checked: all {len(expected):,} unchanged"
+            f"{'' if len(expected) == len(ready) else f' (of {len(ready):,} edited)'}.")
+    return changed
 
 
 CONFIRMATION = "MOVE THE LEAKS"

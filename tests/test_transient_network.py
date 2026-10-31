@@ -219,7 +219,12 @@ class TestWorkerSessionsAreReused:
 
         def record(name):
             def go():
-                seen[name] = [id(lr.worker_session("token")) for _ in range(3)]
+                # The session objects, not their ids. A thread's session is
+                # held only by its thread local, so it is freed when the thread
+                # dies - and CPython hands the next allocation the same
+                # address. Recording ids alone made this fail about 3% of the
+                # time on a point that has nothing to do with thread locals.
+                seen[name] = [lr.worker_session("token") for _ in range(3)]
             return go
 
         threads = [threading.Thread(target=record(f"w{index}")) for index in range(3)]
@@ -228,9 +233,11 @@ class TestWorkerSessionsAreReused:
         for thread in threads:
             thread.join()
 
-        for ids in seen.values():
-            assert len(set(ids)) == 1, "a thread built more than one session"
-        assert len({ids[0] for ids in seen.values()}) == 3, "threads shared a session"
+        for sessions in seen.values():
+            assert len({id(one) for one in sessions}) == 1, \
+                "a thread built more than one session"
+        firsts = [sessions[0] for sessions in seen.values()]
+        assert len({id(one) for one in firsts}) == 3, "threads shared a session"
 
     def test_the_token_is_carried(self, lr):
         assert lr.worker_session("abc")._arcgis_access_token == "abc"

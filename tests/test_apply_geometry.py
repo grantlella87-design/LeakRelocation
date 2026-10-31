@@ -49,10 +49,19 @@ def service():
         "geometry": {1: (760_000.0, 2_960_000.0),
                      2: (760_100.0, 2_960_000.0),
                      3: (760_200.0, 2_960_000.0)},
+        # A GlobalID per feature. An update must not change these.
+        "globalid": {1: "{AAAAAAAA-0000-0000-0000-000000000001}",
+                     2: "{AAAAAAAA-0000-0000-0000-000000000002}",
+                     3: "{AAAAAAAA-0000-0000-0000-000000000003}"},
         "applied": [],       # every updates list the service was sent
+        "sent_params": [],   # the whole form of every applyEdits call
         "reject": set(),     # OBJECTIDs applyEdits refuses
         "refuse_batch": False,
+        "renumber": False,   # mint a new GlobalID on update, as a delete+add would
+        "oid_field": "OBJECTID",
+        "has_globalid": True,
         "queries": 0,
+        "out_fields": [],    # what each query asked for
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -81,9 +90,14 @@ def service():
             elif path.endswith("/query"):
                 self.query(params)
             else:
+                fields = [{"name": state["oid_field"],
+                           "type": "esriFieldTypeOID"}]
+                if state["has_globalid"]:
+                    fields.append({"name": "GlobalID",
+                                   "type": "esriFieldTypeGlobalID"})
                 self.reply({
-                    "objectIdField": "OBJECTID",
-                    "fields": [{"name": "OBJECTID", "type": "esriFieldTypeOID"}],
+                    "objectIdField": state["oid_field"],
+                    "fields": fields,
                     "maxRecordCount": 1000,
                     "extent": {"spatialReference": {"wkid": WKID}},
                 })
@@ -92,6 +106,7 @@ def service():
 
         def query(self, params):
             state["queries"] += 1
+            state["out_fields"].append(params.get("outFields", ""))
             wanted = [int(value) for value in
                       (params.get("objectIds") or "").split(",") if value.strip()]
             features = []
@@ -99,8 +114,11 @@ def service():
                 if oid not in state["geometry"]:
                     continue
                 x, y = state["geometry"][oid]
+                attributes = {state["oid_field"]: oid}
+                if state["has_globalid"]:
+                    attributes["GlobalID"] = state["globalid"].get(oid)
                 features.append({
-                    "attributes": {"OBJECTID": oid},
+                    "attributes": attributes,
                     "geometry": {"x": x, "y": y},
                 })
             self.reply({"features": features})
@@ -109,11 +127,12 @@ def service():
             if state["refuse_batch"]:
                 self.reply({"error": {"code": 400, "message": "Invalid token"}})
                 return
+            state["sent_params"].append(dict(params))
             updates = json.loads(params.get("updates") or "[]")
             state["applied"].append(updates)
             results = []
             for update in updates:
-                oid = update["attributes"]["OBJECTID"]
+                oid = update["attributes"][state["oid_field"]]
                 if oid in state["reject"]:
                     results.append({"objectId": oid, "success": False,
                                     "error": {"code": 1000,
@@ -121,6 +140,11 @@ def service():
                     continue
                 geometry = update["geometry"]
                 state["geometry"][oid] = (geometry["x"], geometry["y"])
+                if state["renumber"]:
+                    # What a delete-and-re-add looks like from outside: same
+                    # object id, brand new GlobalID.
+                    state["globalid"][oid] = (
+                        "{BBBBBBBB-0000-0000-0000-%012d}" % oid)
                 results.append({"objectId": oid, "success": True})
             self.reply({"updateResults": results})
 
@@ -625,3 +649,281 @@ class TestNothingSecretIsPrinted:
         assert "SECRET-TOKEN-VALUE" not in text
         for marker in ('"token"', "access_token", "Bearer "):
             assert marker not in text, marker
+
+
+class TestItUpdatesGeometryAndNothingElse:
+    """The GlobalID is the thing every downstream reference to a leak hangs
+    off. It is minted when a feature is created, so a workflow that removed and
+    re-inserted a leak - rather than updating it - would renumber it and break
+    every one of those references, silently.
+
+    An `updates` call cannot do that: the row is the same row. These hold the
+    things that would make it one anyway.
+    """
+
+    def test_the_payload_carries_only_the_object_id(self):
+        update = ag.geometry_only("OBJECTID", 7, 1.0, 2.0, WKID)
+        assert list(update["attributes"]) == ["OBJECTID"]
+        assert update["attributes"]["OBJECTID"] == 7
+        assert set(update) == {"attributes", "geometry"}
+
+    def test_the_object_id_field_is_whatever_the_layer_calls_it(self):
+        update = ag.geometry_only("FID", 7, 1.0, 2.0, WKID)
+        assert list(update["attributes"]) == ["FID"]
+
+    def test_an_extra_attribute_is_refused(self):
+        """Including a GlobalID, which some services accept - and which is
+        exactly what must not move."""
+        for extra in ("GlobalID", "LEAKSTATUS", "ADDRESS"):
+            bad = [{"attributes": {"OBJECTID": 1, extra: "x"},
+                    "geometry": ag.esri_point(1.0, 2.0, WKID)}]
+            with pytest.raises(RuntimeError, match=extra):
+                ag.check_geometry_only(bad, "OBJECTID")
+
+    def test_an_attribute_only_edit_is_refused(self):
+        with pytest.raises(RuntimeError, match="no geometry"):
+            ag.check_geometry_only([{"attributes": {"OBJECTID": 1}}], "OBJECTID")
+
+    def test_a_clean_payload_passes_through_unchanged(self):
+        updates = [ag.geometry_only("OBJECTID", 1, 1.0, 2.0, WKID)]
+        assert ag.check_geometry_only(updates, "OBJECTID") is updates
+
+    def test_the_globalid_field_is_read_off_the_layer(self):
+        meta = {"fields": [{"name": "OBJECTID", "type": "esriFieldTypeOID"},
+                           {"name": "GLOBALID", "type": "esriFieldTypeGlobalID"}]}
+        assert ag.globalid_field_of(meta) == "GLOBALID"
+
+    def test_a_layer_without_one_reports_none(self):
+        meta = {"fields": [{"name": "OBJECTID", "type": "esriFieldTypeOID"}]}
+        assert ag.globalid_field_of(meta) is None
+
+    @pytest.mark.parametrize("left,right", [
+        ("{ABC-123}", "abc-123"),
+        ("ABC-123", "{ABC-123}"),
+        (" {abc-123} ", "ABC-123"),
+    ])
+    def test_the_same_id_written_two_ways_is_the_same_id(self, left, right):
+        """Services are inconsistent about the braces and the case. Comparing
+        them raw would report every feature as renumbered."""
+        assert ag.normalise_globalid(left) == ag.normalise_globalid(right)
+
+    def test_two_different_ids_stay_different(self):
+        assert ag.normalise_globalid("{ABC}") != ag.normalise_globalid("{DEF}")
+
+
+class TestTheGlobalIdsAreCheckedAfterwards:
+    def test_they_are_read_before_the_edit(self, workflow, session, service):
+        with redirect_stdout(io.StringIO()):
+            state = ag.current_state(
+                workflow, session, service["url"], [1, 2], WKID,
+                globalid_field="GlobalID")
+        assert state[1]["globalid"] == "AAAAAAAA-0000-0000-0000-000000000001"
+        assert state[1]["xy"] == (760_000.0, 2_960_000.0)
+        assert any("GlobalID" in asked for asked in service["out_fields"])
+
+    def test_an_ordinary_update_leaves_them_alone(self, workflow, session,
+                                                  service):
+        before = dict(service["globalid"])
+        updates = [ag.geometry_only("OBJECTID", 1, 760_020.0, 2_960_000.0, WKID)]
+        with redirect_stdout(io.StringIO()):
+            ag.apply_updates(workflow, session, service["url"], updates, WKID)
+        assert service["globalid"] == before
+        assert service["geometry"][1] == (760_020.0, 2_960_000.0)
+
+    def test_verification_passes_when_nothing_was_renumbered(
+            self, workflow, session, service):
+        ready = [{"object_id": 1, "x": 760_020.0, "y": 2_960_000.0,
+                  "globalid": ag.normalise_globalid(service["globalid"][1])}]
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            changed = ag.verify_globalids(
+                workflow, session, service["url"], ready, WKID,
+                globalid_field="GlobalID")
+        assert changed == []
+        assert "all 1 unchanged" in buffer.getvalue()
+
+    def test_a_renumbered_feature_is_caught_and_named(self, workflow, session,
+                                                      service):
+        """What a delete-and-re-add looks like from outside: same object id,
+        brand new GlobalID. If a service ever did that, every reference to
+        those leaks would point at nothing - so it is checked, not assumed."""
+        before = ag.normalise_globalid(service["globalid"][1])
+        service["renumber"] = True
+        updates = [ag.geometry_only("OBJECTID", 1, 760_020.0, 2_960_000.0, WKID)]
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            ag.apply_updates(workflow, session, service["url"], updates, WKID)
+            changed = ag.verify_globalids(
+                workflow, session, service["url"],
+                [{"object_id": 1, "globalid": before}], WKID,
+                globalid_field="GlobalID")
+        assert len(changed) == 1
+        assert changed[0]["before"] == before
+        assert changed[0]["after"] != before
+        printed = buffer.getvalue()
+        assert "do not have the GlobalID they had" in printed
+        assert "points at nothing" in printed
+
+    def test_a_feature_that_vanished_is_reported_as_changed(
+            self, workflow, session, service):
+        with redirect_stdout(io.StringIO()):
+            changed = ag.verify_globalids(
+                workflow, session, service["url"],
+                [{"object_id": 99, "globalid": "SOMETHING"}], WKID,
+                globalid_field="GlobalID")
+        assert len(changed) == 1
+        assert "could not be read back" in changed[0]["after"]
+
+    def test_a_layer_without_globalids_says_so_rather_than_claiming_a_check(
+            self, workflow, session, service):
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            changed = ag.verify_globalids(
+                workflow, session, service["url"],
+                [{"object_id": 1, "globalid": None}], WKID,
+                globalid_field=None)
+        assert changed == []
+        assert "nothing to check against" in buffer.getvalue()
+        assert "still geometry-only" in buffer.getvalue()
+
+
+class TestTheWholeRunKeepsThem:
+    """Through main(), against the stub."""
+
+    @pytest.fixture
+    def script(self, workflow, session, monkeypatch):
+        sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+        import apply_relocated_geometry
+        monkeypatch.setattr(apply_relocated_geometry, "load_workflow",
+                            lambda: workflow)
+        monkeypatch.setattr(workflow, "make_session", lambda *a, **k: session)
+        return apply_relocated_geometry
+
+    @pytest.fixture
+    def gpkg(self, tmp_path):
+        frame = relocated_frame([(1, 760_020.0, 2_960_000.0),
+                                 (2, 760_120.0, 2_960_000.0)])
+        path = tmp_path / "HistoricLeakRelocation.gpkg"
+        frame.to_file(str(path), layer="relocated_leaks", driver="GPKG")
+        return str(path)
+
+    def run(self, script, argv):
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = script.main(argv)
+        return code, buffer.getvalue()
+
+    def test_a_full_apply_keeps_every_globalid(self, script, gpkg, service,
+                                               tmp_path):
+        before = dict(service["globalid"])
+        code, printed = self.run(script, [
+            "--gpkg", gpkg, "--layer-url", service["url"], "--apply",
+            "--yes", ag.CONFIRMATION, "--rollback-dir", str(tmp_path)])
+        assert code == 0
+        assert service["globalid"] == before
+        assert "all 2 unchanged" in printed
+
+    def test_nothing_but_the_object_id_is_ever_sent(self, script, gpkg,
+                                                    service, tmp_path):
+        self.run(script, ["--gpkg", gpkg, "--layer-url", service["url"],
+                          "--apply", "--yes", ag.CONFIRMATION,
+                          "--rollback-dir", str(tmp_path)])
+        assert service["applied"]
+        for batch in service["applied"]:
+            for update in batch:
+                assert list(update["attributes"]) == ["OBJECTID"]
+                assert "geometry" in update
+
+    def test_no_add_or_delete_is_ever_sent(self, script, gpkg, service,
+                                           tmp_path):
+        """The one thing that would renumber a feature. applyEdits takes adds
+        and deletes in the same call as updates, so their absence is worth
+        asserting rather than assuming."""
+        self.run(script, ["--gpkg", gpkg, "--layer-url", service["url"],
+                          "--apply", "--yes", ag.CONFIRMATION,
+                          "--rollback-dir", str(tmp_path)])
+        assert service["sent_params"]
+        for params in service["sent_params"]:
+            assert "adds" not in params
+            assert "deletes" not in params
+            assert params.get("updates")
+
+    def test_a_renumbering_service_fails_the_run(self, script, gpkg, service,
+                                                 tmp_path):
+        """Exit code and all: a run that moved the leaks but lost their ids is
+        not a successful run."""
+        service["renumber"] = True
+        code, printed = self.run(script, [
+            "--gpkg", gpkg, "--layer-url", service["url"], "--apply",
+            "--yes", ag.CONFIRMATION, "--rollback-dir", str(tmp_path)])
+        assert code == 1
+        assert "do not have the GlobalID they had" in printed
+
+    def test_the_run_says_up_front_that_it_is_geometry_only(
+            self, script, gpkg, service):
+        _, printed = self.run(script, [
+            "--gpkg", gpkg, "--layer-url", service["url"]])
+        assert "updates geometry only" in printed
+        assert "keeps its GlobalID" in printed
+
+    def test_the_layers_own_object_id_field_is_used(self, script, service,
+                                                    tmp_path):
+        """A layer is free to call it something else, and sending the wrong key
+        identifies no row at all."""
+        service["oid_field"] = "FID"
+        frame = relocated_frame([(1, 760_020.0, 2_960_000.0)])
+        path = tmp_path / "Other.gpkg"
+        frame.to_file(str(path), layer="relocated_leaks", driver="GPKG")
+        code, printed = self.run(script, [
+            "--gpkg", str(path), "--layer-url", service["url"], "--apply",
+            "--yes", ag.CONFIRMATION, "--rollback-dir", str(tmp_path)])
+        assert code == 0
+        assert "Object id field        : FID" in printed
+        for batch in service["applied"]:
+            for update in batch:
+                assert list(update["attributes"]) == ["FID"]
+
+    def test_the_rollback_is_geometry_only_too(self, script, gpkg, service,
+                                               tmp_path):
+        self.run(script, ["--gpkg", gpkg, "--layer-url", service["url"],
+                          "--apply", "--yes", ag.CONFIRMATION,
+                          "--rollback-dir", str(tmp_path)])
+        rollback = next(tmp_path.glob("leak_geometry_rollback_*.json"))
+        payload = json.load(open(rollback))
+        for update in payload["updates"]:
+            assert list(update["attributes"]) == ["OBJECTID"]
+            assert "geometry" in update
+
+    def test_the_rollback_records_the_globalids_without_sending_them(
+            self, script, gpkg, service, tmp_path):
+        """So the features an undo puts back can be confirmed to be the same
+        features - but the payload still changes geometry and nothing else."""
+        self.run(script, ["--gpkg", gpkg, "--layer-url", service["url"],
+                          "--apply", "--yes", ag.CONFIRMATION,
+                          "--rollback-dir", str(tmp_path)])
+        payload = json.load(open(
+            next(tmp_path.glob("leak_geometry_rollback_*.json"))))
+        assert payload["globalids"]["1"] == \
+            ag.normalise_globalid(service["globalid"][1])
+        assert all("GlobalID" not in update["attributes"]
+                   for update in payload["updates"])
+
+    def test_the_undo_also_keeps_them(self, script, gpkg, service, tmp_path):
+        before = dict(service["globalid"])
+        self.run(script, ["--gpkg", gpkg, "--layer-url", service["url"],
+                          "--apply", "--yes", ag.CONFIRMATION,
+                          "--rollback-dir", str(tmp_path)])
+        rollback = str(next(tmp_path.glob("leak_geometry_rollback_*.json")))
+        self.run(script, ["--rollback", rollback, "--apply",
+                          "--yes", ag.CONFIRMATION])
+        assert service["globalid"] == before
+
+    def test_a_layer_with_no_globalid_field_still_runs(self, script, gpkg,
+                                                       service, tmp_path):
+        service["has_globalid"] = False
+        code, printed = self.run(script, [
+            "--gpkg", gpkg, "--layer-url", service["url"], "--apply",
+            "--yes", ag.CONFIRMATION, "--rollback-dir", str(tmp_path)])
+        assert code == 0
+        assert "none on this layer" in printed
+        assert "nothing to check against" in printed

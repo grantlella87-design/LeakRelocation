@@ -59,12 +59,43 @@ phrase `MOVE THE LEAKS` to be typed next to the number of features. A flag is
 easy to paste from somewhere; a phrase typed beside a count is the last point at
 which someone notices the number is wrong.
 
+### It updates geometry, and nothing else
+
+Every feature keeps its GlobalID. An `updates` call is not a delete and an add
+— the row is the same row — and a GlobalID is minted when a feature is
+*created*, so a workflow that removed and re-inserted a leak would renumber it
+and break every downstream reference, silently.
+
+Three things hold that:
+
+| | |
+| --- | --- |
+| the payload carries one attribute | the object id, and only to say *which* row. `check_geometry_only` refuses anything else on the way out, including a GlobalID — some services will accept one |
+| nothing sends `adds` or `deletes` | `applyEdits` takes them in the same call as `updates`, so their absence is asserted rather than assumed |
+| the GlobalIDs are read before and checked after | an update *should* not change them; reading them twice is how that stops being an assumption. If any moved, the run says which and exits non-zero |
+
+The object id field is read off the layer rather than assumed to be
+`OBJECTID` — a layer is free to call it something else, and the wrong key
+identifies no row at all. The rollback file is geometry-only in the same way,
+and records the GlobalIDs alongside (without sending them) so the features an
+undo puts back can be confirmed to be the same features.
+
+```
+Object id field        : OBJECTID
+GlobalID field         : GlobalID
+This updates geometry only. Every feature keeps its GlobalID.
+...
+--- Checking the GlobalIDs survived ---
+GlobalIDs checked: all 2 unchanged.
+```
+
 ### What it does before it edits anything
 
 1. pairs each relocated leak with its `OBJECTID` on the layer;
-2. **re-reads the current geometry from the service** — so the rollback restores
-   what is there now, and a feature someone has already moved by hand is
-   reported rather than overwritten;
+2. **re-reads the current geometry and GlobalIDs from the service** — so the
+   rollback restores what is there now, a feature someone has already moved by
+   hand is reported rather than overwritten, and there is something to check
+   the ids against afterwards;
 3. **writes the rollback file**, and stops if it cannot;
 4. prints what it would do, and stops unless told otherwise.
 

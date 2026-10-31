@@ -106,6 +106,9 @@ def do_rollback(args, workflow, session):
         return 0
     if not ag.confirmed(len(updates), args.yes):
         fail("Not confirmed. Nothing was sent.")
+    # The undo is the same kind of edit as the run it reverses: geometry only.
+    ag.check_geometry_only(
+        updates, payload.get("object_id_field") or "OBJECTID")
     succeeded, failed = ag.apply_updates(
         workflow, session, layer_url, updates, payload.get("wkid"))
     ag.summarise([], [], succeeded, failed)
@@ -131,7 +134,17 @@ def main(argv=None):
 
     meta = workflow.layer_metadata(session, args.layer_url.rstrip("/"))
     wkid = meta["wkid"]
+    # Read off the layer, not assumed. A layer is free to call its object id
+    # something other than OBJECTID, and sending the wrong key identifies no
+    # row at all.
+    object_id_field = meta["object_id_field"] or "OBJECTID"
+    globalid_field = ag.globalid_field_of(meta)
     log(f"Layer spatial reference: wkid {wkid}")
+    log(f"Object id field        : {object_id_field}")
+    log(f"GlobalID field         : {globalid_field or 'none on this layer'}")
+    log("This updates geometry only. Every feature keeps its GlobalID: an "
+        "update is not a delete and an add, and nothing but the object id "
+        "goes in the payload.")
 
     relocated = ag.to_service_crs(relocated, wkid)
     moves, skipped = ag.relocations_from(relocated)
@@ -141,10 +154,15 @@ def main(argv=None):
     if not moves:
         fail("No relocated point could be paired with a feature on the layer.")
 
-    step("Reading the current geometry from the service")
-    current = ag.current_geometry(
-        workflow, session, args.layer_url, [m["object_id"] for m in moves], wkid)
+    step("Reading the current geometry and GlobalIDs from the service")
+    current = ag.current_state(
+        workflow, session, args.layer_url, [m["object_id"] for m in moves],
+        wkid, object_id_field=object_id_field, globalid_field=globalid_field)
     log(f"Features found on the service: {len(current):,} of {len(moves):,}")
+    with_ids = sum(1 for entry in current.values() if entry["globalid"])
+    if globalid_field:
+        log(f"GlobalIDs read for {with_ids:,} of them, to be checked again "
+            f"after the edit.")
 
     ready, held = ag.classify(
         moves, current, args.max_distance, args.allow_long_moves)
@@ -187,7 +205,8 @@ def main(argv=None):
     path = ag.rollback_path(args.rollback_dir or None)
     try:
         ag.write_rollback(path, args.layer_url, wkid, ready,
-                          extra={"source_gpkg": gpkg})
+                          extra={"source_gpkg": gpkg},
+                          object_id_field=object_id_field)
     except OSError as ex:
         fail(f"Could not write the rollback file to {path}: {ex}\n"
              f"  Nothing has been sent. The rollback is written before any "
@@ -200,19 +219,25 @@ def main(argv=None):
         fail("Not confirmed. Nothing was sent.")
 
     step("Applying")
-    updates = [
-        {
-            "attributes": {"OBJECTID": move["object_id"]},
-            "geometry": ag.esri_point(move["x"], move["y"], wkid),
-        }
-        for move in ready
-    ]
+    updates = ag.check_geometry_only(
+        [ag.geometry_only(object_id_field, move["object_id"],
+                          move["x"], move["y"], wkid)
+         for move in ready],
+        object_id_field)
     succeeded, failed = ag.apply_updates(
         workflow, session, args.layer_url, updates, wkid)
     ag.summarise(ready, held, succeeded, failed)
+
+    step("Checking the GlobalIDs survived")
+    applied = {move["object_id"] for move in ready} & set(succeeded or [])
+    changed = ag.verify_globalids(
+        workflow, session, args.layer_url,
+        [move for move in ready if move["object_id"] in applied], wkid,
+        object_id_field=object_id_field, globalid_field=globalid_field)
+
     log("")
     log(f"Rollback file: {path}")
-    return 1 if failed else 0
+    return 1 if (failed or changed) else 0
 
 
 if __name__ == "__main__":
