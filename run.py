@@ -6,6 +6,7 @@
     python run.py --refresh          ignore the layer caches
     python run.py --port 8800        serve on another port
     python run.py --diameter fuzzy   allow one nominal size up or down
+    python run.py --leak-date-fallback   use the other leak date fields
 
 The two diameter rules write different GeoPackages, so running both leaves both
 outputs on disk and the dashboard can compare them rather than one having
@@ -57,6 +58,12 @@ def parse_args(argv=None):
                         help="Serve the map without opening a browser.")
     parser.add_argument("--skip-signin-check", action="store_true",
                         help="Do not verify the token before the long stages.")
+    parser.add_argument("--leak-date-fallback", action="store_true",
+                        help="When a leak has no REVISEDLEAKDATE, use its "
+                             "DISCOVEREDDATE, REPAIREDDATE or COMPLETEDDATE "
+                             "instead. Off by default because it changes which "
+                             "leaks relocate; a run reports how many it would "
+                             "rescue either way.")
     parser.add_argument("--diameter", choices=("exact", "fuzzy"), default=None,
                         help="How strictly a leak's diameter must match the "
                              "pipe's. exact (the default) is the original rule; "
@@ -150,11 +157,15 @@ def main(argv=None):
     if args.no_view and args.view_only:
         fail("--no-view and --view-only ask for opposite things.")
 
+    if args.leak_date_fallback:
+        os.environ["LEAKRELOCATION_LEAK_DATE_FALLBACK"] = "1"
     mode = apply_diameter_mode(args.diameter)
     output = config.output_gpkg_for(mode)
 
     log("=== LeakRelocation ===")
     log(f"Diameter rule: {mode}")
+    log(f"Leak date fallback: "
+        f"{'on' if config.USE_LEAK_DATE_FALLBACK else 'off'}")
     log(f"GeoPackage: {output}")
     log(f"Layer cache: {config.LAYER_CACHE_DIR}")
 

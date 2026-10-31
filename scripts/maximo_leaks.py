@@ -158,6 +158,7 @@ def main(argv=None):
         loaded["service pipes"],
         output_gpkg=destination,
         leak_label="Maximo leaks",
+        leak_source="maximo",
     )
 
     log("")

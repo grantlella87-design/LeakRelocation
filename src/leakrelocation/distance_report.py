@@ -333,19 +333,30 @@ def radius_passes(frame):
     return rows
 
 
+def one_value_of(audit, column):
+    """The single value a column holds, or None when it holds more than one.
+
+    Used for the facts about a whole output - which leak set it came from,
+    which diameter rule wrote it. Recorded per row by the workflow, so a
+    GeoPackage says what it is rather than the reader having to remember which
+    file is which.
+    """
+    if column not in audit.columns or not len(audit):
+        return None
+    seen = {label(value, "") for value in audit[column].tolist()}
+    seen.discard("")
+    if len(seen) == 1:
+        return seen.pop()
+    return "/".join(sorted(seen)) if seen else None
+
+
 def diameter_mode_of(audit):
     """Which diameter rule wrote this output, read off the rows themselves.
 
     Recorded per row by the workflow, so a GeoPackage says which rule produced
     it rather than the reader having to remember which file is which.
     """
-    if schema.DIAMETER_MODE not in audit.columns or not len(audit):
-        return None
-    seen = {label(value, "") for value in audit[schema.DIAMETER_MODE].tolist()}
-    seen.discard("")
-    if len(seen) == 1:
-        return seen.pop()
-    return "/".join(sorted(seen)) if seen else None
+    return one_value_of(audit, schema.DIAMETER_MODE)
 
 
 def build_report(audit, source="", max_radius_ft=None, compare_audit=None,
@@ -458,6 +469,11 @@ def build_report(audit, source="", max_radius_ft=None, compare_audit=None,
         "by_radius": radius_passes(matched),
         "material_agreement": material_agreement(matched),
         "diameter_mode": diameter_mode_of(audit),
+        "leak_source": one_value_of(audit, schema.LEAK_SOURCE),
+        # Which column supplied each leak's date. A relocation checked against
+        # the pipe's life should say what it was checked with, and a run where
+        # this is mostly blank is a run where the date rule decided nothing.
+        "date_source": counted(matched, schema.LEAK_DATE_SOURCE),
         "diameter_match": counted(matched, schema.DIAMETER_MATCH),
         "by_diameter_match": grouped(matched, schema.DIAMETER_MATCH),
         "date_check": counted(matched, "DateCheck"),

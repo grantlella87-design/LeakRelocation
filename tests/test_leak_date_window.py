@@ -281,3 +281,153 @@ class TestADateIsReadWhateverShapeItArrivesIn:
             IN_SERVICE_AT_LEAK, leak_ms, pipe_ms, None)
         assert allowed is True
         assert reason == "ok"
+
+
+class TestTheDateFallbackChain:
+    """REVISEDLEAKDATE came back empty on all 98,501 MA rows, so DateCheck
+    reads "no_leak_date" for 98.1% of the audit and the pipe-life rule decides
+    nothing - a leak is matched to a pipe that may have been laid years after
+    it was reported, and the only sign is a column nobody reads.
+
+    DISCOVEREDDATE, REPAIREDDATE and COMPLETEDDATE sit on the same row. They are
+    always collected and counted, and only used when asked for, because using
+    them changes which leaks relocate.
+    """
+
+    def test_the_fallback_fields_are_real_columns_on_layer_206(self, workflow):
+        import json
+        import os
+        path = os.path.join(
+            REPO_ROOT, "reference", "mapserver_json",
+            "NY_DNV_Synergi_RiskResults_Assets_NY", "layer_206_Hist_GasLeak.json")
+        if not os.path.isfile(path):
+            pytest.skip("reference metadata is not in this checkout")
+        with open(path, encoding="utf-8") as handle:
+            dates = {field["name"] for field in json.load(handle)["fields"]
+                     if field["type"] == "esriFieldTypeDate"}
+        for name in workflow.LEAK_DATE_FALLBACK_CANDIDATES:
+            assert name in dates, name
+
+    def test_they_are_not_the_primary_field(self, workflow):
+        overlap = set(workflow.LEAK_DATE_FALLBACK_CANDIDATES) & set(
+            workflow.LEAK_DATE_CANDIDATES)
+        assert overlap == set()
+
+    def test_lastupdate_is_not_among_them(self, workflow):
+        """LASTUPDATE is when the GIS row was touched, not when the leak
+        happened, and the delta refresh already keys on it. Using it as a leak
+        date would compare a pipe's life against an edit timestamp."""
+        assert "LASTUPDATE" not in workflow.LEAK_DATE_FALLBACK_CANDIDATES
+        assert "DUEDATE" not in workflow.LEAK_DATE_FALLBACK_CANDIDATES
+
+    def test_the_primary_date_wins_when_it_is_there(self, workflow):
+        row = {"REVISEDLEAKDATE": "2019-04-02", "DISCOVEREDDATE": "2015-01-01"}
+        ms, source, _ = workflow.leak_date_with_source(
+            row, "REVISEDLEAKDATE", ["DISCOVEREDDATE"], True)
+        assert workflow.epoch_ms_to_iso(ms) == "2019-04-02"
+        assert source == "REVISEDLEAKDATE"
+
+    def test_the_first_available_fallback_is_used(self, workflow):
+        row = {"REVISEDLEAKDATE": None, "DISCOVEREDDATE": None,
+               "REPAIREDDATE": "2016-06-01", "COMPLETEDDATE": "2017-01-01"}
+        ms, source, had = workflow.leak_date_with_source(
+            row, "REVISEDLEAKDATE",
+            ["DISCOVEREDDATE", "REPAIREDDATE", "COMPLETEDDATE"], True)
+        assert workflow.epoch_ms_to_iso(ms) == "2016-06-01"
+        assert source == "REPAIREDDATE"
+        assert had is True
+
+    def test_with_the_fallback_off_the_date_stays_absent(self, workflow):
+        row = {"REVISEDLEAKDATE": None, "DISCOVEREDDATE": "2015-01-01"}
+        ms, source, had = workflow.leak_date_with_source(
+            row, "REVISEDLEAKDATE", ["DISCOVEREDDATE"], False)
+        assert ms is None
+        assert source == ""
+        # Still reported, which is how a run says what it would rescue.
+        assert had is True
+
+    def test_a_row_with_no_date_anywhere_reports_nothing_to_rescue(self, workflow):
+        row = {"REVISEDLEAKDATE": None, "DISCOVEREDDATE": None}
+        ms, source, had = workflow.leak_date_with_source(
+            row, "REVISEDLEAKDATE", ["DISCOVEREDDATE"], True)
+        assert (ms, source, had) == (None, "", False)
+
+    def test_no_fallback_columns_at_all_is_not_an_error(self, workflow):
+        """A cache downloaded before these were requested has none of them."""
+        ms, source, had = workflow.leak_date_with_source(
+            {"REVISEDLEAKDATE": "2019-04-02"}, "REVISEDLEAKDATE", [], True)
+        assert workflow.epoch_ms_to_iso(ms) == "2019-04-02"
+        assert had is False
+
+    def test_no_primary_column_at_all_still_uses_a_fallback(self, workflow):
+        ms, source, _ = workflow.leak_date_with_source(
+            {"DISCOVEREDDATE": "2015-01-01"}, None, ["DISCOVEREDDATE"], True)
+        assert source == "DISCOVEREDDATE"
+        assert workflow.epoch_ms_to_iso(ms) == "2015-01-01"
+
+    def test_a_fallback_date_is_checked_against_the_pipe_the_same_way(
+            self, workflow):
+        """The point of the whole thing: a date from DISCOVEREDDATE goes
+        through the same rule, so a pipe laid after the leak is refused."""
+        row = {"REVISEDLEAKDATE": None, "DISCOVEREDDATE": "1995-01-01"}
+        ms, _, _ = workflow.leak_date_with_source(
+            row, "REVISEDLEAKDATE", ["DISCOVEREDDATE"], True)
+        pipe_created = workflow.date_value_to_epoch_ms(946_684_800_000.0)
+        allowed, reason = date_rule_result(
+            IN_SERVICE_AT_LEAK, ms, pipe_created, None)
+        assert allowed is False
+        assert reason == "pipe_created_after_leak"
+
+    def test_the_same_leak_is_unchecked_with_the_fallback_off(self, workflow):
+        """And this is what it costs to leave it off: the leak relocates onto a
+        pipe recorded five years after it was discovered, flagged only by a
+        column reading no_leak_date."""
+        row = {"REVISEDLEAKDATE": None, "DISCOVEREDDATE": "1995-01-01"}
+        ms, _, _ = workflow.leak_date_with_source(
+            row, "REVISEDLEAKDATE", ["DISCOVEREDDATE"], False)
+        allowed, reason = date_rule_result(
+            IN_SERVICE_AT_LEAK, ms, workflow.date_value_to_epoch_ms(946_684_800_000.0),
+            None)
+        assert allowed is True
+        assert reason == "no_leak_date"
+
+    def test_the_fields_are_requested_from_the_service(self, workflow):
+        """Collected whether or not they are used - the count of what they
+        would rescue is the case for using them."""
+        import io
+        from contextlib import redirect_stdout
+        meta = {"fields": [{"name": name} for name in [
+            "OBJECTID", "GlobalID", "LASTUPDATE", "LMSLEAKNUMBER",
+            "jurisdiction", "ADDRESS", "REVISEDLEAKDATE", "DISCOVEREDDATE",
+            "REPAIREDDATE", "COMPLETEDDATE"]]}
+        with redirect_stdout(io.StringIO()):
+            out_fields = workflow.build_out_fields(meta, "historic leaks")
+        for name in workflow.LEAK_DATE_FALLBACK_CANDIDATES:
+            assert name in out_fields, name
+
+    def test_they_are_not_asked_of_a_pipe_layer(self, workflow):
+        import io
+        from contextlib import redirect_stdout
+        meta = {"fields": [{"name": name} for name in [
+            "OBJECTID", "GlobalID", "LASTUPDATE", "nominaldiameter",
+            "ASSETGROUP", "ASSETTYPE", "operatingpressure", "jurisdiction"]]}
+        with redirect_stdout(io.StringIO()):
+            out_fields = workflow.build_out_fields(meta, "distribution pipes")
+        for name in workflow.LEAK_DATE_FALLBACK_CANDIDATES:
+            assert name not in out_fields, name
+
+    def test_adding_them_moves_the_leak_cache_signature_only(self, workflow,
+                                                             monkeypatch):
+        """A newly requested column has to force one full refresh of the leak
+        layer, and must not invalidate the 1.27 million row pipe cache."""
+        before_leak = workflow.out_field_request_signature("historic leaks")
+        before_pipe = workflow.out_field_request_signature("service pipes")
+        monkeypatch.setattr(workflow, "LEAK_DATE_FALLBACK_CANDIDATES",
+                            [*workflow.LEAK_DATE_FALLBACK_CANDIDATES, "NEWDATE"])
+        assert workflow.out_field_request_signature("historic leaks") != before_leak
+        assert workflow.out_field_request_signature("service pipes") == before_pipe
+
+    def test_it_is_off_by_default(self, workflow):
+        """Turning it on changes which leaks relocate, so it is asked for."""
+        from leakrelocation import config
+        assert config.USE_LEAK_DATE_FALLBACK is False

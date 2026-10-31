@@ -42,6 +42,85 @@ those layers also carry `installationdate` and `inservicedate`. A pipe installed
 in 1960 and migrated into the system in 2015 has `CREATIONDATE` 2015, so a 2010
 leak fails the check even though the pipe was in the ground.
 
+## Updating the leak layer's geometry
+
+Everything else here is additive: it downloads, computes, and writes its own
+files. This one reaches back and moves the leaks on layer 206 in place, in
+production asset records. There is no undo on the far side.
+
+```bat
+python scripts\apply_relocated_geometry.py                  dry run
+python scripts\apply_relocated_geometry.py --apply          do it
+python scripts\apply_relocated_geometry.py --rollback FILE  put them back
+```
+
+**It is a dry run unless `--apply` is given**, and `--apply` still asks for the
+phrase `MOVE THE LEAKS` to be typed next to the number of features. A flag is
+easy to paste from somewhere; a phrase typed beside a count is the last point at
+which someone notices the number is wrong.
+
+### What it does before it edits anything
+
+1. pairs each relocated leak with its `OBJECTID` on the layer;
+2. **re-reads the current geometry from the service** — so the rollback restores
+   what is there now, and a feature someone has already moved by hand is
+   reported rather than overwritten;
+3. **writes the rollback file**, and stops if it cannot;
+4. prints what it would do, and stops unless told otherwise.
+
+The rollback file is an `applyEdits` payload, not a report, so undoing is
+running it rather than reconstructing it under pressure:
+
+```bat
+python scripts\apply_relocated_geometry.py --rollback ...\leak_geometry_rollback_20261031T0113Z.json --apply
+```
+
+### What stops it
+
+| Guard | Why |
+| --- | --- |
+| moves over `--max-distance` (default 100 ft) | the search widens to 3,000 ft; a leak that only matched at 2,900 ft is a record to check, not an edit to push. `--allow-long-moves` overrides |
+| more than `--max-features` (default 25,000) | catches a bad run, not a big one. Raise it deliberately |
+| too many features missing from the layer | the output no longer describes this layer, so the edits were computed against something else |
+| a leak already at the relocated position | a second run of the same output is a no-op, not a rewrite of every feature |
+| a CRS that cannot be established | `applyEdits` takes geometry at face value. Sending analysis-CRS feet to a layer storing degrees writes every leak into the sea, and the service accepts it |
+
+Each batch is one transaction (`rollbackOnFailure`), and every feature's result
+is checked — `applyEdits` can return HTTP 200 with half the batch rejected, and
+reporting that as success would claim leaks moved that did not. If a batch is
+refused mid-run, the message says how many earlier batches went through and
+where the rollback file is.
+
+Start with the dry run and read what it says.
+
+### The Maximo leaks
+
+Their geometry lives in the SQL database, not on an ArcGIS layer, so writing it
+back is a SQL `UPDATE` rather than `applyEdits`. That is not built — say the
+word and it is a small addition alongside this.
+
+## Leak dates, and why the rule was deciding nothing
+
+`REVISEDLEAKDATE` came back empty on all 98,501 MA rows, so `DateCheck` reads
+`no_leak_date` for 98.1% of the audit: a leak can be matched to a pipe recorded
+years after it was reported, and the only sign is a column nobody reads.
+
+`DISCOVEREDDATE`, `REPAIREDDATE` and `COMPLETEDDATE` sit on the same row.
+
+```bat
+python run.py --leak-date-fallback
+```
+
+They are **always collected and always counted**, so every run reports how many
+leaks have no revised date but do carry another one — the size of the gap is
+visible whether or not you act on it. They are only *used* when asked for,
+because using them changes which leaks relocate: a leak that matched unchecked
+can be refused once there is a date to check it against. That is the rule
+working, not a regression.
+
+Every output row records `LeakDateSource` — the column that supplied its date,
+or blank when nothing did — and the dashboard has a panel for it.
+
 ## The two leak sources
 
 There are two sets of leaks and they arrive by completely different routes. Each
@@ -55,6 +134,11 @@ being read and the outputs being written is shared.
 | Material & diameter | `input/HL_SupplementalData.csv`, joined on GlobalID | the same query |
 | Leak id | `GlobalID` | `LeakId` from the query |
 | Output | `HistoricLeakRelocation.gpkg` | `MaximoLeakRelocation.gpkg` |
+
+Every output row records `LeakSource` — `historic` or `maximo` — so a
+GeoPackage says which leak set it holds, and the dashboard names it at the top
+of the page. The map carries the Maximo relocations in their own group, off by
+default until that output exists.
 
 What they share is everything that matters: the pipe layers, the ASSETTYPE
 material decode, the diameter rule, the date rule, the search radii, the three
@@ -263,6 +347,8 @@ different leaks.
 | `src/leakrelocation/assettype.py` | ASSETGROUP/ASSETTYPE subtype decoding. |
 | `src/leakrelocation/viewer_pane.py` | Attribute table pane docked under the map. |
 | `scripts/maximo_leaks.py` | The enterprise (Maximo) leaks, read from SQL. |
+| `scripts/apply_relocated_geometry.py` | Move the leaks on layer 206 to their relocated position. |
+| `src/leakrelocation/apply_geometry.py` | The write-back: rollback, guards, applyEdits batching. |
 | `src/leakrelocation/maximo_sql.py` | The SQL boundary: connection, query, column contract. |
 | `scripts/` | Sign-in and cache-repair tools. |
 | `input/` | The supplemental leak CSV, and the Maximo query template. |

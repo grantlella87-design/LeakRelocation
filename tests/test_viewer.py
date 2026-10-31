@@ -805,3 +805,95 @@ class TestSwitchingBetweenDiameterRules:
         page = server.dashboard_page("exact")
         assert 'id="thresh"' in page
         assert "Against the other diameter rule" not in page
+
+
+class TestTheMapShowsBothLeakSets:
+    """The two leak sets write separate GeoPackages so neither overwrites the
+    other, which means the map has to be told which output a layer reads."""
+
+    @pytest.fixture
+    def server(self):
+        pytest.importorskip("geopandas")
+        sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+        import leaflet_bbox_server
+        return leaflet_bbox_server
+
+    def write(self, path, layer, keys):
+        import geopandas as gpd
+        import pandas as pd
+        from shapely.geometry import Point
+        frame = pd.DataFrame([{"OrigLeakOID": k, "LeakKey": str(k)} for k in keys])
+        gpd.GeoDataFrame(
+            frame, geometry=[Point(-71 - i * 0.01, 42) for i in range(len(keys))],
+            crs="EPSG:4326").to_file(str(path), layer=layer, driver="GPKG")
+
+    def test_a_layer_defaults_to_the_historic_output(self, server):
+        assert server.gpkg_for({"source": "gpkg", "layer": "relocated_leaks"}) \
+            == server.OUTPUT_GPKG
+
+    def test_a_maximo_layer_reads_the_maximo_output(self, server):
+        path = server.gpkg_for({"source": "gpkg", "gpkg": "maximo",
+                                "layer": "relocated_leaks"})
+        assert path != server.OUTPUT_GPKG
+        assert "Maximo" in path.name
+
+    def test_the_maximo_layers_are_configured(self, server):
+        for key in ("maximo_leaks_relocated", "maximo_connectors"):
+            assert key in server.LAYERS, key
+            assert server.LAYERS[key]["gpkg"] == "maximo"
+            assert server.LAYERS[key]["group"] == "maximo"
+
+    def test_they_are_off_by_default(self, server):
+        """Someone who has only run the historic leaks should not open the map
+        to two empty entries and a warning about a file they never made."""
+        for key in ("maximo_leaks_relocated", "maximo_connectors"):
+            assert server.LAYERS[key]["default"] is False
+
+    def test_every_group_a_layer_names_exists(self, server):
+        for key, cfg in server.LAYERS.items():
+            assert cfg["group"] in server.GROUPS, key
+
+    def test_the_two_outputs_do_not_share_a_cache_entry(
+            self, server, tmp_path, monkeypatch):
+        """relocated_leaks exists in both outputs. One cache entry keyed on the
+        bare layer name would hand the Maximo layer the historic leaks."""
+        historic = tmp_path / "HistoricLeakRelocation.gpkg"
+        maximo = tmp_path / "MaximoLeakRelocation.gpkg"
+        self.write(historic, "relocated_leaks", [1, 2, 3])
+        self.write(maximo, "relocated_leaks", [9])
+        monkeypatch.setattr(server, "OUTPUT_GPKG", historic)
+        monkeypatch.setattr(server.config, "MAXIMO_OUTPUT_GPKG", maximo)
+        monkeypatch.setattr(server.config, "DIAMETER_MATCH_MODE", "exact")
+
+        cache = {}
+        with redirect_stdout(io.StringIO()):
+            from_historic = server.source_frame(
+                "main_leaks_relocated",
+                {"source": "gpkg", "layer": "relocated_leaks"}, cache)
+            from_maximo = server.source_frame(
+                "maximo_leaks_relocated",
+                {"source": "gpkg", "gpkg": "maximo",
+                 "layer": "relocated_leaks"}, cache)
+        assert len(from_historic) == 3
+        assert len(from_maximo) == 1
+
+    def test_a_missing_maximo_output_leaves_that_layer_empty_not_broken(
+            self, server, tmp_path, monkeypatch):
+        monkeypatch.setattr(server, "OUTPUT_GPKG", tmp_path / "nothing.gpkg")
+        monkeypatch.setattr(server.config, "MAXIMO_OUTPUT_GPKG",
+                            tmp_path / "also_nothing.gpkg")
+        with redirect_stdout(io.StringIO()):
+            frame = server.source_frame(
+                "maximo_leaks_relocated",
+                {"source": "gpkg", "gpkg": "maximo",
+                 "layer": "relocated_leaks"}, {})
+        assert len(frame) == 0
+
+    def test_the_page_lists_the_maximo_group(self, server, monkeypatch):
+        monkeypatch.setattr(server, "BOUNDS", {
+            "west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
+            "center_lat": 42.5, "center_lon": -71.5,
+        })
+        page = server.html_page()
+        assert "ENTERPRISE (MAXIMO) LEAKS" in page
+        assert "Maximo leaks - relocated location" in page

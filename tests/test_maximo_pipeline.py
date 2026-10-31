@@ -294,3 +294,98 @@ class TestTheSharedPathIsActuallyShared:
         import inspect
         assert "with_leaks" in inspect.signature(
             workflow.load_pipe_layers).parameters
+
+
+class TestTheDateFallbackChangesOutcomes:
+    """The date fallback is only worth having if it actually decides something.
+    These relocate the same leak twice, with it off and on."""
+
+    def leak_with_dates(self, revised, discovered):
+        import geopandas as gpd
+        import pandas as pd
+        from shapely.geometry import Point
+        frame = pd.DataFrame([{
+            "OBJECTID": 1, "GLOBALID": "{A}", "LMSLEAKNUMBER": "1",
+            "ADDRESS": "", "CITY": "", "NEARESTXSTREET": "",
+            "REVISEDLEAKDATE": revised, "DISCOVEREDDATE": discovered,
+        }])
+        leaks = gpd.GeoDataFrame(
+            frame, geometry=[Point(760_000, 2_960_000)], crs=CRS)
+        attributes = {"A": {"material": "Cast Iron", "diameter": 8.0,
+                            "pressure": "", "facility": "Main"}}
+        return leaks, attributes
+
+    def test_with_it_off_an_old_leak_relocates_onto_a_newer_pipe(
+            self, workflow, tmp_path, monkeypatch):
+        """What happens today for 98.1% of the audit: no revised date, so the
+        pipe-life rule decides nothing and the leak is matched to a pipe
+        recorded years after it was discovered."""
+        from leakrelocation import config
+        monkeypatch.setattr(config, "USE_LEAK_DATE_FALLBACK", False)
+        leaks, attributes = self.leak_with_dates(None, "1995-01-01")
+        # The pipe's record is from 2000, five years after the leak.
+        distribution = pipes([(760_020, 2_960_000, "Cast Iron", 8.0)])
+        _, results, _, _ = relocate(
+            workflow, leaks, attributes, distribution, tmp_path=tmp_path)
+        assert results[0]["matched"] is True
+        assert results[0]["date_reason"] == "no_leak_date"
+
+    def test_with_it_on_the_same_leak_is_refused(self, workflow, tmp_path,
+                                                 monkeypatch):
+        from leakrelocation import config
+        monkeypatch.setattr(config, "USE_LEAK_DATE_FALLBACK", True)
+        leaks, attributes = self.leak_with_dates(None, "1995-01-01")
+        distribution = pipes([(760_020, 2_960_000, "Cast Iron", 8.0)])
+        _, results, _, _ = relocate(
+            workflow, leaks, attributes, distribution, tmp_path=tmp_path)
+        assert results[0]["matched"] is False
+        assert results[0]["rejected_on_date"] == 1
+
+    def test_a_leak_newer_than_the_pipe_still_relocates_with_it_on(
+            self, workflow, tmp_path, monkeypatch):
+        """The fallback is not a filter - a leak discovered after the pipe was
+        recorded passes the check and keeps its relocation."""
+        from leakrelocation import config
+        monkeypatch.setattr(config, "USE_LEAK_DATE_FALLBACK", True)
+        leaks, attributes = self.leak_with_dates(None, "2019-04-02")
+        distribution = pipes([(760_020, 2_960_000, "Cast Iron", 8.0)])
+        _, results, _, _ = relocate(
+            workflow, leaks, attributes, distribution, tmp_path=tmp_path)
+        assert results[0]["matched"] is True
+        assert results[0]["date_reason"] == "ok"
+
+    def test_the_audit_records_which_field_supplied_the_date(
+            self, workflow, tmp_path, monkeypatch):
+        import geopandas as gpd
+        from leakrelocation import config
+        monkeypatch.setattr(config, "USE_LEAK_DATE_FALLBACK", True)
+        leaks, attributes = self.leak_with_dates(None, "2019-04-02")
+        distribution = pipes([(760_020, 2_960_000, "Cast Iron", 8.0)])
+        _, _, _, out = relocate(
+            workflow, leaks, attributes, distribution, tmp_path=tmp_path)
+        audit = gpd.read_file(out, layer="leak_relocation_audit")
+        assert audit.iloc[0]["LeakDateSource"] == "DISCOVEREDDATE"
+        assert audit.iloc[0]["LeakDate"] == "2019-04-02"
+
+    def test_the_source_is_blank_when_nothing_supplied_a_date(
+            self, workflow, tmp_path, monkeypatch):
+        import geopandas as gpd
+        from leakrelocation import config
+        monkeypatch.setattr(config, "USE_LEAK_DATE_FALLBACK", True)
+        leaks, attributes = self.leak_with_dates(None, None)
+        distribution = pipes([(760_020, 2_960_000, "Cast Iron", 8.0)])
+        _, _, _, out = relocate(
+            workflow, leaks, attributes, distribution, tmp_path=tmp_path)
+        audit = gpd.read_file(out, layer="leak_relocation_audit")
+        assert audit.iloc[0]["LeakDateSource"] == ""
+
+    def test_the_run_counts_what_a_fallback_would_rescue(
+            self, workflow, tmp_path, monkeypatch):
+        """With it off, the run still has to say how big the gap is."""
+        from leakrelocation import config
+        monkeypatch.setattr(config, "USE_LEAK_DATE_FALLBACK", False)
+        leaks, attributes = self.leak_with_dates(None, "1995-01-01")
+        distribution = pipes([(760_020, 2_960_000, "Cast Iron", 8.0)])
+        tasks, _, counters, _ = relocate(
+            workflow, leaks, attributes, distribution, tmp_path=tmp_path)
+        assert counters["leaks_a_date_fallback_would_rescue"] == 1

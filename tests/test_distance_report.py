@@ -397,8 +397,8 @@ class TestAgainstAProductionShapedFrame:
     tests above use a handful of rows; this is the only place the arithmetic is
     exercised at the scale it actually runs at."""
 
-    @staticmethod
     @pytest.fixture(scope="class")
+    @staticmethod
     def report():
         import random
         random.seed(11)

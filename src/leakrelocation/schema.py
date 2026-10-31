@@ -82,6 +82,13 @@ DISTANCE_FT = "DistanceFt"
 # How much diameter slack the match took - exact, one_size_up, one_size_down -
 # and which rule the run was using. Together they say whether a relocation is
 # one the strict rule would also have made.
+# Which column supplied the leak's date - the primary field, one of the
+# fallbacks, or blank when the row had none. A relocation that was checked
+# against the pipe's life should say what it was checked with.
+LEAK_DATE_SOURCE = "LeakDateSource"
+# Which leak set a row came from: "historic" (LMS, layer 206) or "maximo"
+# (enterprise, from SQL). Two outputs that look identical otherwise.
+LEAK_SOURCE = "LeakSource"
 DIAMETER_MATCH = "DiameterMatch"
 DIAMETER_MODE = "DiameterMode"
 

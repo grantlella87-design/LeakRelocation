@@ -96,6 +96,7 @@ MATERIAL_COLORS = {
 GROUPS = {
     "mains": {"label": "MAINS", "match": "distribution"},
     "services": {"label": "SERVICES", "match": "service"},
+    "maximo": {"label": "ENTERPRISE (MAXIMO) LEAKS", "match": None},
     "other": {"label": "OTHER", "match": None},
 }
 
@@ -159,6 +160,26 @@ LAYERS = {
         "linked": "service",
         "kind": "trace_line", "color": "#d40000", "radius": 0, "weight": 2,
         "default": True,
+    },
+    # --- ENTERPRISE (MAXIMO) LEAKS -------------------------------------------
+    #
+    # Their own output, so their own layers. Off by default: someone who has
+    # only ever run the historic leaks should not open the map to two empty
+    # entries and a warning about a GeoPackage they have never heard of.
+    "maximo_leaks_relocated": {
+        "label": "Maximo leaks - relocated location",
+        "group": "maximo",
+        "source": "gpkg", "gpkg": "maximo", "layer": "relocated_leaks",
+        "kind": "relocated_point", "color": "#7b1fa2", "radius": 4, "weight": 1,
+        "default": False,
+    },
+    "maximo_connectors": {
+        "label": "Maximo leaks - connecting line",
+        "group": "maximo",
+        "source": "gpkg", "gpkg": "maximo",
+        "layer": "relocated_leak_offset_lines",
+        "kind": "trace_line", "color": "#ab47bc", "radius": 0, "weight": 2,
+        "default": False,
     },
     # --- OTHER ---------------------------------------------------------------
     "retired_pipes": {
@@ -514,12 +535,19 @@ def read_cache(key):
     return limit_columns(gdf)
 
 
-def read_gpkg(layer):
-    if not OUTPUT_GPKG.exists():
-        log(f"WARNING missing output GeoPackage: {OUTPUT_GPKG}")
+def read_gpkg(layer, path=None):
+    """One layer of a relocation output.
+
+    `path` names which output. There is one per leak set - the historic leaks
+    and the Maximo leaks write separate GeoPackages so neither overwrites the
+    other - and the map shows both.
+    """
+    path = path or OUTPUT_GPKG
+    if not path.exists():
+        log(f"WARNING missing output GeoPackage: {path}")
         return gpd.GeoDataFrame(geometry=[], crs=WGS84)
     try:
-        gdf = gpd.read_file(str(OUTPUT_GPKG), layer=layer)
+        gdf = gpd.read_file(str(path), layer=layer)
     except Exception as ex:  # noqa: BLE001 - see below
         # Deliberately broad, and reported rather than swallowed. Which exception
         # a bad read raises depends on the engine geopandas is using: pyogrio
@@ -528,7 +556,7 @@ def read_gpkg(layer):
         # its own DriverError, which is not. A half-written GeoPackage can also
         # fail inside GDAL in ways neither documents. No unreadable output layer
         # is worth taking the whole map down for: the layer is empty and says why.
-        log(f"WARNING could not read {layer}: {ex}")
+        log(f"WARNING could not read {layer} from {path}: {ex}")
         return gpd.GeoDataFrame(geometry=[], crs=WGS84)
     gdf = gdf[gdf.geometry.notna()].copy()
     if gdf.crs is None:
@@ -576,13 +604,31 @@ def slice_for(key, cfg, base):
     return base
 
 
+def gpkg_for(cfg):
+    """Which relocation output a gpkg-sourced layer reads.
+
+    Defaults to the historic one, so every existing layer is unchanged.
+    """
+    if cfg.get("gpkg") == "maximo":
+        return config.output_gpkg_for(
+            config.DIAMETER_MATCH_MODE, base=config.MAXIMO_OUTPUT_GPKG)
+    return OUTPUT_GPKG
+
+
 def source_frame(key, cfg, cache):
     """Load a layer's source, reusing one already read for another layer."""
-    name = cfg.get("cache") if cfg["source"] == "cache" else cfg.get("layer")
+    if cfg["source"] == "cache":
+        name = cfg.get("cache")
+    else:
+        # Keyed on the file as well: relocated_leaks exists in both outputs and
+        # one cache entry for the bare layer name would hand the Maximo layer
+        # the historic leaks.
+        name = (str(gpkg_for(cfg)), cfg.get("layer"))
     if name in cache:
         return cache[name]
     try:
-        frame = read_cache(name) if cfg["source"] == "cache" else read_gpkg(name)
+        frame = (read_cache(name) if cfg["source"] == "cache"
+                 else read_gpkg(cfg.get("layer"), gpkg_for(cfg)))
     except RuntimeError as ex:
         # Every layer degrades. This used to re-raise for anything not marked
         # optional, so one missing pipe cache meant no map at all - on a fresh

@@ -181,6 +181,11 @@ SUPPLEMENTAL_CSV = str(config.SUPPLEMENTAL_CSV)
 # two outputs sit beside each other and can be compared instead of one
 # replacing the other.
 DIAMETER_MATCH_MODE = config.DIAMETER_MATCH_MODE
+# Which leak set this run is relocating. "historic" for the LMS leaks from
+# layer 206, "maximo" for the enterprise leaks from SQL. Written onto every
+# output row, so a GeoPackage says where its leaks came from rather than the
+# reader having to remember which file is which.
+LEAK_SOURCE = "historic"
 OUTPUT_FOLDER = str(config.OUTPUT_GPKG.parent)
 OUTPUT_GPKG = str(config.output_gpkg_for(DIAMETER_MATCH_MODE))
 HIST_LEAK_URL = config.HIST_LEAK_URL
@@ -312,6 +317,24 @@ PIPE_PRESSURE_CANDIDATES = ["operatingpressure", "maopdesign"]
 # The date the relocation window is measured from. REVISEDLEAKDATE on layer
 # 206, MAXIMOLEAKDATE from the SQL query.
 LEAK_DATE_CANDIDATES = ["REVISEDLEAKDATE", "MAXIMOLEAKDATE"]
+
+# The other dates layer 206 carries, in the order they stand in for a missing
+# REVISEDLEAKDATE.
+#
+# This matters more than it looks. REVISEDLEAKDATE came back empty on all
+# 98,501 MA rows, so DateCheck reads "no_leak_date" for 98.1% of the audit and
+# the pipe-life rule decides nothing at all - a leak is matched to a pipe that
+# may have been laid years after it was reported, and the only sign is a column
+# nobody reads. Discovered, repaired and completed are all real dates on the
+# same row, and any of them places the leak in time far better than nothing.
+#
+# They are always collected and always reported, so the size of the gap is
+# visible. They are only *used* when config.USE_LEAK_DATE_FALLBACK says so,
+# because using them changes which leaks relocate: a leak that matched
+# unchecked may be refused once it has a date to check against. Every row
+# records which field supplied its date, in LeakDateSource.
+LEAK_DATE_FALLBACK_CANDIDATES = ["DISCOVEREDDATE", "REPAIREDDATE",
+                                 "COMPLETEDDATE"]
 PIPE_CREATED_CANDIDATES = ["CREATIONDATE"]
 PIPE_RETIRED_CANDIDATES = ["dateretired"]
 
@@ -860,6 +883,13 @@ def build_out_fields(meta, layer_name):
             resolved = resolve_from_names(field_names, [name])
             if resolved:
                 wanted.append(resolved)
+        # The same again for the other dates. Collected whether or not they are
+        # used, so a run can say how many leaks have no revised date but do
+        # have a discovered one - which is the whole case for using them.
+        for name in LEAK_DATE_FALLBACK_CANDIDATES if field_names else []:
+            resolved = resolve_from_names(field_names, [name])
+            if resolved:
+                wanted.append(resolved)
     else:
         candidate_groups = [
             PIPE_DIAMETER_CANDIDATES,
@@ -1067,6 +1097,7 @@ def out_field_request_signature(layer_name=None):
         LEAK_ADDRESS_CANDIDATES,
         LEAK_LOCATION_CANDIDATES,
         LEAK_DATE_CANDIDATES,
+        LEAK_DATE_FALLBACK_CANDIDATES,
     ]
     pipe = [
         PIPE_DIAMETER_CANDIDATES,
@@ -1651,6 +1682,34 @@ def leak_location(row, fields):
         {name: row.get(column) for name, column in fields.items()})
 
 
+# Where a leak's date came from, for the LeakDateSource column. The primary
+# field is named outright; the fallbacks carry their own field name, so a row
+# says "DISCOVEREDDATE" rather than "a fallback".
+DATE_SOURCE_NONE = ""
+
+
+def leak_date_with_source(row, primary_field, fallback_fields, use_fallback):
+    """The leak's date in epoch milliseconds, and which column supplied it.
+
+    Returns (epoch_ms, source, had_fallback). `had_fallback` is True whenever a
+    fallback column held a date, whether or not it was used - that is how a run
+    reports the size of the gap without changing what it does about it.
+    """
+    primary_ms = (date_value_to_epoch_ms(row.get(primary_field))
+                  if primary_field else None)
+    available = None
+    for field in fallback_fields:
+        candidate = date_value_to_epoch_ms(row.get(field))
+        if candidate is not None:
+            available = (candidate, field)
+            break
+    if primary_ms is not None:
+        return primary_ms, primary_field, available is not None
+    if available and use_fallback:
+        return available[0], available[1], True
+    return None, DATE_SOURCE_NONE, available is not None
+
+
 def prepare_leaks(leaks_gdf, supplemental):
     step("Preparing leak records")
     leak_oid_field = resolved_field(
@@ -1687,6 +1746,17 @@ def prepare_leaks(leaks_gdf, supplemental):
     if not leak_date_field:
         warn("No leak date column, so no relocation can be checked against the "
              "pipe's life. Re-download the leak layer: python run.py --refresh")
+    # The other dates on the row. Always resolved, so the run can report how
+    # many leaks a fallback would rescue even when it is not using them.
+    date_fallback_fields = []
+    for name in LEAK_DATE_FALLBACK_CANDIDATES:
+        column = resolved_field(leaks_gdf.columns, [name], False, f"leak {name}")
+        if column:
+            date_fallback_fields.append(column)
+    use_date_fallback = config.USE_LEAK_DATE_FALLBACK
+    if date_fallback_fields:
+        log(f"Other date fields available: {', '.join(date_fallback_fields)}"
+            f" ({'in use' if use_date_fallback else 'not used'})")
     prepared = []
     counters = defaultdict(int)
     for _, row in leaks_gdf.iterrows():
@@ -1707,10 +1777,17 @@ def prepare_leaks(leaks_gdf, supplemental):
         if leak_info["diameter"] is None or not leak_info["material"]:
             counters["unmatched_missing_match_attributes"] += 1
             continue
-        leak_date_ms = (date_value_to_epoch_ms(row.get(leak_date_field))
-                        if leak_date_field else None)
+        leak_date_ms, leak_date_source, had_fallback = leak_date_with_source(
+            row, leak_date_field, date_fallback_fields, use_date_fallback)
         if leak_date_ms is None:
             counters["leaks_without_a_revised_date"] += 1
+            if had_fallback:
+                # The number that makes the case: these leaks have no revised
+                # date and do have another one, so the date rule is deciding
+                # nothing for them and would not have to.
+                counters["leaks_a_date_fallback_would_rescue"] += 1
+        elif leak_date_source != leak_date_field:
+            counters[f"leak_date_from_{leak_date_source}"] += 1
         prepared.append(
             {
                 "leak_oid": leak_oid,
@@ -1721,6 +1798,7 @@ def prepare_leaks(leaks_gdf, supplemental):
                 "leak_address": leak_location(row, location_fields),
                 "leak_info": leak_info,
                 "leak_date_ms": leak_date_ms,
+                "leak_date_source": leak_date_source,
                 "allowed_layers": route_layers(leak_info["facility"]),
                 "geometry": row.geometry,
             }
@@ -2089,7 +2167,9 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
                     "DistanceFt": None,
                     "DiameterMatch": "",
                     "DiameterMode": DIAMETER_MATCH_MODE,
+                    "LeakSource": LEAK_SOURCE,
                     "LeakDate": epoch_ms_to_iso(task.get("leak_date_ms")),
+                    "LeakDateSource": task.get("leak_date_source", ""),
                     "PipesRejectedOnDate": result.get("rejected_on_date", 0),
                     "MatchStatus": "NoMatch",
                     "NoMatchReason": result["reason"],
@@ -2124,7 +2204,9 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
                 # one only the widened rule found.
                 "DiameterMatch": result.get("diameter_match", ""),
                 "DiameterMode": DIAMETER_MATCH_MODE,
+                "LeakSource": LEAK_SOURCE,
                 "LeakDate": epoch_ms_to_iso(task.get("leak_date_ms")),
+                "LeakDateSource": task.get("leak_date_source", ""),
                 "DateRule": result.get("date_rule", ""),
                 "DateCheck": result.get("date_reason", ""),
                 "geometry": snapped_point,
@@ -2160,7 +2242,9 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
                 "DistanceFt": result["distance_ft"],
                 "DiameterMatch": result.get("diameter_match", ""),
                 "DiameterMode": DIAMETER_MATCH_MODE,
+                "LeakSource": LEAK_SOURCE,
                 "LeakDate": epoch_ms_to_iso(task.get("leak_date_ms")),
+                "LeakDateSource": task.get("leak_date_source", ""),
                 "PipeCreated": epoch_ms_to_iso(pipe.get("created_ms")),
                 "PipeRetired": epoch_ms_to_iso(pipe.get("retired_ms")),
                 "DateRule": result.get("date_rule", ""),
@@ -2227,6 +2311,8 @@ def banner(leak_source, output_gpkg):
     log(f"Require pressure match: {REQUIRE_PRESSURE_MATCH}")
     log(f"Material family fallback: {ALLOW_MATERIAL_FAMILY_FALLBACK}")
     log(f"Diameter match mode: {DIAMETER_MATCH_MODE}")
+    log(f"Leak date fallback: "
+        f"{'on - ' + ', '.join(LEAK_DATE_FALLBACK_CANDIDATES) if config.USE_LEAK_DATE_FALLBACK else 'off'}")
     if DIAMETER_MATCH_MODE != DIAMETER_EXACT:
         log(f"  A pipe may be one nominal size up or down from the leak's "
             f"diameter. Nominal sizes (in): "
@@ -2266,7 +2352,7 @@ def load_pipe_layers(session, with_leaks=None):
 
 
 def relocate(session, leaks, supplemental, distribution, service,
-             output_gpkg=None, leak_label="leaks"):
+             output_gpkg=None, leak_label="leaks", leak_source="historic"):
     """Match a set of leaks to the pipes and write the outputs.
 
     Everything after the leaks have been obtained, and the whole of what the
@@ -2279,8 +2365,10 @@ def relocate(session, leaks, supplemental, distribution, service,
     would mean the second run silently replacing the first.
     """
     previous_output = OUTPUT_GPKG
+    previous_source = LEAK_SOURCE
     if output_gpkg:
         globals()["OUTPUT_GPKG"] = str(output_gpkg)
+    globals()["LEAK_SOURCE"] = leak_source
     try:
         with timed("normalize CRS"):
             leaks, distribution, service, ANALYSIS_CRS = (
@@ -2324,11 +2412,23 @@ def relocate(session, leaks, supplemental, distribution, service,
         step("Finished")
         for name in sorted(counters):
             log(f"{name}: {counters[name]:,}")
+        rescuable = counters.get("leaks_a_date_fallback_would_rescue", 0)
+        if rescuable and not config.USE_LEAK_DATE_FALLBACK:
+            warn(f"{rescuable:,} leaks have no "
+                 f"{'/'.join(LEAK_DATE_CANDIDATES)} but do carry a "
+                 f"{', '.join(LEAK_DATE_FALLBACK_CANDIDATES)}. For those the "
+                 f"pipe-life rule decided nothing at all.\n"
+                 f"  To check them against the pipe's life as well: "
+                 f"python run.py --leak-date-fallback\n"
+                 f"  It will refuse some relocations that this run allowed. "
+                 f"Every row records which field supplied its date, in "
+                 f"LeakDateSource.")
         log(f"GeoPackage: {OUTPUT_GPKG}")
         report_timings()
         return counters
     finally:
         globals()["OUTPUT_GPKG"] = previous_output
+        globals()["LEAK_SOURCE"] = previous_source
 
 
 def main():

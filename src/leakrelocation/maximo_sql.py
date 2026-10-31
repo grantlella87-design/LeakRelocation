@@ -382,15 +382,17 @@ def read_leaks(connection=None, query=None, crs=None, limit=None):
         finally:
             try:
                 cursor.close()
-            except Exception:  # noqa: BLE001 - a close that fails is not news
+            except Exception:  # noqa: BLE001, S110 - deliberate, see below
                 # Nothing downstream depends on the cursor closing cleanly, and
-                # raising here would hide whatever the query already produced.
+                # raising here would throw away rows that were read
+                # successfully. Not logged either: a close that fails after a
+                # good read is noise in front of the result.
                 pass
     finally:
         if owned:
             try:
                 connection.close()
-            except Exception:  # noqa: BLE001 - as above
+            except Exception:  # noqa: BLE001, S110 - as above
                 pass
 
     report(counters)

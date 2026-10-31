@@ -348,9 +348,22 @@ class TestBothPipeLayersAreOnAtStartup:
     def test_the_pipe_layer_is_a_default(self, server, key):
         assert server.LAYERS[key]["default"] is True
 
-    def test_every_layer_is_on(self, server):
+    def test_every_layer_a_normal_run_produces_is_on(self, server):
+        """Everything a `python run.py` leaves behind draws without being
+        found in the control first.
+
+        The exception is the enterprise (Maximo) layers. They read a second
+        GeoPackage that only exists once scripts/maximo_leaks.py has been run,
+        and defaulting them on would open the map to two empty entries and a
+        warning about a file most people have never made.
+        """
         off = [key for key, cfg in server.LAYERS.items() if not cfg["default"]]
-        assert off == []
+        assert off == ["maximo_leaks_relocated", "maximo_connectors"]
+
+    def test_the_layers_that_are_off_are_off_for_that_reason(self, server):
+        for key, cfg in server.LAYERS.items():
+            if not cfg["default"]:
+                assert cfg.get("gpkg") == "maximo", key
 
     def test_the_page_adds_defaults_to_the_map(self, server):
         """One loop reads the flag, so the config above is what the page acts on."""

@@ -161,6 +161,20 @@ ALLOW_MATERIAL_FAMILY_FALLBACK = True
 DIAMETER_MATCH_MODE = os.environ.get(
     "LEAKRELOCATION_DIAMETER_MODE", "exact").strip().lower() or "exact"
 
+# Use the other date fields on the leak row when the primary one is empty.
+#
+# REVISEDLEAKDATE came back empty on all 98,501 MA rows, so DateCheck reads
+# "no_leak_date" for 98.1% of the audit and the pipe-life rule decides nothing.
+# DISCOVEREDDATE, REPAIREDDATE and COMPLETEDDATE sit on the same row.
+#
+# Off by default because turning it on changes which leaks relocate: a leak
+# that matched unchecked can be refused once there is a date to check it
+# against. That is the rule working rather than a regression, but it is a
+# change to output someone is already reading, so it is asked for rather than
+# assumed. The fallback dates are collected and counted either way, so a run
+# always reports how many leaks it would rescue.
+USE_LEAK_DATE_FALLBACK = _flag_from_env("LEAKRELOCATION_LEAK_DATE_FALLBACK", False)
+
 # An exact diameter wins over an adjacent one whatever the distance, so every
 # leak the strict run relocated keeps the same pipe in the widened run and the
 # difference between the two outputs is only the leaks the widening rescued.
