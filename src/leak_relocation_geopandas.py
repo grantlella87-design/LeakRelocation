@@ -2044,8 +2044,10 @@ def match_one_leak(task):
     if not candidates:
         rule = ("exact diameter" if DIAMETER_MATCH_MODE == DIAMETER_EXACT
                 else "diameter within one nominal size")
+        # The number, not the name of the constant. "within MAX_RADIUS_FT"
+        # told a reader of the audit nothing they could act on.
         reason = (f"No {rule}/material/pressure match found within "
-                  f"MAX_RADIUS_FT")
+                  f"{MAX_RADIUS_FT:,.0f} ft")
         if rejected_on_date:
             reason = (f"{rejected_on_date:,} pipe(s) matched on "
                       f"diameter/material/pressure but were not in service when "
@@ -2307,7 +2309,10 @@ def banner(leak_source, output_gpkg):
     log(f"Output GeoPackage: {output_gpkg}")
     log("Analysis CRS: native per-layer (no reprojection before matching)")
     log(f"MA layer filter: {WHERE_MA}")
-    log(f"Max radius ft: {MAX_RADIUS_FT}")
+    log(f"Search radius: {INITIAL_RADIUS_FT:,.0f} ft, widening by "
+        f"{RADIUS_INCREMENT_FT:,.0f} ft to {MAX_RADIUS_FT:,.0f} ft"
+        + (" (one pass, no widening)"
+           if MAX_RADIUS_FT <= INITIAL_RADIUS_FT else ""))
     log(f"Require pressure match: {REQUIRE_PRESSURE_MATCH}")
     log(f"Material family fallback: {ALLOW_MATERIAL_FAMILY_FALLBACK}")
     log(f"Diameter match mode: {DIAMETER_MATCH_MODE}")

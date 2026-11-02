@@ -19,6 +19,12 @@ network folder any more.
 **Material** comes from decoded `ASSETGROUP + ASSETTYPE`. Do not use the DNV
 `material` Grade field as the material class for relocation assessment.
 
+**A leak relocates only onto a pipe within 100 ft.** The matcher makes one
+pass at `INITIAL_RADIUS_FT` and stops at `MAX_RADIUS_FT`; with both at 100 ft
+there is no widening. A leak with no eligible pipe in reach is reported as
+unmatched rather than paired with something far away. See
+[The search radius](#the-search-radius).
+
 **Diameter matching has two modes, and they write different files.** `exact` is
 the default and the original rule. `fuzzy` also accepts a pipe one nominal size
 up or down. See [Diameter matching](#diameter-matching).
@@ -41,6 +47,39 @@ the dates were actually compared.
 those layers also carry `installationdate` and `inservicedate`. A pipe installed
 in 1960 and migrated into the system in 2015 has `CREATIONDATE` 2015, so a 2010
 leak fails the check even though the pipe was in the ground.
+
+## The search radius
+
+```
+Search radius: 100 ft, widening by 100 ft to 100 ft (one pass, no widening)
+```
+
+A leak relocates onto the nearest eligible pipe within **100 ft**. If there
+isn't one, it is reported as unmatched — `No exact diameter/material/pressure
+match found within 100 ft` in the audit's `NoMatchReason`.
+
+This was **3,000 ft**, widening in 100 ft steps. That meant an output could
+contain a leak "relocated" most of a mile onto the only pipe in reach — a
+pairing that happened to find something rather than a relocation anyone would
+stand behind. The dashboard's review queue existed largely to surface those.
+Unmatched is the honest answer, and it leaves the leak for someone to look at.
+
+Expect fewer relocations and more no-matches than the previous output had. The
+`Why a leak did not match` panel accounts for them.
+
+| | |
+| --- | --- |
+| `LEAKRELOCATION_MAX_RADIUS_FT` | how far the search reaches. Default 100 |
+| `LEAKRELOCATION_INITIAL_RADIUS_FT` | the first pass. Default 100 |
+| `LEAKRELOCATION_RADIUS_INCREMENT_FT` | how much each pass widens by. Default 100 |
+
+Widening it again is a setting, not a commit. The audit records
+`SearchRadiusFt` per row either way, so a wider run still says which pass found
+each pipe, and the dashboard still groups them.
+
+Reports made from an **older, wider output** are not truncated to the current
+setting — the threshold table and the distance curve follow the data as well as
+the configuration, so a 3,000 ft GeoPackage still reports its whole range.
 
 ## Updating the leak layer's geometry
 
@@ -110,7 +149,7 @@ python scripts\apply_relocated_geometry.py --rollback ...\leak_geometry_rollback
 
 | Guard | Why |
 | --- | --- |
-| moves over `--max-distance` (default 100 ft) | the search widens to 3,000 ft; a leak that only matched at 2,900 ft is a record to check, not an edit to push. `--allow-long-moves` overrides |
+| moves over `--max-distance` (default 100 ft) | matches the search radius, so a fresh output never trips it. It bites on an output written when the search reached further, where a leak that only matched at 2,900 ft is a record to check rather than an edit to push. `--allow-long-moves` overrides |
 | more than `--max-features` (default 25,000) | catches a bad run, not a big one. Raise it deliberately |
 | too many features missing from the layer | the output no longer describes this layer, so the edits were computed against something else |
 | a leak already at the relocated position | a second run of the same output is a no-op, not a rewrite of every feature |
@@ -663,7 +702,7 @@ prints the headline numbers to the terminal.
 **The sliding scale** is the centre of it: drag it and the page reports, exactly,
 how many relocations fall on each side — overall and split by pipe layer. It
 steps in 0.1 ft up to 100 ft and in 5 ft beyond, because production distances run
-from 0.036 ft to the 3,000 ft maximum search radius and a flat grid would put a
+from 0.036 ft to whatever the search radius allows, and a flat grid would put a
 third of the data in one bin. Every figure is a stored count, never an
 interpolation, and the fixed-threshold table is computed separately from the
 curve so the two disagreeing would fail a test rather than mislead a reader.

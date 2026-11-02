@@ -14,9 +14,8 @@ far side, so:
   * a rollback file is written before the first edit, and the run stops if it
     cannot be written;
   * a leak that moved further than --max-distance is held back unless
-    --allow-long-moves says otherwise. The search widens to 3,000 ft, and a
-    leak that only matched at 2,900 ft is a record to check, not an edit to
-    push;
+    --allow-long-moves says otherwise. The search is capped at 100 ft now, so
+    this only bites on an output written when it reached further;
   * the current geometry is re-read from the service first, so the rollback
     restores what is there now and a feature someone has already moved by hand
     is reported rather than overwritten.

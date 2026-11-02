@@ -116,6 +116,13 @@ def _int_from_env(name, default):
         return default
 
 
+def _float_from_env(name, default):
+    try:
+        return float(os.environ.get(name, "").strip())
+    except (TypeError, ValueError):
+        return default
+
+
 def _flag_from_env(name, default=False):
     value = os.environ.get(name, "").strip().lower()
     if not value:
@@ -142,9 +149,27 @@ USE_RETIRED_PIPE_LAYER = _flag_from_env("LEAKRELOCATION_USE_RETIRED_LAYER", True
 # --- Matching / request tuning ------------------------------------------------
 
 WHERE_MA = "jurisdiction = 'MA'"
-INITIAL_RADIUS_FT = 100.0
-RADIUS_INCREMENT_FT = 100.0
-MAX_RADIUS_FT = 3000.0
+
+# How far the matcher will look for a pipe to relocate a leak onto.
+#
+# It searches outward from the leak, starting at INITIAL_RADIUS_FT and widening
+# by RADIUS_INCREMENT_FT until it finds an eligible pipe or reaches
+# MAX_RADIUS_FT. With all three at 100 ft there is one pass and no widening: a
+# leak either has a pipe of the right material and diameter within 100 ft or it
+# does not relocate.
+#
+# This was 3,000 ft, which meant an output could contain a leak "relocated"
+# most of a mile onto the only pipe in reach - a pairing that happened to find
+# something rather than a relocation anyone would stand behind. A leak with
+# nothing suitable within 100 ft is now reported as unmatched, which is the
+# honest answer and leaves it for someone to look at.
+#
+# Raising it again is a matter of setting LEAKRELOCATION_MAX_RADIUS_FT; the
+# audit records SearchRadiusFt per row either way, so a wider run still says
+# which pass found each pipe.
+INITIAL_RADIUS_FT = _float_from_env("LEAKRELOCATION_INITIAL_RADIUS_FT", 100.0)
+RADIUS_INCREMENT_FT = _float_from_env("LEAKRELOCATION_RADIUS_INCREMENT_FT", 100.0)
+MAX_RADIUS_FT = _float_from_env("LEAKRELOCATION_MAX_RADIUS_FT", 100.0)
 REQUIRE_PRESSURE_MATCH = False
 ALLOW_MATERIAL_FAMILY_FALLBACK = True
 

@@ -32,8 +32,8 @@ What stops it:
 
   * it is a dry run unless `apply=True`. The default of the script is a dry run;
   * a move longer than MAX_APPLY_DISTANCE_FT is held back unless it is allowed
-     explicitly. A leak that moved 2,900 ft is a record to check, not an edit to
-     push;
+     explicitly - which matters for an output written when the search reached
+     further than it does now;
   * more than MAX_APPLY_FEATURES at once needs saying so. A run that suddenly
      wants to move every leak on the system is a bug somewhere upstream;
   * a mismatch between the output and the service - a feature that is not there
@@ -66,9 +66,13 @@ from leakrelocation.output import fail, log, warn
 APPLY_BATCH_SIZE = 250
 
 # A relocation longer than this is not applied without being asked for twice.
-# The search widens to 3,000 ft, so an output can legitimately contain a leak
-# that moved most of a mile - and moving a real asset record that far on the
-# strength of a nearest-pipe match is a decision, not a default.
+#
+# config.MAX_RADIUS_FT is 100 ft, so a fresh output cannot contain a longer move
+# and this guard never fires on one. It stays because it is not the matcher it
+# is guarding against: an older GeoPackage written when the search reached
+# 3,000 ft can still be handed to this script, and moving a real asset record
+# most of a mile on the strength of a nearest-pipe match is a decision rather
+# than a default. Raise it with --max-distance when that is what is wanted.
 MAX_APPLY_DISTANCE_FT = 100.0
 
 # More than this in one go needs --max-features raised deliberately. It is a

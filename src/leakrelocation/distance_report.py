@@ -46,10 +46,13 @@ PERCENTILES = (50, 75, 90, 95, 99)
 # Bin edges for the cumulative curve. The slider is an index into this list, so
 # the count it reports is exact rather than interpolated - no "about 94%".
 #
-# Two resolutions because the data has two scales: most relocations are a few
-# feet (0.036 ft and 16.1 ft are real values from a production run) while the
-# tail runs to the 3,000 ft maximum radius. A flat 0.1 ft grid to 3,000 would be
-# 30,000 numbers per series to serve a part of the range holding almost nothing.
+# Two resolutions because the data can have two scales: most relocations are a
+# few feet (0.036 ft and 16.1 ft are real values from a production run) while
+# an output made under a wider search radius has a tail running to it. The
+# search is capped at 100 ft now, so a fresh output needs only the fine grid -
+# but an older GeoPackage reaching 3,000 ft still has to report correctly, and
+# a flat 0.1 ft grid to 3,000 would be 30,000 numbers per series to serve a
+# part of the range holding almost nothing.
 FINE_LIMIT_FT = 100.0
 FINE_STEP_FT = 0.1
 COARSE_STEP_FT = 5.0
@@ -288,12 +291,14 @@ def material_agreement(frame):
     return {"exact": exact, "family_or_other": different, "unknown": unknown}
 
 
-# How the widening search passes are grouped for reporting. The matcher starts
-# at INITIAL_RADIUS_FT and widens by RADIUS_INCREMENT_FT, so a 3,000 ft maximum
-# is thirty distinct radii - thirty table rows, twenty-odd of them a fraction of
-# a percent. The grouping keeps the first pass on its own, because that is the
-# only one that means "there was a pipe right there", and buckets the rest by
-# how far the search had to reach.
+# How the widening search passes are grouped for reporting.
+#
+# With MAX_RADIUS_FT at 100 ft there is only one pass, so a fresh output has a
+# single row here. The rest of the buckets stay because an output made under a
+# wider radius still has to report correctly: a 3,000 ft maximum is thirty
+# distinct radii, which was thirty table rows with twenty-odd of them a fraction
+# of a percent. The first pass keeps its own row either way, because it is the
+# only one that means "there was a pipe right there".
 RADIUS_BUCKETS = (
     (100.0, "100 ft (first pass)"),
     (500.0, "200 to 500 ft"),
@@ -403,8 +408,17 @@ def build_report(audit, source="", max_radius_ft=None, compare_audit=None,
             series[row["name"]] = cumulative(subset, edges)
             shapes[row["name"]] = histogram(subset, edges)
 
+    # Every threshold past the furthest a leak could have moved reports the
+    # same thing - everything within, nothing beyond - so the table would end in
+    # identical rows. Capped at one past the real reach, which keeps the row
+    # that shows the boundary and drops the ones that only repeat it.
+    reach = max(top, stats["max"] or 0.0)
+    usable = [limit for limit in THRESHOLDS_FT if limit < reach]
+    if len(usable) < len(THRESHOLDS_FT):
+        usable.append(next(limit for limit in THRESHOLDS_FT
+                           if limit >= reach))
     thresholds = []
-    for limit in THRESHOLDS_FT:
+    for limit in usable or list(THRESHOLDS_FT[:1]):
         under = sum(1 for value in ordered if value <= limit)
         thresholds.append({
             "ft": limit,

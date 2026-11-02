@@ -669,3 +669,58 @@ class TestPipeIdentityAcrossOutputs:
         assert result["moved_to_another_pipe"] == 0
         assert result["unchanged"] == 1
         assert result["gained"] == 1
+
+
+class TestTheThresholdsFitTheSearchRadius:
+    """With the search capped at 100 ft, every threshold past it reports the
+    same thing - everything within, nothing beyond - so the table would end in
+    identical rows that say nothing."""
+
+    def test_a_hundred_foot_output_stops_at_a_hundred_feet(self):
+        report = dr.build_report(matched([0.5, 4.0, 17.0, 60.0, 99.0]),
+                                 max_radius_ft=100.0)
+        limits = [row["ft"] for row in report["thresholds"]]
+        assert max(limits) == 100.0
+        assert 250.0 not in limits
+
+    def test_the_boundary_row_is_kept(self):
+        """The 100 ft row is the one that shows everything is within it. It is
+        the repeating rows past the boundary that are dropped, not the
+        boundary."""
+        report = dr.build_report(matched([0.5, 99.0]), max_radius_ft=100.0)
+        row = [r for r in report["thresholds"] if r["ft"] == 100.0]
+        assert len(row) == 1
+        assert row[0]["over"] == 0
+
+    def test_an_older_wider_output_still_reports_in_full(self):
+        """A GeoPackage written when the search reached 3,000 ft has to report
+        its whole range, not be truncated to the current setting."""
+        report = dr.build_report(matched([0.5, 60.0, 240.0, 900.0, 2900.0]),
+                                 max_radius_ft=3000.0)
+        limits = [row["ft"] for row in report["thresholds"]]
+        assert limits == list(dr.THRESHOLDS_FT)
+
+    def test_data_beyond_the_configured_radius_is_not_hidden(self):
+        """The cap follows the data as well as the setting. A run configured
+        for 100 ft whose output somehow reaches further must still show it."""
+        report = dr.build_report(matched([0.5, 900.0]), max_radius_ft=100.0)
+        limits = [row["ft"] for row in report["thresholds"]]
+        assert max(limits) >= 1000.0
+
+    def test_every_row_still_adds_up(self):
+        for max_radius in (100.0, 3000.0):
+            report = dr.build_report(matched([0.5, 4.0, 60.0, 99.0]),
+                                     max_radius_ft=max_radius)
+            for row in report["thresholds"]:
+                assert row["at_or_under"] + row["over"] == 4, (max_radius, row)
+
+    def test_an_empty_output_still_has_a_threshold_table(self):
+        """It reports zeros rather than no table at all."""
+        report = dr.build_report(audit_frame([]).assign(DistanceFt=None),
+                                 max_radius_ft=100.0)
+        assert report["thresholds"]
+        assert all(row["at_or_under"] == 0 for row in report["thresholds"])
+
+    def test_the_curve_only_spans_what_can_be_reached(self):
+        report = dr.build_report(matched([0.5, 60.0]), max_radius_ft=100.0)
+        assert report["curve"]["edges"][-1] == 100.0
