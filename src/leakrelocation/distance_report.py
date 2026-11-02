@@ -67,7 +67,7 @@ def curve_edges(max_ft):
     """Right-hand bin edges, fine near zero and coarse out to `max_ft`."""
     limit = max(float(max_ft), FINE_STEP_FT)
     edges = []
-    step_count = int(round(min(limit, FINE_LIMIT_FT) / FINE_STEP_FT))
+    step_count = round(min(limit, FINE_LIMIT_FT) / FINE_STEP_FT)
     for index in range(step_count + 1):
         edges.append(round(index * FINE_STEP_FT, 1))
     edge = FINE_LIMIT_FT
