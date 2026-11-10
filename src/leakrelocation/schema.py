@@ -64,12 +64,9 @@ PIPE_CACHE_MUST_BE_POPULATED = (
 
 RELOCATED_LEAKS_LAYER = "relocated_leaks"
 OFFSET_LINES_LAYER = "relocated_leak_offset_lines"
+AUDIT_LAYER = "leak_relocation_audit"
 
 LEAK_KEY = "LeakKey"
-# The material of the pipe a leak was matched to.
-MATCH_MATERIAL = "MatchMaterial"
-MATCH_DIAMETER = "MatchDiameter"
-MATCH_PRESSURE = "MatchPressure"
 MATCH_STATUS = "MatchStatus"
 # The pipe's own attributes, as recorded at match time.
 PIPE_MATERIAL = "PipeMaterial"
@@ -91,16 +88,3 @@ LEAK_DATE_SOURCE = "LeakDateSource"
 LEAK_SOURCE = "LeakSource"
 DIAMETER_MATCH = "DiameterMatch"
 DIAMETER_MODE = "DiameterMode"
-
-
-def require(frame, columns, what):
-    """Raise unless every column is present, naming what is missing.
-
-    Used instead of falling back to a different column, which is how a wrong
-    guess became a wrong answer nobody noticed.
-    """
-    missing = [name for name in columns if name not in frame.columns]
-    if missing:
-        raise KeyError(
-            f"{what} is missing {missing}. Present: {sorted(frame.columns)}"
-        )

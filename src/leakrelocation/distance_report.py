@@ -30,6 +30,27 @@ import math
 
 from leakrelocation import schema
 
+
+class AuditUnreadable(RuntimeError):
+    """The audit layer could not be read from a GeoPackage."""
+
+
+def read_audit(path):
+    """The audit layer of a relocation GeoPackage, as a frame.
+
+    Raises AuditUnreadable with the reader's own message. Which exception an
+    unreadable layer raises depends on the engine geopandas chose: pyogrio
+    raises DataLayerError for a missing layer and DataSourceError for an
+    unrecognised file, fiona raises its own DriverError, and a half-written
+    GeoPackage can fail inside GDAL in ways neither documents. All of them
+    mean the same thing to a caller, so they leave here as one.
+    """
+    import geopandas as gpd
+    try:
+        return gpd.read_file(str(path), layer=schema.AUDIT_LAYER)
+    except Exception as ex:  # noqa: BLE001 - see the docstring
+        raise AuditUnreadable(str(ex)) from ex
+
 # A snap of less than this is a leak that was already sitting on its pipe. Worth
 # counting separately: it is the difference between "the records agreed" and "we
 # moved it".

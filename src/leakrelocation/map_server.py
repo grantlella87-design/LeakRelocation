@@ -25,7 +25,9 @@ from leakrelocation import assettype, config, schema
 from leakrelocation import leak_location as location
 from leakrelocation.assettype import decoder_for_layer, norm_code
 from leakrelocation.assettype import family_from_assettype as material_family
-from leakrelocation.matching import route_layers
+from leakrelocation.matching import DIAMETER_MODES, route_layers
+from leakrelocation.output import log
+from leakrelocation.distance_dashboard import escape
 from leakrelocation.viewer_pane import PANE_CSS, PANE_HTML, PANE_JS
 
 HOST = "127.0.0.1"
@@ -122,14 +124,14 @@ LAYERS = {
     "main_leaks_relocated": {
         "label": "Main leaks - relocated location",
         "group": "mains",
-        "source": "gpkg", "layer": "relocated_leaks", "linked": "distribution",
+        "source": "gpkg", "layer": schema.RELOCATED_LEAKS_LAYER, "linked": "distribution",
         "kind": "relocated_point", "color": "#00a651", "radius": 4, "weight": 1,
         "default": True,
     },
     "main_connectors": {
         "label": "Main leaks - connecting line",
         "group": "mains",
-        "source": "gpkg", "layer": "relocated_leak_offset_lines",
+        "source": "gpkg", "layer": schema.OFFSET_LINES_LAYER,
         "linked": "distribution",
         "kind": "trace_line", "color": "#d40000", "radius": 0, "weight": 2,
         "default": True,
@@ -152,14 +154,14 @@ LAYERS = {
     "service_leaks_relocated": {
         "label": "Service leaks - relocated location",
         "group": "services",
-        "source": "gpkg", "layer": "relocated_leaks", "linked": "service",
+        "source": "gpkg", "layer": schema.RELOCATED_LEAKS_LAYER, "linked": "service",
         "kind": "relocated_point", "color": "#00a651", "radius": 4, "weight": 1,
         "default": True,
     },
     "service_connectors": {
         "label": "Service leaks - connecting line",
         "group": "services",
-        "source": "gpkg", "layer": "relocated_leak_offset_lines",
+        "source": "gpkg", "layer": schema.OFFSET_LINES_LAYER,
         "linked": "service",
         "kind": "trace_line", "color": "#d40000", "radius": 0, "weight": 2,
         "default": True,
@@ -172,7 +174,7 @@ LAYERS = {
     "maximo_leaks_relocated": {
         "label": "Maximo leaks - relocated location",
         "group": "maximo",
-        "source": "gpkg", "gpkg": "maximo", "layer": "relocated_leaks",
+        "source": "gpkg", "gpkg": "maximo", "layer": schema.RELOCATED_LEAKS_LAYER,
         "kind": "relocated_point", "color": "#7b1fa2", "radius": 4, "weight": 1,
         "default": False,
     },
@@ -180,7 +182,7 @@ LAYERS = {
         "label": "Maximo leaks - connecting line",
         "group": "maximo",
         "source": "gpkg", "gpkg": "maximo",
-        "layer": "relocated_leak_offset_lines",
+        "layer": schema.OFFSET_LINES_LAYER,
         "kind": "trace_line", "color": "#ab47bc", "radius": 0, "weight": 2,
         "default": False,
     },
@@ -212,10 +214,6 @@ LAYER_FIELD_NOTES = {}
 BOUNDS = None
 LOCK = threading.Lock()
 SUPPLEMENTAL = None
-
-
-def log(value):
-    print(str(value), flush=True)
 
 
 def clean_value(value):
@@ -422,11 +420,6 @@ PIPE_LAYER_IDS_BY_KEY = {
     "service_pipes": config.SERVICE_PIPE_LAYER_ID,
     "retired_pipes": config.RETIRED_PIPE_LAYER_ID,
 }
-
-# Which cache each map layer reads, for the decode above.
-def cache_name_for(key):
-    return LAYERS.get(key, {}).get("cache") or key
-
 
 def add_pipe_material_fields(gdf, layer_name="pipes"):
     if len(gdf) == 0:
@@ -706,12 +699,11 @@ def load_all():
     log(f"Bounds: {BOUNDS}")
 
 
-AUDIT_LAYER = "leak_relocation_audit"
 
 # The diameter rules, and so the outputs, this server can show. Both are
 # rendered from the same report code; which one is on screen is a query
 # parameter, so switching between them is a link rather than a re-run.
-DASHBOARD_MODES = ("exact", "fuzzy")
+DASHBOARD_MODES = DIAMETER_MODES
 
 # One rendered dashboard per mode, keyed on the modification times of both
 # GeoPackages. Building one reads 92,707 rows and takes a second or two, which
@@ -798,22 +790,15 @@ def _switch_links(mode):
 
 def _read_audit(path):
     """The audit layer, or a placeholder page explaining why not."""
+    from leakrelocation import distance_report
     try:
-        return gpd.read_file(str(path), layer=AUDIT_LAYER)
-    except Exception as ex:  # noqa: BLE001 - reported, not swallowed
-        # Same breadth as read_gpkg, and for the same reason: which exception an
-        # unreadable layer raises depends on whether geopandas is on pyogrio or
-        # fiona, and a half-written GeoPackage can fail inside GDAL in ways
-        # neither documents. The dashboard says so instead of 500-ing.
-        log(f"WARNING could not read {AUDIT_LAYER} from {path}: {ex}")
+        return distance_report.read_audit(path)
+    except distance_report.AuditUnreadable as ex:
+        # The dashboard says so instead of 500-ing.
+        log(f"WARNING could not read {schema.AUDIT_LAYER} from {path}: {ex}")
         return _dashboard_placeholder(
-            f"Could not read the {AUDIT_LAYER} layer from {escape(path)}.",
+            f"Could not read the {schema.AUDIT_LAYER} layer from {escape(path)}.",
             escape(str(ex)))
-
-
-def escape(value):
-    return (str(value).replace("&", "&amp;").replace("<", "&lt;")
-            .replace(">", "&gt;"))
 
 
 def _dashboard_placeholder(headline, detail):

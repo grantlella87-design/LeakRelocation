@@ -97,12 +97,6 @@ class TestAttributePane:
     def test_collapse_resizes_the_map(self):
         assert "invalidateSize" in viewer_pane.PANE_JS
 
-    def test_pane_assets_helper(self):
-        css, html, js = viewer_pane.pane_assets()
-        assert css is viewer_pane.PANE_CSS
-        assert html is viewer_pane.PANE_HTML
-        assert js is viewer_pane.PANE_JS
-
 
 class TestSelectionClearsOnAnOutsideClick:
     """Clicking away from the rows drops the highlight and the popup."""

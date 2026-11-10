@@ -28,10 +28,9 @@ import sys
 from _bootstrap import config
 
 from leakrelocation import apply_geometry as ag
-from leakrelocation import arcgis, auth
+from leakrelocation import arcgis, auth, schema
 from leakrelocation.output import fail, log, step, warn
 
-RELOCATED_LAYER = "relocated_leaks"
 
 
 def parse_args(argv=None):
@@ -77,9 +76,9 @@ def read_relocated(path):
         fail(f"No GeoPackage at {path}\n"
              f"  Run the relocation first: python run.py")
     try:
-        gdf = gpd.read_file(str(path), layer=RELOCATED_LAYER)
+        gdf = gpd.read_file(str(path), layer=schema.RELOCATED_LEAKS_LAYER)
     except Exception as ex:  # noqa: BLE001 - engine-dependent, all mean the same
-        fail(f"Could not read the {RELOCATED_LAYER} layer from {path}: {ex}")
+        fail(f"Could not read the {schema.RELOCATED_LEAKS_LAYER} layer from {path}: {ex}")
     if not len(gdf):
         fail(f"{path} has no relocated leaks, so there is nothing to move.")
     return gdf

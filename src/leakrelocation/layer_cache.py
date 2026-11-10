@@ -26,7 +26,6 @@ from leakrelocation.output import detail, fail, log, step, warn
 
 USE_LAYER_CACHE = config.USE_LAYER_CACHE
 LAYER_CACHE_FOLDER = str(config.LAYER_CACHE_DIR)
-FORCE_LAYER_REFRESH = config.FORCE_LAYER_REFRESH
 
 
 def safe_cache_name(layer_name):
@@ -64,7 +63,7 @@ def missing_requested_columns(gdf, required_fields):
 
 
 def read_layer_cache(layer_name, layer_url, where_clause, required_fields=None):
-    if not USE_LAYER_CACHE or FORCE_LAYER_REFRESH:
+    if not USE_LAYER_CACHE or config.FORCE_LAYER_REFRESH:
         return None, None
     data_path, meta_path = layer_cache_paths(layer_name)
     if not os.path.isfile(data_path) or not os.path.isfile(meta_path):
@@ -168,7 +167,7 @@ def upsert_cached_layer(cached_gdf, delta_gdf, object_id_field):
 
 def cache_age_seconds(layer_name, layer_url, where_clause):
     """Age of a usable cache in seconds, or None if there is not one."""
-    if not USE_LAYER_CACHE or FORCE_LAYER_REFRESH:
+    if not USE_LAYER_CACHE or config.FORCE_LAYER_REFRESH:
         return None
     data_path, meta_path = layer_cache_paths(layer_name)
     if not os.path.isfile(data_path) or not os.path.isfile(meta_path):

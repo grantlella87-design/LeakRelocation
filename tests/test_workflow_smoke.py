@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
 
 pytest.importorskip("geopandas")
 pytest.importorskip("keyring")
-from leakrelocation import arcgis, dates, layer_cache, layer_fields
+from leakrelocation import arcgis, config, dates, layer_cache, layer_fields
 
 
 @pytest.fixture(scope="module")
@@ -209,7 +209,7 @@ class TestCacheKnowsWhichFieldsItHolds:
         from shapely.geometry import Point
         monkeypatch.setattr(layer_cache, "LAYER_CACHE_FOLDER", str(tmp_path))
         monkeypatch.setattr(layer_cache, "USE_LAYER_CACHE", True)
-        monkeypatch.setattr(layer_cache, "FORCE_LAYER_REFRESH", False)
+        monkeypatch.setattr(config, "FORCE_LAYER_REFRESH", False)
         gdf = gpd.GeoDataFrame({"OBJECTID": [1]}, geometry=[Point(0, 0)],
                                crs="EPSG:4326")
         with redirect_stdout(io.StringIO()):
@@ -256,7 +256,7 @@ class TestCacheKnowsWhichFieldsItHolds:
         from shapely.geometry import Point
         monkeypatch.setattr(layer_cache, "LAYER_CACHE_FOLDER", str(tmp_path))
         monkeypatch.setattr(layer_cache, "USE_LAYER_CACHE", True)
-        monkeypatch.setattr(layer_cache, "FORCE_LAYER_REFRESH", False)
+        monkeypatch.setattr(config, "FORCE_LAYER_REFRESH", False)
         gdf = gpd.GeoDataFrame({"OBJECTID": [1], "ADDRESS": ["12 Elm St"]},
                                geometry=[Point(0, 0)], crs="EPSG:4326")
         with redirect_stdout(io.StringIO()):
@@ -275,7 +275,7 @@ class TestCacheKnowsWhichFieldsItHolds:
         from shapely.geometry import Point
         monkeypatch.setattr(layer_cache, "LAYER_CACHE_FOLDER", str(tmp_path))
         monkeypatch.setattr(layer_cache, "USE_LAYER_CACHE", True)
-        monkeypatch.setattr(layer_cache, "FORCE_LAYER_REFRESH", False)
+        monkeypatch.setattr(config, "FORCE_LAYER_REFRESH", False)
         gdf = gpd.GeoDataFrame({"OBJECTID": [1]}, geometry=[Point(0, 0)],
                                crs="EPSG:4326")
         with redirect_stdout(io.StringIO()):
@@ -296,7 +296,7 @@ class TestCacheKnowsWhichFieldsItHolds:
         from shapely.geometry import Point
         monkeypatch.setattr(layer_cache, "LAYER_CACHE_FOLDER", str(tmp_path))
         monkeypatch.setattr(layer_cache, "USE_LAYER_CACHE", True)
-        monkeypatch.setattr(layer_cache, "FORCE_LAYER_REFRESH", False)
+        monkeypatch.setattr(config, "FORCE_LAYER_REFRESH", False)
         gdf = gpd.GeoDataFrame({"OBJECTID": [1]}, geometry=[Point(0, 0)],
                                crs="EPSG:4326")
         with redirect_stdout(io.StringIO()):
@@ -317,7 +317,7 @@ class TestCacheKnowsWhichFieldsItHolds:
         from shapely.geometry import Point
         monkeypatch.setattr(layer_cache, "LAYER_CACHE_FOLDER", str(tmp_path))
         monkeypatch.setattr(layer_cache, "USE_LAYER_CACHE", True)
-        monkeypatch.setattr(layer_cache, "FORCE_LAYER_REFRESH", False)
+        monkeypatch.setattr(config, "FORCE_LAYER_REFRESH", False)
         gdf = gpd.GeoDataFrame({"OBJECTID": [1]}, geometry=[Point(0, 0)],
                                crs="EPSG:4326")
         with redirect_stdout(io.StringIO()):

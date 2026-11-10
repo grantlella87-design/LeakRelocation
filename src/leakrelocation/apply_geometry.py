@@ -227,13 +227,6 @@ def normalise_globalid(value):
     return str(value).strip().strip("{}").upper()
 
 
-def current_geometry(session, layer_url, object_ids, wkid, **kwargs):
-    """Just the positions, for callers that do not need the GlobalIDs."""
-    state = current_state(session, layer_url, object_ids, wkid,
-                          **kwargs)
-    return {oid: entry["xy"] for oid, entry in state.items()}
-
-
 def classify(moves, current, max_distance_ft, allow_long):
     """Split the proposed moves into what will be sent and what will not.
 

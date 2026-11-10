@@ -16,7 +16,7 @@ import sys
 
 from _bootstrap import config
 
-from leakrelocation import auth
+from leakrelocation import arcgis, auth
 from leakrelocation.assettype import build_assettype_decoder
 from leakrelocation.output import fail, log
 
@@ -91,7 +91,7 @@ def save(layer_json, url):
 def main(argv=None):
     args = parse_args(argv)
     session = auth.make_session()
-    layer_json = auth.request_json(session, args.url.rstrip("/"), {"f": "json"})
+    layer_json = arcgis.request_json(session, args.url.rstrip("/"), {"f": "json"})
     if not layer_json or "fields" not in layer_json:
         fail(f"{args.url} returned no field list. Response keys: "
              f"{sorted(layer_json or {})}")

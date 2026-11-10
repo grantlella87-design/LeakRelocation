@@ -27,7 +27,6 @@ trace lines. There used to be a second, static map and a --pipes flag to reach
 the pipes at all; that map showed a subset of this one and has been removed.
 """
 import argparse
-import os
 import sys
 from pathlib import Path
 
@@ -38,6 +37,7 @@ for folder in ("src", "scripts"):
         sys.path.insert(0, path)
 
 from leakrelocation import config
+from leakrelocation.matching import DIAMETER_MODES
 from leakrelocation.output import fail, log, step, warn
 
 PIPE_CACHES = ("distribution_pipes", "service_pipes")
@@ -64,27 +64,12 @@ def parse_args(argv=None):
                              "instead. Off by default because it changes which "
                              "leaks relocate; a run reports how many it would "
                              "rescue either way.")
-    parser.add_argument("--diameter", choices=("exact", "fuzzy"), default=None,
+    parser.add_argument("--diameter", choices=DIAMETER_MODES, default=None,
                         help="How strictly a leak's diameter must match the "
                              "pipe's. exact (the default) is the original rule; "
                              "fuzzy also accepts one nominal size up or down. "
                              "Each writes its own GeoPackage.")
     return parser.parse_args(argv)
-
-
-def apply_diameter_mode(mode):
-    """Set the diameter rule before the workflow module reads it.
-
-    It has to happen here rather than inside the workflow: that module binds
-    OUTPUT_GPKG and DIAMETER_MATCH_MODE at import, so setting the variable after
-    the import would write the widened output over the strict one.
-    """
-    if mode:
-        os.environ["LEAKRELOCATION_DIAMETER_MODE"] = mode
-    import importlib
-    from leakrelocation import config as live
-    importlib.reload(live)
-    return live.DIAMETER_MATCH_MODE
 
 
 def check_signin():
@@ -108,13 +93,14 @@ def check_signin():
     log(f"Token accepted. Distribution pipe layer reports {count:,} features.")
 
 
-def run_workflow(refresh):
+def run_workflow():
     """Download, decode the material from ASSETTYPE, match, and write."""
     step("Running the relocation workflow")
-    if refresh:
-        os.environ["FORCE_LAYER_REFRESH"] = "1"
-        log("FORCE_LAYER_REFRESH=1: caches will be ignored.")
+    if config.FORCE_LAYER_REFRESH:
+        log("Refresh: the layer caches will be ignored and downloaded again.")
 
+    # Imported here, not at the top: the workflow settles which GeoPackage it
+    # writes as it is imported, and main() has only just applied the flags.
     from leakrelocation import workflow
 
     workflow.main()
@@ -157,9 +143,11 @@ def main(argv=None):
     if args.no_view and args.view_only:
         fail("--no-view and --view-only ask for opposite things.")
 
-    if args.leak_date_fallback:
-        os.environ["LEAKRELOCATION_LEAK_DATE_FALLBACK"] = "1"
-    mode = apply_diameter_mode(args.diameter)
+    mode = config.set_run_options(
+        diameter_mode=args.diameter,
+        leak_date_fallback=args.leak_date_fallback,
+        force_refresh=args.refresh,
+    )
     output = config.output_gpkg_for(mode)
 
     log("=== LeakRelocation ===")
@@ -172,7 +160,7 @@ def main(argv=None):
     if not args.view_only:
         if not args.skip_signin_check:
             check_signin()
-        gpkg = run_workflow(args.refresh)
+        gpkg = run_workflow()
         if not gpkg.exists():
             fail(f"The workflow finished but {gpkg} is not there.")
     elif not output.exists():

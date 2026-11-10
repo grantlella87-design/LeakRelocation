@@ -36,6 +36,7 @@ import sys
 from _bootstrap import config
 
 from leakrelocation import maximo_sql
+from leakrelocation.matching import DIAMETER_MODES
 from leakrelocation.output import fail, log, step
 
 
@@ -52,7 +53,7 @@ def parse_args(argv=None):
     parser.add_argument("--limit", type=int, default=0,
                         help="Read at most this many leaks. For a first look "
                              "at a query against a large table.")
-    parser.add_argument("--diameter", choices=("exact", "fuzzy"), default=None,
+    parser.add_argument("--diameter", choices=DIAMETER_MODES, default=None,
                         help="How strictly a leak's diameter must match the "
                              "pipe's. Same rule as run.py; each writes its own "
                              "GeoPackage.")
@@ -62,22 +63,6 @@ def parse_args(argv=None):
                         help=f"Where to write the GeoPackage. "
                              f"Default: {config.MAXIMO_OUTPUT_GPKG}")
     return parser.parse_args(argv)
-
-
-def apply_diameter_mode(mode):
-    """Set the diameter rule before the workflow module reads it.
-
-    It has to happen before the import: that module binds OUTPUT_GPKG and
-    DIAMETER_MATCH_MODE at import time, so setting the variable afterwards
-    would write the widened output over the strict one.
-    """
-    if mode:
-        os.environ["LEAKRELOCATION_DIAMETER_MODE"] = mode
-    import importlib
-
-    from leakrelocation import config as live
-    importlib.reload(live)
-    return live.DIAMETER_MATCH_MODE
 
 
 def output_path(mode, override=""):
@@ -111,7 +96,8 @@ def check_only(limit):
 
 def main(argv=None):
     args = parse_args(argv)
-    mode = apply_diameter_mode(args.diameter)
+    mode = config.set_run_options(
+        diameter_mode=args.diameter, force_refresh=args.refresh)
     destination = output_path(mode, args.out)
 
     if args.check:
@@ -133,12 +119,11 @@ def main(argv=None):
         log("Run without --preview to do it.")
         return 0
 
-    if args.refresh:
-        os.environ["FORCE_LAYER_REFRESH"] = "1"
-        log("FORCE_LAYER_REFRESH=1: pipe caches will be ignored.")
+    if config.FORCE_LAYER_REFRESH:
+        log("Refresh: the pipe caches will be ignored and downloaded again.")
 
-    # Imported here, not at the top: the workflow reads the diameter rule and
-    # the refresh flag when it is imported, and both were only just set.
+    # Imported here, not at the top: the workflow settles which GeoPackage it
+    # writes as it is imported, and the flags above were only just applied.
     from leakrelocation import auth, output, workflow
 
     workflow.banner(

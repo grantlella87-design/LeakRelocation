@@ -30,6 +30,7 @@ from _bootstrap import config
 
 from leakrelocation import schema
 from leakrelocation.assettype import build_assettype_decoder, norm_code
+from leakrelocation.output import log
 
 LAYERS = {
     "distribution": {"cache_name": "distribution_pipes.pkl.gz", "url_attr": "DISTRIBUTION_PIPE_URL"},
@@ -42,10 +43,6 @@ MANAGED_COLUMNS = ([schema.ASSETGROUP, schema.ASSETTYPE] + DECODED_COLUMNS
                    + [schema.PIPE_MATERIAL_RAW, schema.GRADE_MATERIAL])
 
 RETRY_DELAYS = [2, 5, 15]
-
-
-def log(message):
-    print(message, flush=True)
 
 
 def live_service():

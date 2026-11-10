@@ -361,9 +361,10 @@ class TestTheConfirmation:
 class TestAgainstTheService:
     def test_the_current_geometry_is_re_read(self, session, service):
         with redirect_stdout(io.StringIO()):
-            found = ag.current_geometry(
+            found = ag.current_state(
                 session, service["url"], [1, 2, 3], WKID)
-        assert found == service["geometry"]
+        assert {oid: entry["xy"] for oid, entry in found.items()} == (
+            service["geometry"])
         assert service["queries"] >= 1
 
     def test_the_updates_are_applied_and_counted(self, session,

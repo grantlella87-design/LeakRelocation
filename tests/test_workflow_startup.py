@@ -352,7 +352,7 @@ class TestCacheFreshness:
     def cache(self, lr, tmp_path, monkeypatch):
         monkeypatch.setattr(layer_cache, "LAYER_CACHE_FOLDER", str(tmp_path))
         monkeypatch.setattr(layer_cache, "USE_LAYER_CACHE", True)
-        monkeypatch.setattr(layer_cache, "FORCE_LAYER_REFRESH", False)
+        monkeypatch.setattr(config, "FORCE_LAYER_REFRESH", False)
         return tmp_path
 
     def write_cache(self, lr, layer, url, where, cached_utc):
@@ -396,7 +396,7 @@ class TestCacheFreshness:
         import datetime as dt
         now = dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
         self.write_cache(lr, "forced_layer", "u", "w", now)
-        monkeypatch.setattr(layer_cache, "FORCE_LAYER_REFRESH", True)
+        monkeypatch.setattr(config, "FORCE_LAYER_REFRESH", True)
         assert layer_cache.cache_age_seconds("forced_layer", "u", "w") is None
 
     def test_corrupt_metadata_is_not_fatal(self, lr, cache):

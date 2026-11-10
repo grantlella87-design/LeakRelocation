@@ -312,18 +312,18 @@ class TestPreflightDiagnosesWhyRawIsEmpty:
 
     def test_a_populated_cache_passes(self, preflight, cache_dir, capsys):
         self.write(cache_dir, **self.ENRICHED)
-        assert preflight.main() == 0
+        assert preflight.main([]) == 0
         assert "PASS" in capsys.readouterr().out
 
     def test_missing_cache_is_reported(self, preflight, cache_dir, capsys):
-        assert preflight.main() == 1
+        assert preflight.main([]) == 1
         assert "MISSING CACHE" in capsys.readouterr().out
 
     def test_unenriched_cache_names_the_grade_risk(self, preflight, cache_dir, capsys):
         # material still holds the DNV Grade field, so families would come from
         # grade data - the thing the project's key rule forbids.
         self.write(cache_dir, OBJECTID=[1, 2], material=["Grade A", "Grade B"])
-        assert preflight.main() == 1
+        assert preflight.main([]) == 1
         output = capsys.readouterr().out
         assert "NOT ENRICHED" in output
         assert "Grade" in output
@@ -332,7 +332,7 @@ class TestPreflightDiagnosesWhyRawIsEmpty:
         columns = {key: ([None] * 3 if key not in ("OBJECTID", "GradeMaterial") else value)
                    for key, value in self.ENRICHED.items()}
         self.write(cache_dir, **columns)
-        assert preflight.main() == 1
+        assert preflight.main([]) == 1
         output = capsys.readouterr().out
         assert "ENRICHED BUT EMPTY" in output
         assert "--force" in output
@@ -343,5 +343,5 @@ class TestPreflightDiagnosesWhyRawIsEmpty:
         columns["material"] = ["Steel Pipe"] * 3
         columns["PipeMaterialFamily"] = ["PLASTIC"] * 3
         self.write(cache_dir, **columns)
-        preflight.main()
+        preflight.main([])
         assert "every row classifies as" in capsys.readouterr().out

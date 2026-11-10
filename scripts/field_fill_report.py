@@ -21,6 +21,7 @@ import sys
 import pandas as pd
 from _bootstrap import config
 
+from leakrelocation import schema
 from leakrelocation.output import log, warn
 
 # The caches the map and the workflow read, and the layer each came from.
@@ -45,10 +46,10 @@ EXPECTED = {
     "service_pipes": PIPE_FIELDS,
     "retired_pipes": PIPE_FIELDS,
     # Written by the workflow, so these are ours to get right.
-    "relocated_leaks": ("LeakKey", "LeakAddress", "LeakDate", "LinkedLayer",
+    schema.RELOCATED_LEAKS_LAYER: ("LeakKey", "LeakAddress", "LeakDate", "LinkedLayer",
                         "MatchMaterial", "MatchDiameter", "DistanceFt"),
-    "relocated_leak_offset_lines": ("LeakKey", "LinkedLayer", "DistanceFt"),
-    "leak_relocation_audit": ("LeakKey", "LeakAddress", "LeakDate", "LeakMaterial",
+    schema.OFFSET_LINES_LAYER: ("LeakKey", "LinkedLayer", "DistanceFt"),
+    schema.AUDIT_LAYER: ("LeakKey", "LeakAddress", "LeakDate", "LeakMaterial",
                               "LeakDiameter", "PipeMaterial", "MatchStatus",
                               "DateCheck"),
 }
@@ -80,8 +81,8 @@ CANDIDATES = {
 }
 
 # Layers written by the workflow into the output GeoPackage.
-GPKG_LAYERS = ("relocated_leaks", "relocated_leak_offset_lines",
-               "leak_relocation_audit")
+GPKG_LAYERS = (schema.RELOCATED_LEAKS_LAYER, schema.OFFSET_LINES_LAYER,
+               schema.AUDIT_LAYER)
 
 
 def filled(series):

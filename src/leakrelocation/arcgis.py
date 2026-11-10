@@ -148,6 +148,11 @@ TRANSIENT_EXCEPTIONS = (
 # service returns under load.
 TRANSIENT_STATUSES = (429, 502, 503, 504)
 
+# ArcGIS returns these codes when a token is rejected. 498 is invalid, 499 is
+# missing or expired. Either way the cached token is dropped and one fresh
+# sign-in is tried before the request is given up on.
+TOKEN_REJECTED_CODES = ("498", "499")
+
 
 def send_with_retry(send, describe):
     """Run a request, retrying transient failures with backoff.
@@ -205,7 +210,7 @@ def request_json(session, url, params=None):
         error = data.get("error", {})
         code = str(error.get("code"))
 
-        if code in ("498", "499"):
+        if code in TOKEN_REJECTED_CODES:
             warn(
                 "ArcGIS access token was rejected. Clearing cached token and forcing one fresh login."
             )
@@ -270,7 +275,7 @@ def request_json_post(session, url, params):
         error = data.get("error", {})
         code = str(error.get("code"))
 
-        if code in ("498", "499"):
+        if code in TOKEN_REJECTED_CODES:
             warn(
                 "ArcGIS access token was rejected during POST. Clearing cached token and forcing one fresh login."
             )
@@ -344,7 +349,7 @@ def esri_polyline_to_geom(geometry):
         return None
     lines = []
     for path in geometry.get("paths", []):
-        coords = [(float(x), float(y)) for x, y, *rest in path]
+        coords = [(float(x), float(y)) for x, y, *_ in path]
         if len(coords) >= 2:
             lines.append(LineString(coords))
     if not lines:

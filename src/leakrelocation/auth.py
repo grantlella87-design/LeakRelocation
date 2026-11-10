@@ -1,4 +1,4 @@
-﻿# ruff: noqa: BLE001, S110, S112
+# ruff: noqa: BLE001, S110, S112
 # Broad excepts are deliberate here: keyring, browser-history and clipboard
 # access all fail in environment-specific ways, and none of them should stop a
 # sign-in that can still fall back to another route. Moved verbatim from the
@@ -632,55 +632,3 @@ def main(argv=None):
 
 if __name__ == "__main__":
     _sys.exit(main())
-
-
-# ArcGIS returns these codes when a token is rejected. 498 is invalid, 499 is
-# missing or expired.
-TOKEN_REJECTED_CODES = ("498", "499")
-
-
-def request_json(session, url, params=None):
-    """GET an ArcGIS REST endpoint as JSON, re-authenticating once if the token
-    is rejected.
-
-    A token that was valid when the run started can be rejected part way
-    through, which otherwise fails the whole export. On rejection the cached
-    token is discarded, a fresh one is obtained, and the request is retried once.
-
-    Raises RuntimeError carrying the portal's own error for anything else.
-    """
-    request_params = dict(params or {})
-
-    token = getattr(session, "_arcgis_access_token", None) or get_arcgis_token(session)
-    session._arcgis_access_token = token
-    request_params.setdefault("token", token)
-    request_params.setdefault("f", "json")
-
-    def send():
-        response = session.get(
-            url,
-            params=request_params,
-            timeout=config.REQUEST_TIMEOUT_SECONDS,
-            verify=config.VERIFY_SSL,
-        )
-        response.raise_for_status()
-        return response.json()
-
-    data = send()
-    error = data.get("error") or {}
-    if not error:
-        return data
-
-    if str(error.get("code")) in TOKEN_REJECTED_CODES:
-        warn("ArcGIS rejected the access token. Signing in again and retrying once.")
-        clear_cached_access_token()
-        if hasattr(session, "_arcgis_access_token"):
-            del session._arcgis_access_token
-        request_params["token"] = get_arcgis_token(session)
-        session._arcgis_access_token = request_params["token"]
-        data = send()
-        error = data.get("error") or {}
-        if not error:
-            return data
-
-    raise RuntimeError(f"ArcGIS REST error from {url}: {json.dumps(error, indent=2)}")

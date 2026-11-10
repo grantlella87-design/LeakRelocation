@@ -204,6 +204,36 @@ USE_LEAK_DATE_FALLBACK = _flag_from_env("LEAKRELOCATION_LEAK_DATE_FALLBACK", Fal
 PREFER_EXACT_DIAMETER = _flag_from_env("LEAKRELOCATION_PREFER_EXACT_DIAMETER", True)
 
 
+def set_run_options(diameter_mode="", leak_date_fallback=False,
+                    force_refresh=False):
+    """Apply what was asked for on the command line; return the diameter rule.
+
+    Everything in this module is read from the environment when it is first
+    imported, which is before any command line has been parsed. So a flag is
+    applied twice: to the value here, which the rest of this process reads, and
+    to the environment, which the matching workers read when they start as
+    separate processes.
+
+    Call it before importing leakrelocation.workflow. That module works out
+    which GeoPackage it writes from the diameter rule as it is imported, so
+    choosing afterwards would write the widened output over the strict one.
+
+    Only what is asked for changes: an empty or False argument leaves the
+    value the environment already gave.
+    """
+    global DIAMETER_MATCH_MODE, USE_LEAK_DATE_FALLBACK, FORCE_LAYER_REFRESH
+    if diameter_mode:
+        DIAMETER_MATCH_MODE = diameter_mode.strip().lower() or "exact"
+        os.environ["LEAKRELOCATION_DIAMETER_MODE"] = DIAMETER_MATCH_MODE
+    if leak_date_fallback:
+        USE_LEAK_DATE_FALLBACK = True
+        os.environ["LEAKRELOCATION_LEAK_DATE_FALLBACK"] = "1"
+    if force_refresh:
+        FORCE_LAYER_REFRESH = True
+        os.environ["FORCE_LAYER_REFRESH"] = "1"
+    return DIAMETER_MATCH_MODE
+
+
 def output_gpkg_for(mode=None, base=None):
     """Where the outputs for a diameter-match mode are written.
 
@@ -262,7 +292,6 @@ VERIFY_SSL = _flag_from_env("LEAKRELOCATION_VERIFY_SSL", True)
 
 USE_LAYER_CACHE = _flag_from_env("USE_LAYER_CACHE", True)
 FORCE_LAYER_REFRESH = _flag_from_env("FORCE_LAYER_REFRESH", False)
-DELTA_REFRESH_SAFETY_SECONDS = 300
 
 # A cache younger than this is trusted without asking the server whether it has
 # changed. Each check costs a count query plus a delta query per layer, and

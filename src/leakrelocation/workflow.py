@@ -206,18 +206,6 @@ def load_supplemental():
     return records
 
 
-def to_target_crs(gdf, name):
-    step(f"Projecting to analysis CRS: {name}")
-    if gdf.crs is None:
-        warn(
-            f"{name} has no CRS from service metadata. Assuming EPSG:3857 before projecting."
-        )
-        gdf = gdf.set_crs("EPSG:3857")
-    projected = gdf.to_crs(TARGET_CRS)
-    log(f"{name}: CRS now {projected.crs}")
-    return projected
-
-
 def load_retired_pipes(session):
     """Load the retired pipe layer, or report why it cannot be used.
 
@@ -873,9 +861,11 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
         )
     else:
         audit_gdf = gpd.GeoDataFrame(audit_df, geometry=[], crs=TARGET_CRS)
-    relocated_gdf.to_file(OUTPUT_GPKG, layer="relocated_leaks", driver="GPKG")
-    lines_gdf.to_file(OUTPUT_GPKG, layer="relocated_leak_offset_lines", driver="GPKG")
-    audit_gdf.to_file(OUTPUT_GPKG, layer="leak_relocation_audit", driver="GPKG")
+    relocated_gdf.to_file(
+        OUTPUT_GPKG, layer=schema.RELOCATED_LEAKS_LAYER, driver="GPKG")
+    lines_gdf.to_file(
+        OUTPUT_GPKG, layer=schema.OFFSET_LINES_LAYER, driver="GPKG")
+    audit_gdf.to_file(OUTPUT_GPKG, layer=schema.AUDIT_LAYER, driver="GPKG")
     log(f"Wrote relocated_leaks: {len(relocated_gdf):,}")
     log(f"Wrote relocated_leak_offset_lines: {len(lines_gdf):,}")
     log(f"Wrote leak_relocation_audit: {len(audit_gdf):,}")
