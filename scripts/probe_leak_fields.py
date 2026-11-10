@@ -165,8 +165,8 @@ def verdict(result, cached_in_request):
 
 def main(argv=None):
     args = parse_args(argv)
-    sys.path.insert(0, str(config.WORKFLOW_SCRIPT.parent))
-    import leak_relocation_geopandas as workflow
+    import importlib
+    workflow = importlib.import_module("leakrelocation.workflow")
 
     fields = [name.strip() for name in args.fields.split(",") if name.strip()]
     url = args.url.rstrip("/")

@@ -137,8 +137,8 @@ def main(argv=None):
         os.environ["FORCE_LAYER_REFRESH"] = "1"
         log("FORCE_LAYER_REFRESH=1: pipe caches will be ignored.")
 
-    sys.path.insert(0, str(config.WORKFLOW_SCRIPT.parent))
-    import leak_relocation_geopandas as workflow
+    import importlib
+    workflow = importlib.import_module("leakrelocation.workflow")
 
     workflow.banner(
         f"enterprise (Maximo) leaks, SQL - {config.MAXIMO_QUERY_FILE}",

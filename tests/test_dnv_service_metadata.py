@@ -64,8 +64,8 @@ def workflow():
     pytest.importorskip("geopandas")
     pytest.importorskip("keyring")
     sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-    import leak_relocation_geopandas
-    return leak_relocation_geopandas
+    from leakrelocation import workflow
+    return workflow
 
 
 class TestTheReferenceIsWhatWeThinkItIs:

@@ -37,7 +37,7 @@ def headers():
 def workflow():
     pytest.importorskip("geopandas")
     pytest.importorskip("keyring")
-    path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
+    path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
     spec = importlib.util.spec_from_file_location("lr_supp", path)
     module = importlib.util.module_from_spec(spec)
     with redirect_stdout(io.StringIO()):

@@ -69,8 +69,8 @@ def parse_args(argv=None):
 
 
 def load_workflow():
-    sys.path.insert(0, str(config.WORKFLOW_SCRIPT.parent))
-    import leak_relocation_geopandas as workflow
+    import importlib
+    workflow = importlib.import_module("leakrelocation.workflow")
     return workflow
 
 

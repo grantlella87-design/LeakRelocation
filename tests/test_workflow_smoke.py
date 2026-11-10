@@ -25,7 +25,7 @@ pytest.importorskip("keyring")
 
 @pytest.fixture(scope="module")
 def lr():
-    path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
+    path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
     spec = importlib.util.spec_from_file_location("lr_smoke", path)
     module = importlib.util.module_from_spec(spec)
     with redirect_stdout(io.StringIO()):
@@ -530,7 +530,7 @@ class TestTheDiameterRuleReachesTheMatcher:
         """Not read from config inside diameter_match: the matcher runs in
         worker processes, and passing it keeps the rule with the run."""
         source = open(
-            os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py"),
+            os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py"),
             encoding="utf-8").read()
         call = source[source.index("diameter_result = diameter_match("):]
         call = call[:call.index(")") + 1]
@@ -540,7 +540,7 @@ class TestTheDiameterRuleReachesTheMatcher:
         """Sorting by distance alone would let the widened run take a match
         away from the strict one."""
         source = open(
-            os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py"),
+            os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py"),
             encoding="utf-8").read()
         assert "candidates.sort(key=candidate_sort_key)" in source
         assert 'candidates.sort(key=lambda item: item["distance_ft"])' not in source
@@ -561,7 +561,7 @@ class TestTheDiameterRuleReachesTheMatcher:
         """Without both columns a GeoPackage cannot say which rule produced it,
         and a row cannot say whether its diameter was a fact or an assumption."""
         source = open(
-            os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py"),
+            os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py"),
             encoding="utf-8").read()
         assert source.count('"DiameterMode": DIAMETER_MATCH_MODE') == 3
         assert '"DiameterMatch"' in source
@@ -573,7 +573,7 @@ class TestTheDiameterRuleReachesTheMatcher:
         """"No exact diameter match" on a widened run would be a lie about what
         was tried."""
         source = open(
-            os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py"),
+            os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py"),
             encoding="utf-8").read()
         assert "diameter within one nominal size" in source
         assert 'reason = ("No exact diameter/material/pressure match' not in source

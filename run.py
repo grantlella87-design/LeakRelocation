@@ -21,7 +21,7 @@ order wrong produced a failure that named the next command to run:
 The material decode now happens inside the workflow, so there is no order left
 to get wrong. The individual scripts still work on their own - this drives them.
 
-The map is src/leaflet_bbox_server.py, which shows the distribution and service
+The map is leakrelocation.map_server, which shows the distribution and service
 pipes coloured by material along with the leaks, the relocated points and the
 trace lines. There used to be a second, static map and a --pipes flag to reach
 the pipes at all; that map showed a subset of this one and has been removed.
@@ -115,7 +115,7 @@ def run_workflow(refresh):
         os.environ["FORCE_LAYER_REFRESH"] = "1"
         log("FORCE_LAYER_REFRESH=1: caches will be ignored.")
 
-    import leak_relocation_geopandas as workflow
+    from leakrelocation import workflow
 
     workflow.main()
     return Path(workflow.OUTPUT_GPKG)
@@ -128,7 +128,7 @@ def missing_pipe_caches():
 
 
 def serve_map(port, open_browser):
-    """Serve the map with src/leaflet_bbox_server.py.
+    """Serve the map with leakrelocation.map_server.
 
     That module is the map viewer, and this always runs it. It used to refuse when
     a pipe cache was missing, which on a fresh checkout - which has no caches -
@@ -140,7 +140,7 @@ def serve_map(port, open_browser):
     write into one GeoJSON and hand to a browser.
     """
     step("Serving the map")
-    import leaflet_bbox_server as map_server
+    from leakrelocation import map_server
 
     missing = missing_pipe_caches()
     if missing:

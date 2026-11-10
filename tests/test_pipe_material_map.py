@@ -30,8 +30,8 @@ REFERENCE_PRESENT = config.REFERENCE_DIR.is_dir()
 
 @pytest.fixture(scope="module")
 def server():
-    import leaflet_bbox_server
-    return leaflet_bbox_server
+    from leakrelocation import map_server
+    return map_server
 
 
 # (ASSETGROUP, ASSETTYPE) -> the label the real domains give it.
@@ -305,7 +305,7 @@ class TestRunPyServesThisMap:
         traceback instead of a viewer. run.py has to run the map server; a missing
         cache makes that layer empty, not the whole map absent."""
         monkeypatch.setattr(run_py.config, "LAYER_CACHE_DIR", tmp_path)
-        import leaflet_bbox_server as map_server
+        from leakrelocation import map_server as map_server
         served = {}
         monkeypatch.setattr(map_server, "serve",
                             lambda port, open_browser: served.update(port=port))
@@ -326,7 +326,7 @@ class TestRunPyServesThisMap:
             (tmp_path / f"{name}.pkl.gz").write_bytes(b"")
         monkeypatch.setattr(run_py.config, "LAYER_CACHE_DIR", tmp_path)
 
-        import leaflet_bbox_server as map_server
+        from leakrelocation import map_server as map_server
         served = {}
         monkeypatch.setattr(map_server, "serve",
                             lambda port, open_browser: served.update(port=port))

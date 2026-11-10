@@ -23,7 +23,7 @@ pytest.importorskip("keyring")
 
 @pytest.fixture(scope="module")
 def lr():
-    path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
+    path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
     spec = importlib.util.spec_from_file_location("lr_startup", path)
     module = importlib.util.module_from_spec(spec)
     with redirect_stdout(io.StringIO()):
@@ -459,9 +459,9 @@ class TestOneMaterialClassification:
     a pipe is made of."""
 
     def test_bbox_server_uses_the_shared_implementation(self):
-        import leaflet_bbox_server
+        from leakrelocation import map_server
         from leakrelocation.assettype import family_from_assettype
-        assert leaflet_bbox_server.material_family is family_from_assettype
+        assert map_server.material_family is family_from_assettype
 
     @pytest.mark.parametrize("label,family", [
         ("Steel Pipe", "STEEL"),

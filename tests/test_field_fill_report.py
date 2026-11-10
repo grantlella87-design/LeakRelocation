@@ -174,7 +174,7 @@ class TestAskingTheService:
 
         pytest.importorskip("geopandas")
         pytest.importorskip("keyring")
-        path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
+        path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
         spec = importlib.util.spec_from_file_location("lr_fill", path)
         module = importlib.util.module_from_spec(spec)
         with redirect_stdout(io.StringIO()):
@@ -184,7 +184,7 @@ class TestAskingTheService:
         session = requests.Session()
         session._arcgis_access_token = "test-token"
         module.make_session = lambda *a, **k: session
-        monkeypatch.setitem(sys.modules, "leak_relocation_geopandas", module)
+        monkeypatch.setitem(sys.modules, "leakrelocation.workflow", module)
         return module
 
     def run(self, stub, fields, candidates=()):

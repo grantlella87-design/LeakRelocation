@@ -124,8 +124,8 @@ class TestTheMapCanNameRetiredPipeMaterials:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     def test_retired_pipes_get_a_material_domain(self, server):
         import io

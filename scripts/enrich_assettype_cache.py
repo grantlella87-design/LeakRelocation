@@ -27,7 +27,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
-from _bootstrap import config
+from _bootstrap import SRC, config
 
 from leakrelocation import schema
 from leakrelocation.assettype import build_assettype_decoder, norm_code
@@ -52,7 +52,7 @@ def log(message):
 def load_workflow_module():
     """Load the workflow module for its authenticated session and request
     helpers."""
-    path = config.WORKFLOW_SCRIPT
+    path = SRC / "leakrelocation" / "workflow.py"
     if not path.exists():
         raise RuntimeError(f"Workflow module not found: {path}")
     spec = importlib.util.spec_from_file_location("leak_relocation_workflow", str(path))
@@ -268,7 +268,6 @@ def main(argv=None):
     layer_keys = sorted(LAYERS) if args.layer == "both" else [args.layer]
 
     log("ASSETTYPE cache enrichment")
-    log(f"workflow module: {config.WORKFLOW_SCRIPT}")
     log(f"cache dir:       {config.LAYER_CACHE_DIR}")
     log(f"layers:          {', '.join(layer_keys)}")
     log("This modifies local pipe caches only. It does not run relocation.")

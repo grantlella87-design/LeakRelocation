@@ -18,7 +18,7 @@ pytest.importorskip("keyring")
 
 @pytest.fixture(scope="module")
 def lr():
-    path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
+    path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
     spec = importlib.util.spec_from_file_location("lr_under_test", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

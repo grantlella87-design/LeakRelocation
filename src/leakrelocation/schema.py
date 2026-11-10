@@ -60,7 +60,7 @@ PIPE_CACHE_MUST_BE_POPULATED = (
 
 # --- Relocation GeoPackage ---------------------------------------------------
 #
-# Written by write_outputs() in src/leak_relocation_geopandas.py.
+# Written by write_outputs() in leakrelocation/workflow.py.
 
 RELOCATED_LEAKS_LAYER = "relocated_leaks"
 OFFSET_LINES_LAYER = "relocated_leak_offset_lines"

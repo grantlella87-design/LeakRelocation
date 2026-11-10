@@ -61,7 +61,7 @@ class TestModuleBoundary:
     """The workflow should depend on the auth module, not carry the code."""
 
     def test_workflow_imports_auth_rather_than_defining_it(self):
-        path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
+        path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
         with open(path, encoding="utf-8") as handle:
             source = handle.read()
         assert "from leakrelocation.auth import" in source
@@ -78,7 +78,7 @@ class TestModuleBoundary:
 
     def test_logging_helpers_are_not_duplicated(self):
         """log/warn/detail live in leakrelocation.output, used by both."""
-        path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
+        path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
         with open(path, encoding="utf-8") as handle:
             source = handle.read()
         assert "from leakrelocation.output import" in source

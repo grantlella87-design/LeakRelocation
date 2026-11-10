@@ -38,7 +38,7 @@ from leakrelocation import config
 
 @pytest.fixture(scope="module")
 def lr():
-    path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
+    path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
     spec = importlib.util.spec_from_file_location("lr_retry", path)
     module = importlib.util.module_from_spec(spec)
     with redirect_stdout(io.StringIO()):
@@ -251,7 +251,7 @@ class TestWorkerSessionsAreReused:
 
 class TestTheFailureMessageIsActionable:
     def test_it_names_the_knobs(self):
-        path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
+        path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
         with open(path, encoding="utf-8") as handle:
             source = handle.read()
         assert "LEAKRELOCATION_DOWNLOAD_WORKERS=2" in source

@@ -29,12 +29,12 @@ from shapely.geometry import LineString, MultiLineString, Point, shape
 from shapely.ops import nearest_points
 from shapely.strtree import STRtree
 
-# The `leakrelocation` package sits next to this file. Adding the script's own
-# directory to sys.path lets it import cleanly whether it is run from the repo
-# or copied to the shared drive - provided the package folder travels with it.
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if _SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPT_DIR)
+# Absolute imports with this path setup, rather than relative imports, so the
+# module also works when loaded by file path or run directly - not only when
+# imported as a package member. See leakrelocation/output.py for the full note.
+_PACKAGE_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PACKAGE_PARENT not in sys.path:
+    sys.path.insert(0, _PACKAGE_PARENT)
 
 # === Native CRS patch: per-layer MapServer spatial reference ===
 # Each source layer must get its own native CRS from the actual MapServer layer being queried.
@@ -2460,11 +2460,26 @@ def main():
     )
 
 
-if __name__ == "__main__":
+def _cli(argv=None):
+    """`python -m leakrelocation.workflow` - the historic relocation, no map.
+
+    run.py is the normal entry point; this exists so the workflow can be run
+    on its own, and so --help answers without starting a download.
+    """
+    import argparse
+    argparse.ArgumentParser(
+        prog="python -m leakrelocation.workflow",
+        description="Relocate the historic (LMS) leaks and write the "
+                    "GeoPackage. Normally started by run.py.").parse_args(argv)
     try:
         main()
     except Exception:  # noqa: BLE001 - the top-level handler catches everything
         # Its whole purpose: print the traceback and exit non-zero, rather than
         # let a bare stack trace scroll past in a console that then closes.
         print(traceback.format_exc(), flush=True)
-        sys.exit(1)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_cli())

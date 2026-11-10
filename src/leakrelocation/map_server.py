@@ -11,9 +11,12 @@ import geopandas as gpd
 import pandas as pd
 from pyproj import CRS
 
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if _SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPT_DIR)
+# Absolute imports with this path setup, rather than relative imports, so the
+# module also works when loaded by file path or run directly - not only when
+# imported as a package member. See leakrelocation/output.py for the full note.
+_PACKAGE_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PACKAGE_PARENT not in sys.path:
+    sys.path.insert(0, _PACKAGE_PARENT)
 
 # Shared with the relocation workflow. A local copy of this classification used
 # substring matching, where "PE" matched inside "PIPE" and "TYPE" and sent every
@@ -1225,5 +1228,20 @@ def serve(port=PORT, open_browser=False):
             log("Stopped.")
 
 
+def _cli(argv=None):
+    """`python -m leakrelocation.map_server` - serve the map on its own."""
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="python -m leakrelocation.map_server",
+        description="Serve the relocation map. Normally started by run.py.")
+    parser.add_argument("--port", type=int, default=PORT,
+                        help="Default: %(default)s")
+    parser.add_argument("--open", action="store_true", dest="open_browser",
+                        help="Open a browser on the map.")
+    args = parser.parse_args(argv)
+    serve(port=args.port, open_browser=args.open_browser)
+    return 0
+
+
 if __name__ == "__main__":
-    serve()
+    sys.exit(_cli())

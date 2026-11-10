@@ -60,9 +60,6 @@ INPUT_DIR = REPO_ROOT / "input"
 SUPPLEMENTAL_CSV = _path_from_env(
     "LEAKRELOCATION_SUPPLEMENTAL_CSV", INPUT_DIR / "HL_SupplementalData.csv")
 
-# The workflow module in this repository.
-WORKFLOW_SCRIPT = Path(__file__).resolve().parent.parent / "leak_relocation_geopandas.py"
-
 # Committed point-in-time copy of the DNV service metadata. It carries the
 # ASSETTYPE subtype domains, which is what makes a material decode possible
 # without a token - see assettype.decoder_for_layer.

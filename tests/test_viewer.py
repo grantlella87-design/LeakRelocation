@@ -1,7 +1,7 @@
 """Tests for the map page and its attribute pane.
 
 The static viewer generator, its committed HTML snapshot and the standalone
-context-map builder are gone: src/leaflet_bbox_server.py is the only map now, and
+context-map builder are gone: leakrelocation.map_server is the only map now, and
 it is a superset of what the static one showed. What is left here covers that
 page and the shared attribute pane.
 """
@@ -27,7 +27,7 @@ def read_source(relative):
 def page():
     """The rendered map page."""
     pytest.importorskip("geopandas")
-    import leaflet_bbox_server as server
+    from leakrelocation import map_server as server
     saved = server.BOUNDS
     server.BOUNDS = {"west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
                      "center_lat": 42.5, "center_lon": -71.5}
@@ -61,7 +61,7 @@ class TestTheMapPageHasThePane:
     def test_full_height_map_rule_is_not_there(self):
         """The pane makes body a flex column. A leftover "#map{height:100%}"
         makes the map fill the page and hides the table."""
-        source = read_source("src/leaflet_bbox_server.py")
+        source = read_source("src/leakrelocation/map_server.py")
         assert "#map{height:100%;width:100%}" not in source
         assert "#map { height: 100%; width: 100%; }" not in source
 
@@ -161,8 +161,8 @@ class TestBboxServerMaterialColumns:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     def frame(self, **columns):
         import geopandas as gpd
@@ -235,8 +235,8 @@ class TestLeakAddressReachesTheMap:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     def leak_frame(self, **columns):
         import geopandas as gpd
@@ -292,8 +292,8 @@ class TestTheLeakLocationOnTheMap:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     def leak_frame(self, **columns):
         import geopandas as gpd
@@ -366,8 +366,8 @@ class TestTheMapOpensWithoutItsSources:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     def test_no_layer_is_marked_optional_any_more(self, server):
         """The flag decided who was allowed to degrade. They all are."""
@@ -471,8 +471,8 @@ class TestTheLeakFieldNotes:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     def leak_frame(self, server, **columns):
         import geopandas as gpd
@@ -552,8 +552,8 @@ class TestTheDistanceDashboardRoute:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     @pytest.fixture
     def gpkg(self, tmp_path, server, monkeypatch):
@@ -609,7 +609,7 @@ class TestTheDistanceDashboardRoute:
     def test_the_link_is_its_own_control(self, server):
         """Not a line inside updateInfo. Adding to that function has twice left
         a brace unbalanced, which only the browser caught."""
-        source = read_source("src/leaflet_bbox_server.py")
+        source = read_source("src/leakrelocation/map_server.py")
         info = source[source.index("function updateInfo()"):]
         info = info[:info.index("div.innerHTML=html}")]
         assert "/dashboard" not in info
@@ -674,8 +674,8 @@ class TestSwitchingBetweenDiameterRules:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     def write_audit(self, path, rows):
         import geopandas as gpd
@@ -815,8 +815,8 @@ class TestTheMapShowsBothLeakSets:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     def write(self, path, layer, keys):
         import geopandas as gpd

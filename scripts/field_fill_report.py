@@ -158,7 +158,8 @@ def service_counts(url, layer_label, fields, where, candidates=()):
     One count query per field. Nothing is downloaded, so this is cheap even
     against a layer of a million features.
     """
-    import leak_relocation_geopandas as workflow
+    import importlib
+    workflow = importlib.import_module("leakrelocation.workflow")
 
     session = workflow.make_session()
     log(f"\n=== {layer_label} on the service ===")
@@ -238,7 +239,8 @@ def main(argv=None):
         warn("No caches to read. Download them first: python run.py --no-view")
 
     if args.service:
-        import leak_relocation_geopandas as workflow
+        import importlib
+        workflow = importlib.import_module("leakrelocation.workflow")
         for name, (label, url) in CACHES.items():
             fields = list(EXPECTED.get(name, ()))
             try:

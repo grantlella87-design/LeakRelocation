@@ -105,8 +105,8 @@ class TestAnUnknownRuleIsNotSilentlyIgnored:
 def workflow():
     pytest.importorskip("geopandas")
     pytest.importorskip("keyring")
-    import leak_relocation_geopandas
-    return leak_relocation_geopandas
+    from leakrelocation import workflow
+    return workflow
 
 
 class TestTheFieldsAreRequestedAndPinned:

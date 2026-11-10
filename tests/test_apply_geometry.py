@@ -33,7 +33,7 @@ WKID = 2249
 @pytest.fixture(scope="module")
 def workflow():
     import importlib.util
-    path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
+    path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
     spec = importlib.util.spec_from_file_location("lr_apply", path)
     module = importlib.util.module_from_spec(spec)
     with redirect_stdout(io.StringIO()):
