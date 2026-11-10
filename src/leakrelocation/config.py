@@ -103,6 +103,14 @@ ARCGIS_REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob"
 KEYRING_SERVICE = "NG_GIS_LEAK_RELOCATION"
 KEYRING_ACCESS_TOKEN_USER = "arcgis_portal_access_token"
 KEYRING_ACCESS_TOKEN_EXPIRES_USER = "arcgis_portal_access_token_expires_epoch"
+# The refresh token the portal issues alongside the access token. The access
+# token lasts minutes; this lasts as long as the sign-in was asked to
+# (SIGNIN_VALID_MINUTES), and trades for a new access token with no browser.
+KEYRING_REFRESH_TOKEN_USER = "arcgis_portal_refresh_token"
+KEYRING_REFRESH_TOKEN_EXPIRES_USER = "arcgis_portal_refresh_token_expires_epoch"
+# How long one browser sign-in is asked to stay good for. Two weeks is the most
+# the portal grants.
+SIGNIN_VALID_MINUTES = 20160
 TOKEN_EXPIRY_SAFETY_SECONDS = 300
 
 
@@ -329,8 +337,8 @@ TIMINGS = _flag_from_env("LEAKRELOCATION_TIMINGS", False)
 # --- Authentication UX -----------------------------------------------------
 
 # Capture the OAuth code on a loopback redirect instead of the out-of-band page.
-# The browser lands on a page this process serves, which reports success and
-# closes itself, so no code is shown and no tab is left behind.
+# The browser lands on a page this process serves, so no code is shown, and the
+# window it is in is closed once "Allow" has been clicked.
 #
 # The portal app registration must list the redirect URI below. If it does not,
 # authentication fails and the out-of-band flow is used instead.
@@ -346,6 +354,13 @@ LOOPBACK_REDIRECT_URI = (
     os.environ.get("LEAKRELOCATION_LOOPBACK_REDIRECT_URI", "").strip()
     or f"http://{LOOPBACK_OAUTH_HOST}:{LOOPBACK_OAUTH_PORT}/"
 )
+
+# Where the sign-in page opens. "app" is a small window of its own, in the
+# default browser and its normal profile, which is closed when the sign-in
+# completes. "tab" is an ordinary browser tab, for a browser or a policy that
+# will not open the other. See leakrelocation/signin_window.py.
+SIGNIN_WINDOW = (os.environ.get("LEAKRELOCATION_SIGNIN_WINDOW", "app").strip().lower()
+                 or "app")
 
 
 def describe():

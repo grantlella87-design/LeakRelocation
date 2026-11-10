@@ -15,7 +15,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
 
 from leakrelocation import auth as lr_auth
-from leakrelocation import config
+from leakrelocation import config, signin_window
 
 pytest.importorskip("geopandas")
 pytest.importorskip("keyring")
@@ -146,7 +146,7 @@ class TestLoopbackSignIn:
 
     def capture(self, monkeypatch, query, sink=None, timeout=15):
         threads = []
-        monkeypatch.setattr(lr_auth.webbrowser, "open",
+        monkeypatch.setattr(signin_window.webbrowser, "open",
                             self._browser_that_calls_back(query, threads, sink=sink))
         with redirect_stdout(io.StringIO()):
             code = lr_auth.capture_loopback_authorization_code(
@@ -185,7 +185,7 @@ class TestLoopbackSignIn:
             ), daemon=True).start()
             return True
 
-        monkeypatch.setattr(lr_auth.webbrowser, "open", opener)
+        monkeypatch.setattr(signin_window.webbrowser, "open", opener)
         with redirect_stdout(io.StringIO()):
             lr_auth.capture_loopback_authorization_code(self.AUTHORIZE_URL, timeout_seconds=15)
         assert opened == [self.AUTHORIZE_URL]
@@ -208,20 +208,133 @@ class TestLoopbackSignIn:
             threading.Thread(target=run, daemon=True).start()
             return True
 
-        monkeypatch.setattr(lr_auth.webbrowser, "open", opener)
+        monkeypatch.setattr(signin_window.webbrowser, "open", opener)
         with redirect_stdout(io.StringIO()):
             code = lr_auth.capture_loopback_authorization_code(
                 self.AUTHORIZE_URL, timeout_seconds=15)
         assert code == "LATER"
 
     def test_timeout_returns_none_so_the_caller_can_fall_back(self, monkeypatch):
-        monkeypatch.setattr(lr_auth.webbrowser, "open", lambda *a, **k: True)
+        monkeypatch.setattr(signin_window.webbrowser, "open", lambda *a, **k: True)
         started = time.time()
         with redirect_stdout(io.StringIO()):
             code = lr_auth.capture_loopback_authorization_code(
                 self.AUTHORIZE_URL, timeout_seconds=2)
         assert code is None
         assert time.time() - started < 10
+
+
+class TestTheSignInWindowIsClosed:
+    """The page asks to close itself, and after a sign-in the browser refuses.
+    So the window is closed from outside, found by a title only this sign-in's
+    page has. These check that the two halves are given the same title."""
+
+    @pytest.fixture
+    def closed(self, monkeypatch):
+        titles = []
+        monkeypatch.setattr(signin_window, "close_signin_window",
+                            lambda title, **kwargs: titles.append(title) or True)
+        return titles
+
+    def capture(self, monkeypatch, query, sink):
+        return TestLoopbackSignIn().capture(monkeypatch, query, sink=sink)
+
+    @staticmethod
+    def title_of(body):
+        return body.split("<title>")[1].split("</title>")[0]
+
+    def test_the_window_showing_this_page_is_the_one_closed(self, monkeypatch, closed):
+        sink = {}
+        assert self.capture(monkeypatch, "?code=ABC", sink) == "ABC"
+        assert closed == [self.title_of(sink["body"])]
+
+    def test_the_title_is_in_the_page_as_served(self, monkeypatch, closed):
+        """Set in the HTML, not by script, so it is there the moment the window
+        can be seen - the close does not have to wait for anything to run."""
+        sink = {}
+        self.capture(monkeypatch, "?code=ABC", sink)
+        assert self.title_of(sink["body"]).startswith(lr_auth.LOOPBACK_TITLE + " ")
+        assert "document.title" not in sink["body"]
+
+    def test_each_sign_in_has_a_title_of_its_own(self, monkeypatch, closed):
+        """A fixed title would match a window left over from an earlier
+        sign-in, or anything else that happened to carry it."""
+        for _ in range(3):
+            self.capture(monkeypatch, "?code=ABC", {})
+        assert len(set(closed)) == 3
+
+    def test_the_code_is_taken_out_of_the_address_bar(self, monkeypatch, closed):
+        sink = {}
+        self.capture(monkeypatch, "?code=ABC", sink)
+        assert 'history.replaceState(null, "", "/")' in sink["body"]
+
+    def test_the_code_is_not_printed_even_when_verbose(self, monkeypatch, closed):
+        """The callback used to be logged whole, address and all, and the
+        address is where the code is."""
+        monkeypatch.setattr(config, "VERBOSE", True)
+        threads = []
+        monkeypatch.setattr(
+            signin_window.webbrowser, "open",
+            TestLoopbackSignIn._browser_that_calls_back(
+                "?code=ONETIMECODE9&state=s", threads))
+        printed = io.StringIO()
+        with redirect_stdout(printed):
+            code = lr_auth.capture_loopback_authorization_code(
+                TestLoopbackSignIn.AUTHORIZE_URL, timeout_seconds=15)
+        for thread in threads:
+            thread.join(timeout=5)
+        assert code == "ONETIMECODE9"
+        assert "ONETIMECODE9" not in printed.getvalue()
+        assert "carrying: code, state" in printed.getvalue()
+
+    def test_a_refused_sign_in_does_not_say_signed_in(self, monkeypatch, closed):
+        """Clicking Deny used to land on the page that said "Signed in"."""
+        sink = {}
+        with pytest.raises(RuntimeError, match="access_denied"):
+            self.capture(monkeypatch, "?error=access_denied", sink)
+        assert "Signed in" not in sink["body"]
+        assert "not completed" in sink["body"]
+
+    def test_a_refused_sign_in_leaves_its_window_open(self, monkeypatch, closed):
+        """It is telling the person something. Closing it would hide that."""
+        with pytest.raises(RuntimeError):
+            self.capture(monkeypatch, "?error=access_denied", {})
+        assert closed == []
+
+    def test_a_timeout_closes_nothing(self, monkeypatch, closed):
+        monkeypatch.setattr(signin_window.webbrowser, "open", lambda *a, **k: True)
+        with redirect_stdout(io.StringIO()):
+            lr_auth.capture_loopback_authorization_code(
+                TestLoopbackSignIn.AUTHORIZE_URL, timeout_seconds=1)
+        assert closed == []
+
+    def test_the_out_of_band_page_is_closed_by_its_own_title(self, monkeypatch, closed):
+        """The portal titles that page with the code it shows, which makes the
+        title as unique as ours."""
+        monkeypatch.setattr(config, "USE_LOOPBACK_OAUTH", False)
+        monkeypatch.setattr(signin_window.webbrowser, "open", lambda *a, **k: True)
+        monkeypatch.setattr(lr_auth, "get_oob_authorization_code",
+                            lambda started: "OOBCODE123")
+        monkeypatch.setattr(lr_auth, "keyring", type("K", (), {
+            "get_password": staticmethod(lambda *a: None),
+            "set_password": staticmethod(lambda *a: None)}))
+
+        class Session:
+            def post(self, url, data=None, **kwargs):
+                class Reply:
+                    status_code = 200
+
+                    def raise_for_status(self):
+                        return None
+
+                    def json(self):
+                        return {"access_token": "A" * 40, "expires_in": 1800}
+                return Reply()
+
+        with redirect_stdout(io.StringIO()) as printed:
+            lr_auth.sign_in_with_browser(Session())
+        assert closed == ["SUCCESS code=OOBCODE123"]
+        assert "OOBCODE123" not in printed.getvalue()
 
 
 class TestAuthorizeUrl:

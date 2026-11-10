@@ -3,6 +3,33 @@
 What changed, newest first, and why. Changes that alter which leaks relocate
 are marked **output**.
 
+## 1.1.0 — November 2026
+
+Signing in.
+
+- **The sign-in window closes when you click Allow.** The tab used to stay
+  behind saying it could be closed: the page asked to close itself, and a
+  browser refuses that for any tab that has navigated. The sign-in now opens in
+  a small window of its own, in the default browser and your normal profile,
+  and that window is closed from outside. Needs a Chromium browser (Edge,
+  Chrome) as the default; otherwise it is an ordinary tab, closed with Ctrl+W
+  only while it is the tab in front. `LEAKRELOCATION_SIGNIN_WINDOW=tab` forces
+  the tab.
+- **A sign-in is reused for two weeks.** The portal issues a refresh token
+  with every sign-in and it was being thrown away, so the browser came back as
+  soon as the access token lapsed — within the hour, and in the middle of a
+  long download. It is now saved, and a lapsed or refused access token is
+  renewed from it without a browser.
+- A token refused mid-download is renewed once. Each of the eight download
+  workers used to clear the cache and start a sign-in of its own.
+- `arcgis_signin.py --status` reports both tokens and says whether the next
+  run needs the browser. `--renew` fetches a new access token from the saved
+  sign-in. `--clear` and `--force` now sign out completely.
+- Fixed: with `LEAKRELOCATION_VERBOSE=1` the one-time authorization code was
+  printed. Clicking **Deny** landed on the page that said "Signed in".
+- Removed: the PowerShell script that sent Ctrl+W to whichever window was in
+  front after a sign-in.
+
 ## 1.0.0 — November 2026
 
 A restructuring for production use. No command changed and the relocation

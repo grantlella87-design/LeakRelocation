@@ -18,6 +18,19 @@ for folder in ("src", "scripts"):
 
 
 @pytest.fixture(autouse=True)
+def no_real_sign_in_window(monkeypatch):
+    """A sign-in under test opens a stub, never a browser.
+
+    On Windows the default is a real window of the default browser, and
+    closing it means looking for it for a few seconds. A test that wants
+    either asks for it.
+    """
+    from leakrelocation import config, signin_window
+    monkeypatch.setattr(config, "SIGNIN_WINDOW", "tab")
+    monkeypatch.setattr(signin_window, "CLOSE_TIMEOUT_SECONDS", 0)
+
+
+@pytest.fixture(autouse=True)
 def fresh_module_state():
     yield
     # Only what has already been imported: a test of the pure modules should

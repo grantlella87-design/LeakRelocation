@@ -68,6 +68,7 @@ See [the leak sources](leak-sources.md#enterprise-maximo-leaks).
 
 | Variable | Default |
 | --- | --- |
+| `LEAKRELOCATION_SIGNIN_WINDOW` | `app` — sign in through a small window of its own, closed when you click Allow; `tab` uses an ordinary browser tab |
 | `LEAKRELOCATION_LOOPBACK_OAUTH` | `1` — sign in via a loopback redirect; `0` uses the out-of-band page |
 | `LEAKRELOCATION_LOOPBACK_PORT` | `8080` — must match a redirect URI on the portal app registration |
 | `LEAKRELOCATION_LOOPBACK_HOST` | `localhost` |
@@ -93,19 +94,64 @@ deliberately when a run looks good.
 
 ## How signing in works
 
-Authentication uses a loopback redirect: the browser lands on a page this
-process serves, which reports success and closes itself. Nothing displays the
-authorization code and no tab is left behind.
+### How often the browser is needed
 
-This requires `http://localhost:8080/` to be listed as a redirect URI on the
-portal app registration. If it is not, the run warns and falls back to the
-out-of-band page — the one that shows `SUCCESS code=...` and cannot be closed
-programmatically, because that page belongs to the portal rather than to this
-process.
+About once a fortnight. A sign-in saves two things to Windows Credential
+Manager:
 
-A token is cached in Windows Credential Manager, and a cache younger than
-`LEAKRELOCATION_CACHE_FRESH_SECONDS` skips the server check entirely, so most
-repeat runs need no sign-in at all.
+| | Lasts | Used for |
+| --- | --- | --- |
+| access token | minutes — the portal decides, typically 30 | every request carries it |
+| refresh token | two weeks | getting a new access token, with no browser |
+
+A token is obtained by the cheapest route that works: the saved access token
+while it is good, then the refresh token, and the browser only when neither is
+left. So a run started an hour after the last one renews its token silently:
+
+    Cached ArcGIS Portal access token is expired or inside safety window.
+    Renewed the ArcGIS access token from the saved sign-in. No browser needed.
+
+The same happens in the middle of a run. A download outlasts an access token,
+and when the service refuses it the token is renewed and the request repeated.
+Every download worker is refused at the same moment; one of them renews it and
+the rest take the new one.
+
+```bat
+python scripts\arcgis_signin.py --status     what is saved, and whether the next run needs the browser
+python scripts\arcgis_signin.py --renew      fetch a new access token from the saved sign-in, now
+python scripts\arcgis_signin.py --clear      sign out
+```
+
+`--renew` is the way to check this works against the portal: if it opens the
+browser, the portal did not accept the refresh token.
+
+No token is ever printed, at any verbosity — only its length and when it
+lapses. The same goes for the one-time authorization code.
+
+### The sign-in window
+
+When the browser is needed, the sign-in opens in a small window of its own
+rather than a tab — the default browser's "app" window, in your normal profile,
+so you are still signed in to whatever you were signed in to. Click **Allow**
+and the window closes.
+
+It is a separate window for a reason. A page is only allowed to close a tab
+that a script opened or that has never navigated, and a tab that has been
+through sign-in and Allow is neither — the browser refuses, which is why the
+tab used to stay behind saying it could be closed. A window that holds nothing
+but the sign-in can be closed from outside instead, and closing it cannot take
+any of your other tabs with it.
+
+That needs Edge, Chrome or another Chromium browser as the Windows default. With
+Firefox, or with `LEAKRELOCATION_SIGNIN_WINDOW=tab`, the sign-in opens in an
+ordinary tab and is closed with Ctrl+W — sent only while that tab is the one in
+front, so it cannot land on anything else. If you click away first, the tab
+stays and says it can be closed.
+
+The redirect lands on a page this process serves, so nothing displays the
+authorization code. This requires `http://localhost:8080/` to be listed as a
+redirect URI on the portal app registration. If it is not, the run warns and
+falls back to the out-of-band page, the one that shows `SUCCESS code=...`.
 
 ## The layer cache and newly requested fields
 

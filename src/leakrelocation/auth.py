@@ -8,19 +8,34 @@
 Extracted from the workflow module so signing in can be exercised, debugged and
 fixed on its own. `scripts/arcgis_signin.py` drives it from the command line.
 
-Two ways to capture the OAuth authorization code:
+A token is obtained by the cheapest route that works, in this order:
+
+1. the access token saved in the OS credential store, while it is still good;
+2. an access token given in the environment;
+3. the saved refresh token, traded for a new access token with no browser;
+4. signing in through the browser.
+
+The access token lasts minutes and the refresh token two weeks, so the browser
+is needed about once a fortnight, not once a run - and never in the middle of
+one. Only one of these happens at a time: the download workers all find out the
+token has lapsed at the same moment, and without that they would each start a
+sign-in of their own.
+
+Two ways to capture the authorization code when the browser is needed:
 
 * a loopback redirect (default) - the browser lands on a page this process
-  serves, which reports success and closes itself, so the code is never shown
-  and no tab is left behind. Needs the redirect URI registered on the portal app.
-* the out-of-band page - the fallback, which displays "SUCCESS code=..." and
-  cannot be closed programmatically because the page belongs to the portal. The
+  serves, so the code is never shown, and the window is closed once "Allow" has
+  been clicked. Needs the redirect URI registered on the portal app.
+* the out-of-band page - the fallback, which displays "SUCCESS code=...". The
   code is recovered from browser history or the clipboard.
 
-Tokens are cached in the OS credential store through keyring, so most runs need
-no browser at all.
+leakrelocation.signin_window opens that window and closes it again.
+
+No token is ever printed - not the access token, not the refresh token, not the
+authorization code. Only lengths and expiry times.
 """
 import glob
+import html
 import json
 import os
 
@@ -31,15 +46,14 @@ import os
 # no known parent package".
 import os as _os
 import re
+import secrets
 import shutil as _shutil
 import sqlite3
-import subprocess
 import sys as _sys
 import tempfile
 import threading
 import time
 import urllib.parse
-import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import keyring
@@ -49,9 +63,13 @@ _PACKAGE_PARENT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 if _PACKAGE_PARENT not in _sys.path:
     _sys.path.insert(0, _PACKAGE_PARENT)
 
-from leakrelocation import config
+from leakrelocation import config, signin_window
 from leakrelocation.matching import clean
 from leakrelocation.output import detail, fail, log, warn
+
+# One sign-in at a time, across every thread of the process. Re-entrant because
+# obtaining a token is made of steps that each take it.
+_TOKEN_LOCK = threading.RLock()
 
 
 def make_session():
@@ -91,31 +109,92 @@ def keyring_set(name, value):
         warn(f"Keyring write failed for {name}: {ex}")
 
 
-def cached_access_token():
+def read_cached_access_token():
+    """(token, what to say about it). The token is "" unless it is still good."""
     token = keyring_get(config.KEYRING_ACCESS_TOKEN_USER)
     expires_raw = keyring_get(config.KEYRING_ACCESS_TOKEN_EXPIRES_USER)
 
     if not token or not expires_raw:
-        log("No cached ArcGIS Portal access token found in Windows Credential Manager.")
-        return ""
+        return "", ("No cached ArcGIS Portal access token found in Windows "
+                    "Credential Manager.")
 
     try:
         expires_epoch = float(expires_raw)
     except Exception:
-        log("Cached ArcGIS Portal access token expiration value is invalid.")
-        return ""
+        return "", "Cached ArcGIS Portal access token expiration value is invalid."
 
     if time.time() + config.TOKEN_EXPIRY_SAFETY_SECONDS < expires_epoch:
-        log("Using cached ArcGIS Portal access token from Windows Credential Manager.")
-        return token
+        return token, ("Using cached ArcGIS Portal access token from Windows "
+                       "Credential Manager.")
 
-    log("Cached ArcGIS Portal access token is expired or inside safety window.")
-    return ""
+    return "", "Cached ArcGIS Portal access token is expired or inside safety window."
+
+
+def cached_access_token():
+    token, message = read_cached_access_token()
+    log(message)
+    return token
+
+
+def cached_refresh_token():
+    """The saved refresh token, or "" when there is none or it has lapsed."""
+    token = keyring_get(config.KEYRING_REFRESH_TOKEN_USER)
+    if not token:
+        return ""
+    try:
+        expires_epoch = float(
+            keyring_get(config.KEYRING_REFRESH_TOKEN_EXPIRES_USER) or 0)
+    except (TypeError, ValueError):
+        expires_epoch = 0.0
+    # 0 is "the portal did not say when it lapses". It is tried anyway, and the
+    # portal's answer decides.
+    if expires_epoch and (
+            time.time() + config.TOKEN_EXPIRY_SAFETY_SECONDS >= expires_epoch):
+        return ""
+    return token
 
 
 def clear_cached_access_token():
+    """Forget the access token, keeping the sign-in it came from.
+
+    For a token the service has refused. The refresh token is left in place, so
+    the next one is fetched without a browser.
+    """
     keyring_set(config.KEYRING_ACCESS_TOKEN_USER, "")
     keyring_set(config.KEYRING_ACCESS_TOKEN_EXPIRES_USER, "0")
+
+
+def clear_cached_refresh_token():
+    keyring_set(config.KEYRING_REFRESH_TOKEN_USER, "")
+    keyring_set(config.KEYRING_REFRESH_TOKEN_EXPIRES_USER, "0")
+
+
+def clear_cached_tokens():
+    """Sign out: forget everything, so the next token needs the browser."""
+    clear_cached_access_token()
+    clear_cached_refresh_token()
+
+
+def save_tokens(data):
+    """Store what a token response granted, and return the access token.
+
+    A response to a refresh carries no new refresh token, and the one already
+    stored is left as it is.
+    """
+    token = data.get("access_token") or data.get("token")
+    if not token:
+        fail("ArcGIS OAuth response did not include access_token/token.")
+    now = time.time()
+    keyring_set(config.KEYRING_ACCESS_TOKEN_USER, token)
+    keyring_set(config.KEYRING_ACCESS_TOKEN_EXPIRES_USER,
+                now + float(data.get("expires_in") or 3600))
+    refresh = data.get("refresh_token")
+    if refresh:
+        lifetime = data.get("refresh_token_expires_in")
+        keyring_set(config.KEYRING_REFRESH_TOKEN_USER, refresh)
+        keyring_set(config.KEYRING_REFRESH_TOKEN_EXPIRES_USER,
+                    now + float(lifetime) if lifetime else 0)
+    return token
 
 
 def extract_oauth_code(value):
@@ -290,24 +369,60 @@ def get_oob_authorization_code(start_epoch_seconds):
     )
 
 
-LOOPBACK_SUCCESS_PAGE = b"""<!doctype html>
+# The title of the page a sign-in ends on. Each sign-in adds a random marker to
+# it, so the window showing it can be found and closed without any chance of
+# closing a different one.
+LOOPBACK_TITLE = "ArcGIS sign-in complete"
+
+_LOOPBACK_PAGE = """<!doctype html>
 <html>
 <head>
 <meta charset="utf-8"/>
-<title>ArcGIS Loopback Sign-in Complete</title>
+<title>%(title)s</title>
 </head>
 <body style="font-family:Arial,sans-serif;padding:2em">
-<p id="msg">Signed in. Closing this tab...</p>
+<p id="msg">%(message)s</p>
 <script>
-document.title = "ArcGIS Loopback Sign-in Complete";
-window.open("", "_self");
-window.close();
-setTimeout(function(){
-  document.getElementById("msg").textContent = "Signed in. This tab can be closed.";
-}, 700);
+// This page was reached at an address carrying the one-time code. It has been
+// used by now; take it out of the address bar and the history.
+try { history.replaceState(null, "", "/"); } catch (e) {}
+%(script)s
 </script>
 </body>
 </html>"""
+
+# The browser refuses window.close() on a tab that has been through a sign-in,
+# so this only works when the portal sent the browser straight back. The window
+# is closed from outside in every other case; the message is for when neither
+# happened.
+_CLOSE_SCRIPT = """window.close();
+setTimeout(function(){
+  document.getElementById("msg").textContent =
+    "Signed in. You can close this window.";
+}, 2500);"""
+
+
+def loopback_page(title):
+    """What the browser shows once the portal has sent it back signed in."""
+    return (_LOOPBACK_PAGE % {
+        "title": html.escape(title),
+        "message": "Signed in. This window will close.",
+        "script": _CLOSE_SCRIPT,
+    }).encode("utf-8")
+
+
+def loopback_error_page():
+    """What it shows when the portal sent it back with an error instead.
+
+    It used to show the success page here too, so someone who clicked Deny was
+    told they had signed in.
+    """
+    return (_LOOPBACK_PAGE % {
+        "title": "ArcGIS sign-in was not completed",
+        "message": "ArcGIS sign-in was not completed. You can close this "
+                   "window; the reason is in the window you started from.",
+        "script": "",
+    }).encode("utf-8")
 
 
 def build_authorize_url(redirect_uri):
@@ -322,7 +437,7 @@ def build_authorize_url(redirect_uri):
             "client_id": config.ARCGIS_CLIENT_ID,
             "response_type": "code",
             "redirect_uri": redirect_uri,
-            "expiration": "20160",
+            "expiration": str(config.SIGNIN_VALID_MINUTES),
         },
         safe=":/",
     )
@@ -378,75 +493,46 @@ def authorize_url_is_accepted(session, authorize_url, redirect_uri):
     return False
 
 
-def close_loopback_callback_tab():
-    """Best-effort close of the browser tab that displayed the loopback success page."""
-    ps_script = r'''
-$title = 'ArcGIS Loopback Sign-in Complete'
-$shell = New-Object -ComObject WScript.Shell
-Start-Sleep -Milliseconds 500
-$activated = $false
-for ($i = 0; $i -lt 20; $i++) {
-    if ($shell.AppActivate($title)) {
-        $activated = $true
-        break
-    }
-    Start-Sleep -Milliseconds 200
-}
-if ($activated) {
-    Start-Sleep -Milliseconds 200
-    $shell.SendKeys('^w')
-}
-'''
-    try:
-        subprocess.Popen(
-            [
-                "powershell.exe",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                ps_script,
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except Exception as ex:
-        detail(f"Could not auto-close loopback browser tab: {ex}")
-
-
 def capture_loopback_authorization_code(authorize_url, timeout_seconds=180):
     """Serve the OAuth redirect on loopback and return the authorization code.
 
-    Replaces reading the code off the out-of-band page, which left a tab showing
-    "SUCCESS code=..." that could not be closed programmatically because the
-    page belonged to the portal. Here the redirect lands on a page this process
-    serves, so it can close itself and never displays the code.
+    The redirect lands on a page this process serves, so the code is never
+    displayed, and the window showing that page is closed as soon as the code
+    has arrived - which is the moment after "Allow" is clicked.
 
     Returns None if the redirect never arrives, so the caller can fall back.
     """
     captured = {}
     ready = threading.Event()
+    title = f"{LOOPBACK_TITLE} {secrets.token_hex(3)}"
+    pages = {"code": loopback_page(title), "error": loopback_error_page()}
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            detail(f"Loopback callback received: {self.path}")
             query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            # The names only. The path carries the one-time code, and that is
+            # not printed at any verbosity.
+            detail(f"Loopback callback received, carrying: "
+                   f"{', '.join(sorted(query)) or 'nothing'}")
             code = (query.get("code") or [None])[0]
             error = (query.get("error_description") or query.get("error") or [None])[0]
             if code:
                 captured["code"] = code
+                page = pages["code"]
             elif error:
                 captured["error"] = error
+                page = pages["error"]
             else:
                 self.send_response(204)
                 self.end_headers()
                 return
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(LOOPBACK_SUCCESS_PAGE)))
+            self.send_header("Content-Length", str(len(page)))
+            # The address carried the code; nothing should keep a copy of it.
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            self.wfile.write(LOOPBACK_SUCCESS_PAGE)
+            self.wfile.write(page)
             ready.set()
 
         def log_message(self, *args):
@@ -461,10 +547,10 @@ def capture_loopback_authorization_code(authorize_url, timeout_seconds=180):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        log("Opening browser to sign in to ArcGIS.")
+        log("Opening a window to sign in to ArcGIS.")
         detail(f"Redirect URI: {config.LOOPBACK_REDIRECT_URI}")
         detail(f"Authorize URL: {authorize_url}")
-        webbrowser.open(authorize_url, new=1, autoraise=True)
+        signin_window.open_signin(authorize_url)
         if not ready.wait(timeout_seconds):
             warn("Sign-in did not complete within the timeout.")
             return None
@@ -473,22 +559,84 @@ def capture_loopback_authorization_code(authorize_url, timeout_seconds=180):
         server.server_close()
     if captured.get("error"):
         fail(f"ArcGIS sign-in failed: {captured['error']}")
+    signin_window.close_signin_window(title)
     return captured.get("code")
 
 
-def interactive_access_token(session):
-    cached = cached_access_token()
-    if cached:
-        return cached
-    env_token = (
+def environment_access_token():
+    """An access token handed in through the environment, or ""."""
+    value = (
         os.environ.get("GIS_AccessToken")
         or os.environ.get("GIS_ACCESS_TOKEN")
         or os.environ.get("ARCGIS_ACCESS_TOKEN")
         or os.environ.get("ARCGIS_TOKEN")
     )
-    if env_token and env_token.strip():
-        log("Using ArcGIS access token from environment variable.")
-        return env_token.strip()
+    return (value or "").strip()
+
+
+def refresh_access_token(session):
+    """Trade the saved refresh token for a new access token. No browser.
+
+    Returns "" when there is no usable refresh token, or the portal no longer
+    accepts it - in which case it is forgotten, so the browser is asked for
+    once rather than on every request.
+    """
+    refresh = cached_refresh_token()
+    if not refresh:
+        return ""
+    payload = {
+        "f": "json",
+        "client_id": config.ARCGIS_CLIENT_ID,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh,
+    }
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        try:
+            response = session.post(
+                config.PORTAL_TOKEN_URL,
+                data=payload,
+                timeout=config.REQUEST_TIMEOUT_SECONDS,
+                verify=config.VERIFY_SSL,
+            )
+            break
+        except (requests.ConnectionError, requests.Timeout) as ex:
+            # A renewal usually happens in the middle of a long download, where
+            # one dropped connection should not be what ends the run.
+            if attempt == attempts:
+                raise
+            warn(f"Could not reach the portal to renew the sign-in "
+                 f"({type(ex).__name__}). Attempt {attempt} of {attempts}; "
+                 f"retrying.")
+            time.sleep(attempt)
+    if response.status_code >= 500:
+        # The portal is in trouble, which says nothing about the sign-in.
+        response.raise_for_status()
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+    granted = isinstance(data, dict) and "error" not in data and (
+        data.get("access_token") or data.get("token"))
+    if not granted:
+        error = data.get("error") if isinstance(data, dict) else None
+        reason = ""
+        if isinstance(error, dict):
+            reason = str(error.get("message") or error.get("error") or "")
+        log("The saved ArcGIS sign-in is no longer accepted, so the browser is "
+            "needed this once.")
+        if reason:
+            detail(f"Portal said: {reason}")
+        clear_cached_refresh_token()
+        return ""
+    token = save_tokens(data)
+    log("Renewed the ArcGIS access token from the saved sign-in. "
+        "No browser needed.")
+    return token
+
+
+def sign_in_with_browser(session):
+    """Sign in through the browser and store what the portal grants."""
     if not config.ARCGIS_CLIENT_ID:
         fail("config.ARCGIS_CLIENT_ID is not set.")
     auth_code = None
@@ -502,12 +650,16 @@ def interactive_access_token(session):
             else:
                 warn("Loopback sign-in did not complete; falling back.")
     if not auth_code:
-        log("Opening browser for ArcGIS user authentication (out-of-band).")
+        log("Opening a window for ArcGIS user authentication (out-of-band).")
         detail(f"Redirect URI: {config.ARCGIS_REDIRECT_URI}")
         auth_start_epoch = time.time()
-        webbrowser.open(build_authorize_url(config.ARCGIS_REDIRECT_URI), new=1, autoraise=True)
+        signin_window.open_signin(build_authorize_url(config.ARCGIS_REDIRECT_URI))
         auth_code = get_oob_authorization_code(auth_start_epoch)
         redirect_uri = config.ARCGIS_REDIRECT_URI
+        if auth_code:
+            # The portal's own page, titled with the code it is showing. That
+            # makes the title unique, so the same close works on it.
+            signin_window.close_signin_window(f"SUCCESS code={auth_code}")
     if not auth_code:
         fail("No authorization code was captured.")
     token_payload = {
@@ -529,19 +681,54 @@ def interactive_access_token(session):
         fail(
             f"ArcGIS OAuth token request failed: {json.dumps(data['error'], indent=2)}"
         )
-    token = data.get("access_token") or data.get("token")
-    if not token:
-        fail("ArcGIS OAuth response did not include access_token/token.")
-    expires_epoch = time.time() + float(data.get("expires_in") or 3600)
-    keyring_set(config.KEYRING_ACCESS_TOKEN_USER, token)
-    keyring_set(config.KEYRING_ACCESS_TOKEN_EXPIRES_USER, expires_epoch)
-    log("Saved ArcGIS Portal access token to Windows Credential Manager.")
-    close_loopback_callback_tab()
+    token = save_tokens(data)
+    if data.get("refresh_token"):
+        log("Signed in. Saved to Windows Credential Manager; later runs will "
+            "not need the browser until the sign-in lapses.")
+    else:
+        log("Saved ArcGIS Portal access token to Windows Credential Manager.")
+        warn("The portal did not issue a refresh token, so the browser will be "
+             "needed again when this access token lapses.")
     return token
+
+
+def interactive_access_token(session, rejected=""):
+    """A usable access token, by the cheapest route that works.
+
+    `rejected` is a token the service has just refused. Whatever is returned
+    will not be that one, however valid the credential store believes it is.
+    """
+    cached, message = read_cached_access_token()
+    if cached != rejected or not cached:
+        # Not said of the token that was just refused: "using cached" would be
+        # the opposite of what is about to happen.
+        log(message)
+    if cached and cached != rejected:
+        return cached
+    env_token = environment_access_token()
+    if env_token and env_token != rejected:
+        log("Using ArcGIS access token from environment variable.")
+        return env_token
+    return refresh_access_token(session) or sign_in_with_browser(session)
+
 
 def get_arcgis_token(session=None):
     active_session = session if session is not None else requests.Session()
-    return interactive_access_token(active_session)
+    with _TOKEN_LOCK:
+        return interactive_access_token(active_session)
+
+
+def renew_access_token(session, rejected):
+    """Replace an access token the service has refused.
+
+    Every download worker holds the same token and is refused at the same
+    moment, so this is called by all of them at once. The first one in renews
+    it; the rest find the new token already saved and take that, instead of
+    each discarding it and renewing again.
+    """
+    active_session = session if session is not None else requests.Session()
+    with _TOKEN_LOCK:
+        return interactive_access_token(active_session, rejected=rejected or "")
 
 
 def authenticated_count(session, layer_url):
@@ -598,8 +785,8 @@ def main(argv=None):
     log(f"  fallback uri: {config.ARCGIS_REDIRECT_URI}  (out-of-band)")
 
     if args.force:
-        log("\n--- Clearing cached token (--force) ---")
-        clear_cached_access_token()
+        log("\n--- Signing out first (--force) ---")
+        clear_cached_tokens()
 
     session = make_session()
 

@@ -10,6 +10,7 @@ GeoPackage with the relocated points, a guide line from old position to new,
 and an audit row for every leak saying what happened and why.
 
 A clone and a GIS sign-in are all a run needs. Nothing reads a shared drive.
+The sign-in is saved, so the browser is needed about once a fortnight.
 
 ## Quick start
 
@@ -50,7 +51,7 @@ Diagnostics, none of which change anything:
 
 | | |
 | --- | --- |
-| `python scripts\arcgis_signin.py --test-query` | Sign in and prove the token works. `--status`, `--clear`, `--check`. |
+| `python scripts\arcgis_signin.py --test-query` | Sign in and prove the token works. `--status`, `--renew`, `--clear`, `--check`. |
 | `python scripts\field_fill_report.py` | Which fields actually hold values, in the caches; `--service` asks the service too. |
 | `python scripts\probe_leak_fields.py` | Why a leak field is empty: on our rows, or on every row. |
 | `python scripts\describe_layer.py` | A layer's fields, dates and subtype domains; `--save` keeps a copy in `reference/`. |

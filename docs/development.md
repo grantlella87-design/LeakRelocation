@@ -8,7 +8,8 @@ line and call into the package. Everything else is in `src/leakrelocation/`.
 | Module | What it holds |
 | --- | --- |
 | `config` | Every path, URL and tuning value, read from the environment once. |
-| `auth` | ArcGIS sign-in and the cached token. Nothing else knows how a token is obtained. |
+| `auth` | ArcGIS sign-in and the saved tokens. Nothing else knows how a token is obtained. |
+| `signin_window` | Opening the sign-in in a window of its own, and closing it afterwards. |
 | `arcgis` | Requests to the REST layers: token attachment, retries, feature downloads. |
 | `layer_fields` | Which fields are read from each layer and from the supplemental CSV. |
 | `layer_cache` | The on-disk copy of each layer, and the full or delta download behind it. |

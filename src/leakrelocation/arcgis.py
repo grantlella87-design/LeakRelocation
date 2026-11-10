@@ -211,14 +211,9 @@ def request_json(session, url, params=None):
         code = str(error.get("code"))
 
         if code in TOKEN_REJECTED_CODES:
-            warn(
-                "ArcGIS access token was rejected. Clearing cached token and forcing one fresh login."
-            )
-            auth.clear_cached_access_token()
-            if hasattr(session, "_arcgis_access_token"):
-                delattr(session, "_arcgis_access_token")
-
-            request_params["token"] = auth.get_arcgis_token(session)
+            warn("ArcGIS did not accept the access token. Renewing it.")
+            request_params["token"] = auth.renew_access_token(
+                session, request_params.get("token"))
             session._arcgis_access_token = request_params["token"]
 
             response = session.get(
@@ -276,13 +271,9 @@ def request_json_post(session, url, params):
         code = str(error.get("code"))
 
         if code in TOKEN_REJECTED_CODES:
-            warn(
-                "ArcGIS access token was rejected during POST. Clearing cached token and forcing one fresh login."
-            )
-            auth.clear_cached_access_token()
-            if hasattr(session, "_arcgis_access_token"):
-                delattr(session, "_arcgis_access_token")
-            request_params["token"] = auth.get_arcgis_token(session)
+            warn("ArcGIS did not accept the access token. Renewing it.")
+            request_params["token"] = auth.renew_access_token(
+                session, request_params.get("token"))
             session._arcgis_access_token = request_params["token"]
 
             response = session.post(

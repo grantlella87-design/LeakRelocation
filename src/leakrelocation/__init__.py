@@ -5,7 +5,8 @@ creates no folders and reads no data. The modules, roughly in the order a run
 uses them:
 
     config         every setting, read from the environment once
-    auth           ArcGIS sign-in and the cached token
+    auth           ArcGIS sign-in, and the tokens saved from it
+    signin_window  opening the sign-in window, and closing it afterwards
     arcgis         requests to the REST layers
     layer_fields   which fields are read from each layer
     layer_cache    the on-disk copy of each layer, and the download behind it
@@ -23,4 +24,4 @@ uses them:
     map_server, viewer_pane   the local map
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
