@@ -20,8 +20,7 @@ import pytest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
 
-from leakrelocation import config, matching
-from leakrelocation import layer_fields
+from leakrelocation import config, layer_fields, matching
 
 pytestmark = pytest.mark.skipif(
     not config.SUPPLEMENTAL_CSV.is_file(),

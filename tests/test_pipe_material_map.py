@@ -131,7 +131,7 @@ class TestPipesGetTheirMaterialWithoutEnrichment:
     def test_every_family_gets_its_own_colour(self, server):
         result, _ = quiet(server.add_pipe_material_fields, pipe_frame(),
                           "distribution_pipes")
-        colours = dict(zip(result["PipeMaterialFamily"], result["PipeMaterialColor"]))
+        colours = dict(zip(result["PipeMaterialFamily"], result["PipeMaterialColor"], strict=True))
         assert len(set(colours.values())) == len(colours)
         for family, colour in colours.items():
             assert colour == server.MATERIAL_COLORS[family]
@@ -139,7 +139,7 @@ class TestPipesGetTheirMaterialWithoutEnrichment:
     def test_copper_is_not_coloured_as_plastic(self, server):
         result, _ = quiet(server.add_pipe_material_fields, pipe_frame(),
                           "distribution_pipes")
-        by_label = dict(zip(result["PipeMaterialDomain"], result["PipeMaterialFamily"]))
+        by_label = dict(zip(result["PipeMaterialDomain"], result["PipeMaterialFamily"], strict=True))
         assert by_label["Copper"] == "COPPER"
 
     def test_an_enriched_cache_is_still_trusted_first(self, server):

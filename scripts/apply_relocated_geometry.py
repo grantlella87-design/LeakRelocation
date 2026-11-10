@@ -32,7 +32,6 @@ from leakrelocation import arcgis, auth, schema
 from leakrelocation.output import fail, log, step, warn
 
 
-
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

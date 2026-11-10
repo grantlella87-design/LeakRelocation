@@ -20,8 +20,7 @@ import pytest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
 
-from leakrelocation import assettype, config, matching
-from leakrelocation import arcgis, layer_fields
+from leakrelocation import arcgis, assettype, config, layer_fields, matching
 
 REFERENCE = os.path.join(REPO_ROOT, "reference", "mapserver_json",
                          "NY_DNV_Synergi_RiskResults_Assets_NY")
@@ -438,7 +437,7 @@ class TestTheWorkflowDecodesTheMaterialItself:
 
     def test_copper_is_copper(self, workflow, distribution, monkeypatch):
         result, _ = self.decode(workflow, distribution, self.frame(), monkeypatch)
-        families = dict(zip(result["material"], result["PipeMaterialFamily"]))
+        families = dict(zip(result["material"], result["PipeMaterialFamily"], strict=True))
         assert families["Copper"] == "COPPER"
         assert families["Plastic PE"] == "PLASTIC"
 

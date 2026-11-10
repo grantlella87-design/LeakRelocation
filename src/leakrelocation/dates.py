@@ -21,6 +21,7 @@ if _PACKAGE_PARENT not in sys.path:
 from leakrelocation.matching import parse_number
 from leakrelocation.output import warn
 
+
 def looks_numeric(value):
     """Whether this value is a number, or a string that is nothing but one.
 

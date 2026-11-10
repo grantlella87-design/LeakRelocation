@@ -33,8 +33,7 @@ pytest.importorskip("keyring")
 
 import requests
 
-from leakrelocation import config
-from leakrelocation import arcgis
+from leakrelocation import arcgis, config
 
 
 @pytest.fixture(scope="module")

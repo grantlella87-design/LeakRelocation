@@ -1,33 +1,28 @@
-﻿# Local caches and generated data
+# Everything this project downloads or generates holds real asset data, and none
+# of it belongs in the repository. By default it is all written outside the
+# clone, under LEAKRELOCATION_WORK_ROOT; these rules are for when it is not.
+
+# Downloaded layers and relocation outputs
 layer_cache/
 assettype_cache_enrichment/
-assettype_sample_debug/
-assettype_only_small_test/
-assettype_domain_diagnostics/
-material_domain_diagnostics_v2/
-production_moved_leak_outputs/**/*.csv
-production_moved_leak_outputs/**/*.geojson
-production_moved_leak_outputs/**/*.gpkg
-production_moved_leak_outputs/**/*.log
-production_moved_leak_outputs/local_leaflet_view/relocated_*.geojson
-production_moved_leak_outputs/local_leaflet_view_with_pipes/*.geojson
-
-# Generated exports and built viewers. These hold real asset attributes, and a
-# built viewer folder also carries a downloaded copy of Leaflet.
+production_moved_leak_outputs/
 outputs/
-*_viewer/leaflet/
 *.pkl.gz
 *.gpkg
+*.gpkg-journal
 *.gdb/
 *.fgdb/
 *.sqlite
 *.db
-*.log
-*.bak
-*.tmp
-*.zip
+*.geojson
 
-# Secrets and auth artifacts
+# Generated reports: the dashboards embed leak rows and the rollback files
+# embed feature geometry.
+relocation_distance_dashboard*.html
+leak_geometry_rollback_*.json
+*_assettype_decode_counts.csv
+
+# Secrets and sign-in artifacts
 *token*
 *Token*
 *.secret
@@ -36,17 +31,24 @@ outputs/
 .env.*
 credentials.json
 
+# Scratch
+*.log
+*.bak
+*.tmp
+*.zip
+
 # Python
 __pycache__/
 *.pyc
 .venv/
 venv/
 .pytest_cache/
+.ruff_cache/
 *.egg-info/
 build/
 dist/
 
-# OS/editor
+# OS and editors
 .DS_Store
 Thumbs.db
 .vscode/

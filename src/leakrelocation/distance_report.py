@@ -48,7 +48,7 @@ def read_audit(path):
     import geopandas as gpd
     try:
         return gpd.read_file(str(path), layer=schema.AUDIT_LAYER)
-    except Exception as ex:  # noqa: BLE001 - see the docstring
+    except Exception as ex:
         raise AuditUnreadable(str(ex)) from ex
 
 # A snap of less than this is a leak that was already sitting on its pipe. Worth

@@ -25,9 +25,9 @@ from leakrelocation import assettype, config, schema
 from leakrelocation import leak_location as location
 from leakrelocation.assettype import decoder_for_layer, norm_code
 from leakrelocation.assettype import family_from_assettype as material_family
+from leakrelocation.distance_dashboard import escape
 from leakrelocation.matching import DIAMETER_MODES, route_layers
 from leakrelocation.output import log
-from leakrelocation.distance_dashboard import escape
 from leakrelocation.viewer_pane import PANE_CSS, PANE_HTML, PANE_JS
 
 HOST = "127.0.0.1"
@@ -406,7 +406,7 @@ def decode_from_subtypes(gdf, layer_id, layer_name):
 
     labels = [
         decoder.get((norm_code(group), norm_code(asset_type)), {}).get("ASSETTYPE_DECODED")
-        for group, asset_type in zip(gdf[schema.ASSETGROUP], gdf[schema.ASSETTYPE])
+        for group, asset_type in zip(gdf[schema.ASSETGROUP], gdf[schema.ASSETTYPE], strict=True)
     ]
     named = sum(1 for label in labels if label)
     log(f"{layer_name}: decoded {named:,}/{len(labels):,} pipe materials from "

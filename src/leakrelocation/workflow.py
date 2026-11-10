@@ -38,10 +38,12 @@ from leakrelocation import (
     dates,
     layer_cache,
     layer_fields,
-    leak_location as location,
     native_crs,
     output,
     schema,
+)
+from leakrelocation import (
+    leak_location as location,
 )
 from leakrelocation.assettype import build_assettype_decoder, norm_code
 from leakrelocation.matching import (
@@ -414,7 +416,7 @@ def decode_pipe_materials(session, pipe_gdf, layer_url, layer_name):
     decoded = [
         decoder.get((norm_code(group), norm_code(asset_type)), {})
         for group, asset_type in zip(pipe_gdf[schema.ASSETGROUP],
-                                     pipe_gdf[schema.ASSETTYPE])
+                                     pipe_gdf[schema.ASSETTYPE], strict=True)
     ]
 
     pipe_gdf = pipe_gdf.copy()
@@ -431,7 +433,7 @@ def decode_pipe_materials(session, pipe_gdf, layer_url, layer_name):
         unknown = sorted({
             f"({norm_code(group)}, {norm_code(asset_type)})"
             for group, asset_type, row in zip(
-                pipe_gdf[schema.ASSETGROUP], pipe_gdf[schema.ASSETTYPE], decoded)
+                pipe_gdf[schema.ASSETGROUP], pipe_gdf[schema.ASSETTYPE], decoded, strict=True)
             if not row
         })
         warn(f"{layer_name}: {len(pipe_gdf) - named:,} rows had an "

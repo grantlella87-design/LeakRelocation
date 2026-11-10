@@ -217,6 +217,7 @@ class TestTheOutputsAreTheSameShape:
         """The report is source-agnostic too, so the distance dashboard works
         on this output with nothing changed."""
         import geopandas as gpd
+
         from leakrelocation import distance_dashboard, distance_report
         leaks, attributes, _ = maximo_leaks([
             sql_row(f"WO-{i}", 760_000 + i * 1000, 2_960_000) for i in range(5)])
@@ -357,6 +358,7 @@ class TestTheDateFallbackChangesOutcomes:
     def test_the_audit_records_which_field_supplied_the_date(
             self, workflow, tmp_path, monkeypatch):
         import geopandas as gpd
+
         from leakrelocation import config
         monkeypatch.setattr(config, "USE_LEAK_DATE_FALLBACK", True)
         leaks, attributes = self.leak_with_dates(None, "2019-04-02")
@@ -370,6 +372,7 @@ class TestTheDateFallbackChangesOutcomes:
     def test_the_source_is_blank_when_nothing_supplied_a_date(
             self, workflow, tmp_path, monkeypatch):
         import geopandas as gpd
+
         from leakrelocation import config
         monkeypatch.setattr(config, "USE_LEAK_DATE_FALLBACK", True)
         leaks, attributes = self.leak_with_dates(None, None)

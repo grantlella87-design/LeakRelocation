@@ -214,7 +214,7 @@ def enrich_layer(module, session, layer_key, args):
 
     decoded = pd.DataFrame([
         decoder.get((norm_code(group), norm_code(atype)), {})
-        for group, atype in zip(df["ASSETGROUP"], df["ASSETTYPE"])
+        for group, atype in zip(df["ASSETGROUP"], df["ASSETTYPE"], strict=True)
     ])
     for col in DECODED_COLUMNS:
         df[col] = decoded[col] if col in decoded.columns else None

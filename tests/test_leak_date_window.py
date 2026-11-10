@@ -18,7 +18,7 @@ import pytest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
 
-from leakrelocation import config
+from leakrelocation import config, dates, layer_fields
 from leakrelocation.matching import (
     DATE_MISSING_PIPE_DATE,
     DATE_NO_LEAK_DATE,
@@ -29,7 +29,6 @@ from leakrelocation.matching import (
     RETIRED_AFTER_LEAK,
     date_rule_result,
 )
-from leakrelocation import dates, layer_fields
 
 DAY = 86_400_000
 LEAK = 1_600_000_000_000          # 2020-09-13

@@ -134,7 +134,7 @@ def service():
                     # What a delete-and-re-add looks like from outside: same
                     # object id, brand new GlobalID.
                     state["globalid"][oid] = (
-                        "{BBBBBBBB-0000-0000-0000-%012d}" % oid)
+                        f"{{BBBBBBBB-0000-0000-0000-{oid:012d}}}")
                 results.append({"objectId": oid, "success": True})
             self.reply({"updateResults": results})
 

@@ -230,3 +230,63 @@ class TestTheScriptRuns:
     def test_the_requirements_file_it_defaults_to_is_the_real_one(self):
         assert bootstrap.REPO_ROOT == bootstrap.Path(REPO_ROOT)
         assert (bootstrap.REPO_ROOT / "requirements.txt").is_file()
+
+
+class TestThePythonVersion:
+    """An older Python installs everything and then fails on the first run."""
+
+    def test_an_old_python_is_turned_away(self):
+        assert not bootstrap.python_is_new_enough((3, 9, 18))
+        assert not bootstrap.python_is_new_enough((3, 10, 14))
+
+    def test_a_supported_python_is_accepted(self):
+        assert bootstrap.python_is_new_enough((3, 11, 0))
+        assert bootstrap.python_is_new_enough((3, 13, 1))
+        assert bootstrap.python_is_new_enough()
+
+    def test_it_is_the_floor_the_package_declares(self):
+        import tomllib
+        with open(os.path.join(REPO_ROOT, "pyproject.toml"), "rb") as handle:
+            declared = tomllib.load(handle)["project"]["requires-python"]
+        major, minor = bootstrap.MINIMUM_PYTHON
+        assert declared == f">={major}.{minor}"
+
+
+class TestTheTwoDependencyListsAgree:
+    """requirements.txt is what bootstrap.py installs; pyproject.toml is what
+    `pip install -e .` installs. A dependency added to one and not the other
+    works on the machine it was added on and nowhere else."""
+
+    @staticmethod
+    def names(lines):
+        import re
+        found = set()
+        for line in lines:
+            line = line.split("#")[0].strip()
+            if line:
+                found.add(re.split(r"[<>=!~;\[ ]", line, maxsplit=1)[0].lower())
+        return found
+
+    @pytest.fixture(scope="class")
+    def project(self):
+        import tomllib
+        with open(os.path.join(REPO_ROOT, "pyproject.toml"), "rb") as handle:
+            return tomllib.load(handle)["project"]
+
+    @pytest.fixture(scope="class")
+    def requirements(self):
+        with open(os.path.join(REPO_ROOT, "requirements.txt"),
+                  encoding="utf-8") as handle:
+            return self.names(handle)
+
+    def test_every_runtime_dependency_is_in_requirements(self, project,
+                                                         requirements):
+        assert self.names(project["dependencies"]) <= requirements
+
+    def test_requirements_has_nothing_the_package_does_not_declare(
+            self, project, requirements):
+        declared = self.names(project["dependencies"])
+        for extra in project["optional-dependencies"].values():
+            declared |= self.names(extra)
+        assert requirements <= declared, sorted(requirements - declared)
+

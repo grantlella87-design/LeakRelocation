@@ -70,7 +70,7 @@ def read_layer_cache(layer_name, layer_url, where_clause, required_fields=None):
         log(f"{layer_name}: no local cache found.")
         return None, None
     try:
-        with open(meta_path, "r", encoding="utf-8") as handle:
+        with open(meta_path, encoding="utf-8") as handle:
             meta = json.load(handle)
         if meta.get("layer_url") != layer_url:
             log(f"{layer_name}: cache URL changed. Refreshing layer.")

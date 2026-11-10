@@ -18,7 +18,8 @@ _PACKAGE_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PACKAGE_PARENT not in sys.path:
     sys.path.insert(0, _PACKAGE_PARENT)
 
-from leakrelocation import leak_location as location, schema
+from leakrelocation import leak_location as location
+from leakrelocation import schema
 from leakrelocation.matching import (
     IN_SERVICE_AT_LEAK,
     RETIRED_AFTER_LEAK,

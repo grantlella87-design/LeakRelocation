@@ -1,0 +1,45 @@
+name: CI
+
+# Every push, on every branch. The tests need no network, no ArcGIS token and
+# no asset data: the layers are stubbed and the reference metadata is committed.
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "ruff>=0.6"
+      - run: python -m ruff check .
+
+  test:
+    # Windows is where this runs for real; Linux is the cheap second opinion.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python-version: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      # Not requirements.txt: that also installs pyodbc, which needs an ODBC
+      # driver the tests never use - the Maximo tests hand in a fake connection.
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q
