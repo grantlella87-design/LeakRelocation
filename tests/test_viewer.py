@@ -891,3 +891,55 @@ class TestTheMapShowsBothLeakSets:
         page = server.html_page()
         assert "ENTERPRISE (MAXIMO) LEAKS" in page
         assert "Maximo leaks - relocated location" in page
+
+
+class TestTheRequestsThatAreNotPages:
+    """What the server says to a request for something it does not have."""
+
+    @pytest.fixture
+    def base(self):
+        pytest.importorskip("geopandas")
+        import threading
+        from http.server import ThreadingHTTPServer
+
+        from leakrelocation import map_server
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), map_server.Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        yield f"http://127.0.0.1:{httpd.server_address[1]}"
+        httpd.shutdown()
+        httpd.server_close()
+
+    def status(self, url):
+        import urllib.error
+        import urllib.request
+        try:
+            with urllib.request.urlopen(url, timeout=10) as reply:
+                return reply.status
+        except urllib.error.HTTPError as ex:
+            return ex.code
+
+    def test_the_favicon_request_is_answered_quietly(self, base):
+        """Every browser asks. A 404 for it shows up in the console as an
+        error on a page that is working."""
+        assert self.status(base + "/favicon.ico") == 204
+
+    def test_an_unknown_path_is_still_not_found(self, base):
+        assert self.status(base + "/nothing-here") == 404
+
+
+class TestTheDashboardLinkFitsItsText:
+    """Leaflet sizes every link in a .leaflet-bar as a 26 or 30 px square
+    button, which is right for + and - and clipped "Distance dashboard" to its
+    first few letters, the rest running off the edge of the white box."""
+
+    def test_leaflets_square_button_size_is_overridden(self, page):
+        import re
+        rule = re.search(r"\.leaflet-bar\.dash-link a[^{]*\{([^}]*)\}", page)
+        assert rule, "the dashboard link has no rule of its own"
+        assert "width:auto" in rule.group(1)
+        assert "height:auto" in rule.group(1)
+
+    def test_it_outranks_the_touch_rule_too(self, page):
+        """.leaflet-touch .leaflet-bar a is two classes deep; a plain
+        .dash-link a loses to it on a touch screen."""
+        assert ".leaflet-touch .leaflet-bar.dash-link a" in page

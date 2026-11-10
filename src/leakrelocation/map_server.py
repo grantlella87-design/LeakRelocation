@@ -942,7 +942,7 @@ def html_page():
     css_ref, js_ref = leaflet_refs()
     parts.append(f'<link rel="stylesheet" href="{css_ref}"/>')
     parts.append(
-        "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}.grouped-layers{padding:6px 10px;background:#fff;max-height:72vh;overflow:auto;font-size:12px}.grouped-layers .group{margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #ddd}.grouped-layers label{display:block;white-space:nowrap}.grouped-layers .child{padding-left:16px}.dash-link a,.dash-link .unrun{display:block;padding:6px 10px;background:#fff;color:#1f6feb;font-size:13px;font-weight:bold;text-decoration:none;white-space:nowrap}.dash-link a:hover{background:#f4f4f4}.dash-link .unrun{color:#9a9a9a;font-weight:normal;cursor:help}" + PANE_CSS + "</style>"
+        "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}.grouped-layers{padding:6px 10px;background:#fff;max-height:72vh;overflow:auto;font-size:12px}.grouped-layers .group{margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #ddd}.grouped-layers label{display:block;white-space:nowrap}.grouped-layers .child{padding-left:16px}.leaflet-bar.dash-link a,.leaflet-touch .leaflet-bar.dash-link a,.dash-link .unrun{display:block;width:auto;height:auto;line-height:1.4;text-align:left;padding:6px 10px;background:#fff;color:#1f6feb;font-size:13px;font-weight:bold;text-decoration:none;white-space:nowrap}.dash-link a:hover{background:#f4f4f4}.dash-link .unrun{color:#9a9a9a;font-weight:normal;cursor:help}" + PANE_CSS + "</style>"
     )
     parts.append(
         '</head><body><div id="map"></div>' + PANE_HTML
@@ -1120,6 +1120,12 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path in ["/dashboard", "/dashboard/"]:
                 mode = (parse_qs(parsed.query).get("mode", ["exact"])[0])
                 self.send_text(dashboard_page(mode), "text/html")
+            elif parsed.path == "/favicon.ico":
+                # Every browser asks for one on every page. There is none, and
+                # saying so with a 204 keeps a 404 out of the console, where it
+                # reads like something on the page is broken.
+                self.send_response(204)
+                self.end_headers()
             elif parsed.path.startswith("/leaflet/"):
                 folder = leaflet_dir()
                 if folder is None:
