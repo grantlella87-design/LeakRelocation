@@ -267,13 +267,13 @@ class TestTheTwoDependencyListsAgree:
                 found.add(re.split(r"[<>=!~;\[ ]", line, maxsplit=1)[0].lower())
         return found
 
-    @pytest.fixture(scope="class")
+    @pytest.fixture
     def project(self):
         import tomllib
         with open(os.path.join(REPO_ROOT, "pyproject.toml"), "rb") as handle:
             return tomllib.load(handle)["project"]
 
-    @pytest.fixture(scope="class")
+    @pytest.fixture
     def requirements(self):
         with open(os.path.join(REPO_ROOT, "requirements.txt"),
                   encoding="utf-8") as handle:
