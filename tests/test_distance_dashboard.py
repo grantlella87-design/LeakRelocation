@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
 pytest.importorskip("pandas")
 
 import pandas as pd
+
 from leakrelocation import distance_dashboard as dash
 from leakrelocation import distance_report as dr
 

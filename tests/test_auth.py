@@ -58,16 +58,28 @@ def cache_token(backend, token="T" * 64, valid_for_hours=5):
 
 
 class TestModuleBoundary:
-    """The workflow should depend on the auth module, not carry the code."""
+    """Everything else should depend on the auth module, not carry the code."""
 
-    def test_workflow_imports_auth_rather_than_defining_it(self):
-        path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
-        with open(path, encoding="utf-8") as handle:
-            source = handle.read()
-        assert "from leakrelocation.auth import" in source
-        for name in ["def interactive_access_token", "def capture_loopback_authorization_code",
-                     "def keyring_get", "def build_authorize_url"]:
-            assert name not in source, f"{name} should live in leakrelocation.auth"
+    def package_sources(self):
+        folder = os.path.join(REPO_ROOT, "src", "leakrelocation")
+        for name in sorted(os.listdir(folder)):
+            if name.endswith(".py") and name != "auth.py":
+                with open(os.path.join(folder, name), encoding="utf-8") as handle:
+                    yield name, handle.read()
+
+    def test_sign_in_is_defined_in_one_place(self):
+        for module, source in self.package_sources():
+            for name in ["def interactive_access_token",
+                         "def capture_loopback_authorization_code",
+                         "def keyring_get", "def build_authorize_url",
+                         "def make_session", "def get_arcgis_token"]:
+                assert name not in source, (
+                    f"{name} is in {module}; it should live in leakrelocation.auth")
+
+    def test_the_request_layer_gets_its_token_from_auth(self):
+        sources = dict(self.package_sources())
+        assert "auth.get_arcgis_token(" in sources["arcgis.py"]
+        assert "auth.make_session(" in sources["workflow.py"]
 
     def test_auth_module_exposes_the_entry_points(self):
         for name in ["make_session", "get_arcgis_token", "interactive_access_token",
@@ -78,12 +90,12 @@ class TestModuleBoundary:
 
     def test_logging_helpers_are_not_duplicated(self):
         """log/warn/detail live in leakrelocation.output, used by both."""
-        path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
-        with open(path, encoding="utf-8") as handle:
-            source = handle.read()
-        assert "from leakrelocation.output import" in source
-        assert "\ndef log(text):" not in source
-        assert "\ndef detail(text):" not in source
+        for module, source in self.package_sources():
+            if module == "output.py":
+                continue
+            assert "\ndef log(text):" not in source, module
+            assert "\ndef detail(text):" not in source, module
+            assert "\ndef warn(text):" not in source, module
 
 
 class TestCachedToken:

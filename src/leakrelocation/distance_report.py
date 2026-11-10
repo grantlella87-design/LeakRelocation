@@ -30,6 +30,27 @@ import math
 
 from leakrelocation import schema
 
+
+class AuditUnreadable(RuntimeError):
+    """The audit layer could not be read from a GeoPackage."""
+
+
+def read_audit(path):
+    """The audit layer of a relocation GeoPackage, as a frame.
+
+    Raises AuditUnreadable with the reader's own message. Which exception an
+    unreadable layer raises depends on the engine geopandas chose: pyogrio
+    raises DataLayerError for a missing layer and DataSourceError for an
+    unrecognised file, fiona raises its own DriverError, and a half-written
+    GeoPackage can fail inside GDAL in ways neither documents. All of them
+    mean the same thing to a caller, so they leave here as one.
+    """
+    import geopandas as gpd
+    try:
+        return gpd.read_file(str(path), layer=schema.AUDIT_LAYER)
+    except Exception as ex:
+        raise AuditUnreadable(str(ex)) from ex
+
 # A snap of less than this is a leak that was already sitting on its pipe. Worth
 # counting separately: it is the difference between "the records agreed" and "we
 # moved it".
@@ -46,10 +67,13 @@ PERCENTILES = (50, 75, 90, 95, 99)
 # Bin edges for the cumulative curve. The slider is an index into this list, so
 # the count it reports is exact rather than interpolated - no "about 94%".
 #
-# Two resolutions because the data has two scales: most relocations are a few
-# feet (0.036 ft and 16.1 ft are real values from a production run) while the
-# tail runs to the 3,000 ft maximum radius. A flat 0.1 ft grid to 3,000 would be
-# 30,000 numbers per series to serve a part of the range holding almost nothing.
+# Two resolutions because the data can have two scales: most relocations are a
+# few feet (0.036 ft and 16.1 ft are real values from a production run) while
+# an output made under a wider search radius has a tail running to it. The
+# search is capped at 100 ft now, so a fresh output needs only the fine grid -
+# but an older GeoPackage reaching 3,000 ft still has to report correctly, and
+# a flat 0.1 ft grid to 3,000 would be 30,000 numbers per series to serve a
+# part of the range holding almost nothing.
 FINE_LIMIT_FT = 100.0
 FINE_STEP_FT = 0.1
 COARSE_STEP_FT = 5.0
@@ -64,7 +88,7 @@ def curve_edges(max_ft):
     """Right-hand bin edges, fine near zero and coarse out to `max_ft`."""
     limit = max(float(max_ft), FINE_STEP_FT)
     edges = []
-    step_count = int(round(min(limit, FINE_LIMIT_FT) / FINE_STEP_FT))
+    step_count = round(min(limit, FINE_LIMIT_FT) / FINE_STEP_FT)
     for index in range(step_count + 1):
         edges.append(round(index * FINE_STEP_FT, 1))
     edge = FINE_LIMIT_FT
@@ -288,12 +312,14 @@ def material_agreement(frame):
     return {"exact": exact, "family_or_other": different, "unknown": unknown}
 
 
-# How the widening search passes are grouped for reporting. The matcher starts
-# at INITIAL_RADIUS_FT and widens by RADIUS_INCREMENT_FT, so a 3,000 ft maximum
-# is thirty distinct radii - thirty table rows, twenty-odd of them a fraction of
-# a percent. The grouping keeps the first pass on its own, because that is the
-# only one that means "there was a pipe right there", and buckets the rest by
-# how far the search had to reach.
+# How the widening search passes are grouped for reporting.
+#
+# With MAX_RADIUS_FT at 100 ft there is only one pass, so a fresh output has a
+# single row here. The rest of the buckets stay because an output made under a
+# wider radius still has to report correctly: a 3,000 ft maximum is thirty
+# distinct radii, which was thirty table rows with twenty-odd of them a fraction
+# of a percent. The first pass keeps its own row either way, because it is the
+# only one that means "there was a pipe right there".
 RADIUS_BUCKETS = (
     (100.0, "100 ft (first pass)"),
     (500.0, "200 to 500 ft"),
@@ -333,19 +359,30 @@ def radius_passes(frame):
     return rows
 
 
+def one_value_of(audit, column):
+    """The single value a column holds, or None when it holds more than one.
+
+    Used for the facts about a whole output - which leak set it came from,
+    which diameter rule wrote it. Recorded per row by the workflow, so a
+    GeoPackage says what it is rather than the reader having to remember which
+    file is which.
+    """
+    if column not in audit.columns or not len(audit):
+        return None
+    seen = {label(value, "") for value in audit[column].tolist()}
+    seen.discard("")
+    if len(seen) == 1:
+        return seen.pop()
+    return "/".join(sorted(seen)) if seen else None
+
+
 def diameter_mode_of(audit):
     """Which diameter rule wrote this output, read off the rows themselves.
 
     Recorded per row by the workflow, so a GeoPackage says which rule produced
     it rather than the reader having to remember which file is which.
     """
-    if schema.DIAMETER_MODE not in audit.columns or not len(audit):
-        return None
-    seen = {label(value, "") for value in audit[schema.DIAMETER_MODE].tolist()}
-    seen.discard("")
-    if len(seen) == 1:
-        return seen.pop()
-    return "/".join(sorted(seen)) if seen else None
+    return one_value_of(audit, schema.DIAMETER_MODE)
 
 
 def build_report(audit, source="", max_radius_ft=None, compare_audit=None,
@@ -392,8 +429,17 @@ def build_report(audit, source="", max_radius_ft=None, compare_audit=None,
             series[row["name"]] = cumulative(subset, edges)
             shapes[row["name"]] = histogram(subset, edges)
 
+    # Every threshold past the furthest a leak could have moved reports the
+    # same thing - everything within, nothing beyond - so the table would end in
+    # identical rows. Capped at one past the real reach, which keeps the row
+    # that shows the boundary and drops the ones that only repeat it.
+    reach = max(top, stats["max"] or 0.0)
+    usable = [limit for limit in THRESHOLDS_FT if limit < reach]
+    if len(usable) < len(THRESHOLDS_FT):
+        usable.append(next(limit for limit in THRESHOLDS_FT
+                           if limit >= reach))
     thresholds = []
-    for limit in THRESHOLDS_FT:
+    for limit in usable or list(THRESHOLDS_FT[:1]):
         under = sum(1 for value in ordered if value <= limit)
         thresholds.append({
             "ft": limit,
@@ -458,6 +504,11 @@ def build_report(audit, source="", max_radius_ft=None, compare_audit=None,
         "by_radius": radius_passes(matched),
         "material_agreement": material_agreement(matched),
         "diameter_mode": diameter_mode_of(audit),
+        "leak_source": one_value_of(audit, schema.LEAK_SOURCE),
+        # Which column supplied each leak's date. A relocation checked against
+        # the pipe's life should say what it was checked with, and a run where
+        # this is mostly blank is a run where the date rule decided nothing.
+        "date_source": counted(matched, schema.LEAK_DATE_SOURCE),
         "diameter_match": counted(matched, schema.DIAMETER_MATCH),
         "by_diameter_match": grouped(matched, schema.DIAMETER_MATCH),
         "date_check": counted(matched, "DateCheck"),

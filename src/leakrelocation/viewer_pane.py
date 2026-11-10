@@ -473,8 +473,3 @@ const AttributePane = (function () {
            selectFromMap: selectFromMap, clearSelection: clearSelection };
 })();
 """
-
-
-def pane_assets():
-    """Return (css, html, js) for embedding in a generated viewer."""
-    return PANE_CSS, PANE_HTML, PANE_JS

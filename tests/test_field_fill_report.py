@@ -167,25 +167,17 @@ class TestAskingTheService:
         server.shutdown()
 
     @pytest.fixture
-    def workflow(self, monkeypatch):
-        import importlib.util
-        import io
-        from contextlib import redirect_stdout
-
+    def signed_in(self, monkeypatch):
+        """A session that already carries a token, so nothing tries to sign in."""
         pytest.importorskip("geopandas")
         pytest.importorskip("keyring")
-        path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
-        spec = importlib.util.spec_from_file_location("lr_fill", path)
-        module = importlib.util.module_from_spec(spec)
-        with redirect_stdout(io.StringIO()):
-            spec.loader.exec_module(module)
-
         import requests
+
+        from leakrelocation import auth
+
         session = requests.Session()
         session._arcgis_access_token = "test-token"
-        module.make_session = lambda *a, **k: session
-        monkeypatch.setitem(sys.modules, "leak_relocation_geopandas", module)
-        return module
+        monkeypatch.setattr(auth, "make_session", lambda *a, **k: session)
 
     def run(self, stub, fields, candidates=()):
         import io
@@ -197,20 +189,20 @@ class TestAskingTheService:
                                   "jurisdiction = 'MA'", candidates)
         return buffer.getvalue()
 
-    def test_an_empty_field_is_marked(self, stub, workflow):
+    def test_an_empty_field_is_marked(self, stub, signed_in):
         stub["counts"] = {"REVISEDLEAKDATE": 0, "LMSLEAKNUMBER": 1000}
         printed = self.run(stub, ("LMSLEAKNUMBER", "REVISEDLEAKDATE"))
         assert "<-REVISEDLEAKDATE" in printed
         assert "<-LMSLEAKNUMBER" not in printed
 
-    def test_the_candidates_are_asked_too(self, stub, workflow):
+    def test_the_candidates_are_asked_too(self, stub, signed_in):
         stub["counts"] = {"REVISEDLEAKDATE": 0, "DISCOVEREDDATE": 990}
         printed = self.run(stub, ("REVISEDLEAKDATE",), ("DISCOVEREDDATE",))
         assert "not requested by this project" in printed
         assert "DISCOVEREDDATE" in printed
         assert any("DISCOVEREDDATE IS NOT NULL" in w for w in stub["asked"])
 
-    def test_a_rejected_field_does_not_stop_the_report(self, stub, workflow):
+    def test_a_rejected_field_does_not_stop_the_report(self, stub, signed_in):
         """Asking for a field the layer does not have makes the service reject
         that query; the remaining fields still have to be reported."""
         stub["counts"] = {"CITY": 900}
@@ -219,14 +211,14 @@ class TestAskingTheService:
         assert "could not ask" in printed
         assert "CITY" in printed
 
-    def test_a_reply_with_no_count_is_reported(self, stub, workflow):
+    def test_a_reply_with_no_count_is_reported(self, stub, signed_in):
         """query_count returns None there, and everything downstream divides by
         it."""
         stub["countless"] = True
         printed = self.run(stub, ("REVISEDLEAKDATE",))
         assert "did not return a row count" in printed
 
-    def test_one_query_per_field_and_no_data_is_downloaded(self, stub, workflow):
+    def test_one_query_per_field_and_no_data_is_downloaded(self, stub, signed_in):
         stub["counts"] = {"A": 1, "B": 2, "C": 3}
         self.run(stub, ("A", "B", "C"))
         # One for the total, three for the fields.

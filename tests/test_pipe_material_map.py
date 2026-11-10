@@ -30,8 +30,8 @@ REFERENCE_PRESENT = config.REFERENCE_DIR.is_dir()
 
 @pytest.fixture(scope="module")
 def server():
-    import leaflet_bbox_server
-    return leaflet_bbox_server
+    from leakrelocation import map_server
+    return map_server
 
 
 # (ASSETGROUP, ASSETTYPE) -> the label the real domains give it.
@@ -131,7 +131,7 @@ class TestPipesGetTheirMaterialWithoutEnrichment:
     def test_every_family_gets_its_own_colour(self, server):
         result, _ = quiet(server.add_pipe_material_fields, pipe_frame(),
                           "distribution_pipes")
-        colours = dict(zip(result["PipeMaterialFamily"], result["PipeMaterialColor"]))
+        colours = dict(zip(result["PipeMaterialFamily"], result["PipeMaterialColor"], strict=True))
         assert len(set(colours.values())) == len(colours)
         for family, colour in colours.items():
             assert colour == server.MATERIAL_COLORS[family]
@@ -139,7 +139,7 @@ class TestPipesGetTheirMaterialWithoutEnrichment:
     def test_copper_is_not_coloured_as_plastic(self, server):
         result, _ = quiet(server.add_pipe_material_fields, pipe_frame(),
                           "distribution_pipes")
-        by_label = dict(zip(result["PipeMaterialDomain"], result["PipeMaterialFamily"]))
+        by_label = dict(zip(result["PipeMaterialDomain"], result["PipeMaterialFamily"], strict=True))
         assert by_label["Copper"] == "COPPER"
 
     def test_an_enriched_cache_is_still_trusted_first(self, server):
@@ -305,7 +305,7 @@ class TestRunPyServesThisMap:
         traceback instead of a viewer. run.py has to run the map server; a missing
         cache makes that layer empty, not the whole map absent."""
         monkeypatch.setattr(run_py.config, "LAYER_CACHE_DIR", tmp_path)
-        import leaflet_bbox_server as map_server
+        from leakrelocation import map_server as map_server
         served = {}
         monkeypatch.setattr(map_server, "serve",
                             lambda port, open_browser: served.update(port=port))
@@ -326,7 +326,7 @@ class TestRunPyServesThisMap:
             (tmp_path / f"{name}.pkl.gz").write_bytes(b"")
         monkeypatch.setattr(run_py.config, "LAYER_CACHE_DIR", tmp_path)
 
-        import leaflet_bbox_server as map_server
+        from leakrelocation import map_server as map_server
         served = {}
         monkeypatch.setattr(map_server, "serve",
                             lambda port, open_browser: served.update(port=port))
@@ -348,9 +348,22 @@ class TestBothPipeLayersAreOnAtStartup:
     def test_the_pipe_layer_is_a_default(self, server, key):
         assert server.LAYERS[key]["default"] is True
 
-    def test_every_layer_is_on(self, server):
+    def test_every_layer_a_normal_run_produces_is_on(self, server):
+        """Everything a `python run.py` leaves behind draws without being
+        found in the control first.
+
+        The exception is the enterprise (Maximo) layers. They read a second
+        GeoPackage that only exists once scripts/maximo_leaks.py has been run,
+        and defaulting them on would open the map to two empty entries and a
+        warning about a file most people have never made.
+        """
         off = [key for key, cfg in server.LAYERS.items() if not cfg["default"]]
-        assert off == []
+        assert off == ["maximo_leaks_relocated", "maximo_connectors"]
+
+    def test_the_layers_that_are_off_are_off_for_that_reason(self, server):
+        for key, cfg in server.LAYERS.items():
+            if not cfg["default"]:
+                assert cfg.get("gpkg") == "maximo", key
 
     def test_the_page_adds_defaults_to_the_map(self, server):
         """One loop reads the flag, so the config above is what the page acts on."""

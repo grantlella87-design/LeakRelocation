@@ -11,9 +11,12 @@ import geopandas as gpd
 import pandas as pd
 from pyproj import CRS
 
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if _SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPT_DIR)
+# Absolute imports with this path setup, rather than relative imports, so the
+# module also works when loaded by file path or run directly - not only when
+# imported as a package member. See leakrelocation/output.py for the full note.
+_PACKAGE_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PACKAGE_PARENT not in sys.path:
+    sys.path.insert(0, _PACKAGE_PARENT)
 
 # Shared with the relocation workflow. A local copy of this classification used
 # substring matching, where "PE" matched inside "PIPE" and "TYPE" and sent every
@@ -22,7 +25,9 @@ from leakrelocation import assettype, config, schema
 from leakrelocation import leak_location as location
 from leakrelocation.assettype import decoder_for_layer, norm_code
 from leakrelocation.assettype import family_from_assettype as material_family
-from leakrelocation.matching import route_layers
+from leakrelocation.distance_dashboard import escape
+from leakrelocation.matching import DIAMETER_MODES, route_layers
+from leakrelocation.output import log
 from leakrelocation.viewer_pane import PANE_CSS, PANE_HTML, PANE_JS
 
 HOST = "127.0.0.1"
@@ -96,6 +101,7 @@ MATERIAL_COLORS = {
 GROUPS = {
     "mains": {"label": "MAINS", "match": "distribution"},
     "services": {"label": "SERVICES", "match": "service"},
+    "maximo": {"label": "ENTERPRISE (MAXIMO) LEAKS", "match": None},
     "other": {"label": "OTHER", "match": None},
 }
 
@@ -118,14 +124,14 @@ LAYERS = {
     "main_leaks_relocated": {
         "label": "Main leaks - relocated location",
         "group": "mains",
-        "source": "gpkg", "layer": "relocated_leaks", "linked": "distribution",
+        "source": "gpkg", "layer": schema.RELOCATED_LEAKS_LAYER, "linked": "distribution",
         "kind": "relocated_point", "color": "#00a651", "radius": 4, "weight": 1,
         "default": True,
     },
     "main_connectors": {
         "label": "Main leaks - connecting line",
         "group": "mains",
-        "source": "gpkg", "layer": "relocated_leak_offset_lines",
+        "source": "gpkg", "layer": schema.OFFSET_LINES_LAYER,
         "linked": "distribution",
         "kind": "trace_line", "color": "#d40000", "radius": 0, "weight": 2,
         "default": True,
@@ -148,17 +154,37 @@ LAYERS = {
     "service_leaks_relocated": {
         "label": "Service leaks - relocated location",
         "group": "services",
-        "source": "gpkg", "layer": "relocated_leaks", "linked": "service",
+        "source": "gpkg", "layer": schema.RELOCATED_LEAKS_LAYER, "linked": "service",
         "kind": "relocated_point", "color": "#00a651", "radius": 4, "weight": 1,
         "default": True,
     },
     "service_connectors": {
         "label": "Service leaks - connecting line",
         "group": "services",
-        "source": "gpkg", "layer": "relocated_leak_offset_lines",
+        "source": "gpkg", "layer": schema.OFFSET_LINES_LAYER,
         "linked": "service",
         "kind": "trace_line", "color": "#d40000", "radius": 0, "weight": 2,
         "default": True,
+    },
+    # --- ENTERPRISE (MAXIMO) LEAKS -------------------------------------------
+    #
+    # Their own output, so their own layers. Off by default: someone who has
+    # only ever run the historic leaks should not open the map to two empty
+    # entries and a warning about a GeoPackage they have never heard of.
+    "maximo_leaks_relocated": {
+        "label": "Maximo leaks - relocated location",
+        "group": "maximo",
+        "source": "gpkg", "gpkg": "maximo", "layer": schema.RELOCATED_LEAKS_LAYER,
+        "kind": "relocated_point", "color": "#7b1fa2", "radius": 4, "weight": 1,
+        "default": False,
+    },
+    "maximo_connectors": {
+        "label": "Maximo leaks - connecting line",
+        "group": "maximo",
+        "source": "gpkg", "gpkg": "maximo",
+        "layer": schema.OFFSET_LINES_LAYER,
+        "kind": "trace_line", "color": "#ab47bc", "radius": 0, "weight": 2,
+        "default": False,
     },
     # --- OTHER ---------------------------------------------------------------
     "retired_pipes": {
@@ -188,10 +214,6 @@ LAYER_FIELD_NOTES = {}
 BOUNDS = None
 LOCK = threading.Lock()
 SUPPLEMENTAL = None
-
-
-def log(value):
-    print(str(value), flush=True)
 
 
 def clean_value(value):
@@ -384,7 +406,7 @@ def decode_from_subtypes(gdf, layer_id, layer_name):
 
     labels = [
         decoder.get((norm_code(group), norm_code(asset_type)), {}).get("ASSETTYPE_DECODED")
-        for group, asset_type in zip(gdf[schema.ASSETGROUP], gdf[schema.ASSETTYPE])
+        for group, asset_type in zip(gdf[schema.ASSETGROUP], gdf[schema.ASSETTYPE], strict=True)
     ]
     named = sum(1 for label in labels if label)
     log(f"{layer_name}: decoded {named:,}/{len(labels):,} pipe materials from "
@@ -398,11 +420,6 @@ PIPE_LAYER_IDS_BY_KEY = {
     "service_pipes": config.SERVICE_PIPE_LAYER_ID,
     "retired_pipes": config.RETIRED_PIPE_LAYER_ID,
 }
-
-# Which cache each map layer reads, for the decode above.
-def cache_name_for(key):
-    return LAYERS.get(key, {}).get("cache") or key
-
 
 def add_pipe_material_fields(gdf, layer_name="pipes"):
     if len(gdf) == 0:
@@ -514,12 +531,19 @@ def read_cache(key):
     return limit_columns(gdf)
 
 
-def read_gpkg(layer):
-    if not OUTPUT_GPKG.exists():
-        log(f"WARNING missing output GeoPackage: {OUTPUT_GPKG}")
+def read_gpkg(layer, path=None):
+    """One layer of a relocation output.
+
+    `path` names which output. There is one per leak set - the historic leaks
+    and the Maximo leaks write separate GeoPackages so neither overwrites the
+    other - and the map shows both.
+    """
+    path = path or OUTPUT_GPKG
+    if not path.exists():
+        log(f"WARNING missing output GeoPackage: {path}")
         return gpd.GeoDataFrame(geometry=[], crs=WGS84)
     try:
-        gdf = gpd.read_file(str(OUTPUT_GPKG), layer=layer)
+        gdf = gpd.read_file(str(path), layer=layer)
     except Exception as ex:  # noqa: BLE001 - see below
         # Deliberately broad, and reported rather than swallowed. Which exception
         # a bad read raises depends on the engine geopandas is using: pyogrio
@@ -528,7 +552,7 @@ def read_gpkg(layer):
         # its own DriverError, which is not. A half-written GeoPackage can also
         # fail inside GDAL in ways neither documents. No unreadable output layer
         # is worth taking the whole map down for: the layer is empty and says why.
-        log(f"WARNING could not read {layer}: {ex}")
+        log(f"WARNING could not read {layer} from {path}: {ex}")
         return gpd.GeoDataFrame(geometry=[], crs=WGS84)
     gdf = gdf[gdf.geometry.notna()].copy()
     if gdf.crs is None:
@@ -576,13 +600,31 @@ def slice_for(key, cfg, base):
     return base
 
 
+def gpkg_for(cfg):
+    """Which relocation output a gpkg-sourced layer reads.
+
+    Defaults to the historic one, so every existing layer is unchanged.
+    """
+    if cfg.get("gpkg") == "maximo":
+        return config.output_gpkg_for(
+            config.DIAMETER_MATCH_MODE, base=config.MAXIMO_OUTPUT_GPKG)
+    return OUTPUT_GPKG
+
+
 def source_frame(key, cfg, cache):
     """Load a layer's source, reusing one already read for another layer."""
-    name = cfg.get("cache") if cfg["source"] == "cache" else cfg.get("layer")
+    if cfg["source"] == "cache":
+        name = cfg.get("cache")
+    else:
+        # Keyed on the file as well: relocated_leaks exists in both outputs and
+        # one cache entry for the bare layer name would hand the Maximo layer
+        # the historic leaks.
+        name = (str(gpkg_for(cfg)), cfg.get("layer"))
     if name in cache:
         return cache[name]
     try:
-        frame = read_cache(name) if cfg["source"] == "cache" else read_gpkg(name)
+        frame = (read_cache(name) if cfg["source"] == "cache"
+                 else read_gpkg(cfg.get("layer"), gpkg_for(cfg)))
     except RuntimeError as ex:
         # Every layer degrades. This used to re-raise for anything not marked
         # optional, so one missing pipe cache meant no map at all - on a fresh
@@ -657,12 +699,11 @@ def load_all():
     log(f"Bounds: {BOUNDS}")
 
 
-AUDIT_LAYER = "leak_relocation_audit"
 
 # The diameter rules, and so the outputs, this server can show. Both are
 # rendered from the same report code; which one is on screen is a query
 # parameter, so switching between them is a link rather than a re-run.
-DASHBOARD_MODES = ("exact", "fuzzy")
+DASHBOARD_MODES = DIAMETER_MODES
 
 # One rendered dashboard per mode, keyed on the modification times of both
 # GeoPackages. Building one reads 92,707 rows and takes a second or two, which
@@ -749,22 +790,15 @@ def _switch_links(mode):
 
 def _read_audit(path):
     """The audit layer, or a placeholder page explaining why not."""
+    from leakrelocation import distance_report
     try:
-        return gpd.read_file(str(path), layer=AUDIT_LAYER)
-    except Exception as ex:  # noqa: BLE001 - reported, not swallowed
-        # Same breadth as read_gpkg, and for the same reason: which exception an
-        # unreadable layer raises depends on whether geopandas is on pyogrio or
-        # fiona, and a half-written GeoPackage can fail inside GDAL in ways
-        # neither documents. The dashboard says so instead of 500-ing.
-        log(f"WARNING could not read {AUDIT_LAYER} from {path}: {ex}")
+        return distance_report.read_audit(path)
+    except distance_report.AuditUnreadable as ex:
+        # The dashboard says so instead of 500-ing.
+        log(f"WARNING could not read {schema.AUDIT_LAYER} from {path}: {ex}")
         return _dashboard_placeholder(
-            f"Could not read the {AUDIT_LAYER} layer from {escape(path)}.",
+            f"Could not read the {schema.AUDIT_LAYER} layer from {escape(path)}.",
             escape(str(ex)))
-
-
-def escape(value):
-    return (str(value).replace("&", "&amp;").replace("<", "&lt;")
-            .replace(">", "&gt;"))
 
 
 def _dashboard_placeholder(headline, detail):
@@ -908,7 +942,7 @@ def html_page():
     css_ref, js_ref = leaflet_refs()
     parts.append(f'<link rel="stylesheet" href="{css_ref}"/>')
     parts.append(
-        "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}.grouped-layers{padding:6px 10px;background:#fff;max-height:72vh;overflow:auto;font-size:12px}.grouped-layers .group{margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #ddd}.grouped-layers label{display:block;white-space:nowrap}.grouped-layers .child{padding-left:16px}.dash-link a,.dash-link .unrun{display:block;padding:6px 10px;background:#fff;color:#1f6feb;font-size:13px;font-weight:bold;text-decoration:none;white-space:nowrap}.dash-link a:hover{background:#f4f4f4}.dash-link .unrun{color:#9a9a9a;font-weight:normal;cursor:help}" + PANE_CSS + "</style>"
+        "<style>html,body{height:100%;width:100%;margin:0;padding:0;font-family:Arial,sans-serif}.info{background:white;padding:10px 12px;border:1px solid #777;border-radius:4px;font-size:13px;box-shadow:0 1px 5px rgba(0,0,0,.35);max-width:790px}.warn{color:#a94442;font-weight:bold}.leaflet-control-layers{max-height:72vh;overflow:auto}.legend-line{display:inline-block;width:24px;height:4px;margin-right:6px;vertical-align:middle}.grouped-layers{padding:6px 10px;background:#fff;max-height:72vh;overflow:auto;font-size:12px}.grouped-layers .group{margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #ddd}.grouped-layers label{display:block;white-space:nowrap}.grouped-layers .child{padding-left:16px}.leaflet-bar.dash-link a,.leaflet-touch .leaflet-bar.dash-link a,.dash-link .unrun{display:block;width:auto;height:auto;line-height:1.4;text-align:left;padding:6px 10px;background:#fff;color:#1f6feb;font-size:13px;font-weight:bold;text-decoration:none;white-space:nowrap}.dash-link a:hover{background:#f4f4f4}.dash-link .unrun{color:#9a9a9a;font-weight:normal;cursor:help}" + PANE_CSS + "</style>"
     )
     parts.append(
         '</head><body><div id="map"></div>' + PANE_HTML
@@ -1086,6 +1120,12 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path in ["/dashboard", "/dashboard/"]:
                 mode = (parse_qs(parsed.query).get("mode", ["exact"])[0])
                 self.send_text(dashboard_page(mode), "text/html")
+            elif parsed.path == "/favicon.ico":
+                # Every browser asks for one on every page. There is none, and
+                # saying so with a 204 keeps a 404 out of the console, where it
+                # reads like something on the page is broken.
+                self.send_response(204)
+                self.end_headers()
             elif parsed.path.startswith("/leaflet/"):
                 folder = leaflet_dir()
                 if folder is None:
@@ -1179,5 +1219,20 @@ def serve(port=PORT, open_browser=False):
             log("Stopped.")
 
 
+def _cli(argv=None):
+    """`python -m leakrelocation.map_server` - serve the map on its own."""
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="python -m leakrelocation.map_server",
+        description="Serve the relocation map. Normally started by run.py.")
+    parser.add_argument("--port", type=int, default=PORT,
+                        help="Default: %(default)s")
+    parser.add_argument("--open", action="store_true", dest="open_browser",
+                        help="Open a browser on the map.")
+    args = parser.parse_args(argv)
+    serve(port=args.port, open_browser=args.open_browser)
+    return 0
+
+
 if __name__ == "__main__":
-    serve()
+    sys.exit(_cli())

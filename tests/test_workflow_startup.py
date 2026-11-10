@@ -19,11 +19,12 @@ from leakrelocation import config
 
 pytest.importorskip("geopandas")
 pytest.importorskip("keyring")
+from leakrelocation import layer_cache, output
 
 
 @pytest.fixture(scope="module")
 def lr():
-    path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
+    path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
     spec = importlib.util.spec_from_file_location("lr_startup", path)
     module = importlib.util.module_from_spec(spec)
     with redirect_stdout(io.StringIO()):
@@ -349,13 +350,13 @@ class TestCacheFreshness:
 
     @pytest.fixture
     def cache(self, lr, tmp_path, monkeypatch):
-        monkeypatch.setattr(lr, "LAYER_CACHE_FOLDER", str(tmp_path))
-        monkeypatch.setattr(lr, "USE_LAYER_CACHE", True)
-        monkeypatch.setattr(lr, "FORCE_LAYER_REFRESH", False)
+        monkeypatch.setattr(layer_cache, "LAYER_CACHE_FOLDER", str(tmp_path))
+        monkeypatch.setattr(layer_cache, "USE_LAYER_CACHE", True)
+        monkeypatch.setattr(config, "FORCE_LAYER_REFRESH", False)
         return tmp_path
 
     def write_cache(self, lr, layer, url, where, cached_utc):
-        data_path, meta_path = lr.layer_cache_paths(layer)
+        data_path, meta_path = layer_cache.layer_cache_paths(layer)
         with open(data_path, "wb") as handle:
             handle.write(b"placeholder")
         with open(meta_path, "w", encoding="utf-8") as handle:
@@ -363,49 +364,49 @@ class TestCacheFreshness:
                        "cached_utc": cached_utc}, handle)
 
     def test_missing_cache_has_no_age(self, lr, cache):
-        assert lr.cache_age_seconds("nothing_here", "u", "w") is None
+        assert layer_cache.cache_age_seconds("nothing_here", "u", "w") is None
 
     def test_fresh_cache_reports_small_age(self, lr, cache):
         import datetime as dt
         now = dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
         self.write_cache(lr, "fresh_layer", "u", "w", now)
-        age = lr.cache_age_seconds("fresh_layer", "u", "w")
+        age = layer_cache.cache_age_seconds("fresh_layer", "u", "w")
         assert age is not None and age < 60
 
     def test_old_cache_reports_large_age(self, lr, cache):
         import datetime as dt
         old = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=5)).isoformat().replace("+00:00", "Z")
         self.write_cache(lr, "old_layer", "u", "w", old)
-        age = lr.cache_age_seconds("old_layer", "u", "w")
+        age = layer_cache.cache_age_seconds("old_layer", "u", "w")
         assert age > 4 * 3600
 
     def test_changed_url_invalidates(self, lr, cache):
         import datetime as dt
         now = dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
         self.write_cache(lr, "moved_layer", "old_url", "w", now)
-        assert lr.cache_age_seconds("moved_layer", "new_url", "w") is None
+        assert layer_cache.cache_age_seconds("moved_layer", "new_url", "w") is None
 
     def test_changed_where_invalidates(self, lr, cache):
         import datetime as dt
         now = dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
         self.write_cache(lr, "filtered_layer", "u", "old_where", now)
-        assert lr.cache_age_seconds("filtered_layer", "u", "new_where") is None
+        assert layer_cache.cache_age_seconds("filtered_layer", "u", "new_where") is None
 
     def test_force_refresh_disables_the_shortcut(self, lr, cache, monkeypatch):
         import datetime as dt
         now = dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
         self.write_cache(lr, "forced_layer", "u", "w", now)
-        monkeypatch.setattr(lr, "FORCE_LAYER_REFRESH", True)
-        assert lr.cache_age_seconds("forced_layer", "u", "w") is None
+        monkeypatch.setattr(config, "FORCE_LAYER_REFRESH", True)
+        assert layer_cache.cache_age_seconds("forced_layer", "u", "w") is None
 
     def test_corrupt_metadata_is_not_fatal(self, lr, cache):
-        data_path, meta_path = lr.layer_cache_paths("broken_layer")
+        data_path, meta_path = layer_cache.layer_cache_paths("broken_layer")
         with open(data_path, "wb") as handle:
             handle.write(b"x")
         with open(meta_path, "w", encoding="utf-8") as handle:
             handle.write("{not json")
         with redirect_stdout(io.StringIO()):
-            assert lr.cache_age_seconds("broken_layer", "u", "w") is None
+            assert layer_cache.cache_age_seconds("broken_layer", "u", "w") is None
 
 
 class TestVerbosity:
@@ -431,27 +432,27 @@ class TestVerbosity:
 
     def test_timings_report_is_silent_unless_enabled(self, lr, monkeypatch):
         monkeypatch.setattr(config, "TIMINGS", False)
-        monkeypatch.setattr(lr, "_TIMINGS", [("stage", 1.0)])
+        monkeypatch.setattr(output, "_TIMINGS", [("stage", 1.0)])
         buffer = io.StringIO()
         with redirect_stdout(buffer):
-            lr.report_timings()
+            output.report_timings()
         assert buffer.getvalue() == ""
 
     def test_timings_report_lists_stages(self, lr, monkeypatch):
         monkeypatch.setattr(config, "TIMINGS", True)
-        monkeypatch.setattr(lr, "_TIMINGS", [("load layers", 12.5), ("match", 3.0)])
+        monkeypatch.setattr(output, "_TIMINGS", [("load layers", 12.5), ("match", 3.0)])
         buffer = io.StringIO()
         with redirect_stdout(buffer):
-            lr.report_timings()
-        output = buffer.getvalue()
-        assert "load layers" in output and "12.5s" in output
-        assert "total" in output and "15.5s" in output
+            output.report_timings()
+        printed = buffer.getvalue()
+        assert "load layers" in printed and "12.5s" in printed
+        assert "total" in printed and "15.5s" in printed
 
     def test_timed_records_a_stage(self, lr, monkeypatch):
-        monkeypatch.setattr(lr, "_TIMINGS", [])
-        with lr.timed("a stage"):
+        monkeypatch.setattr(output, "_TIMINGS", [])
+        with output.timed("a stage"):
             pass
-        assert lr._TIMINGS and lr._TIMINGS[0][0] == "a stage"
+        assert output._TIMINGS and output._TIMINGS[0][0] == "a stage"
 
 
 class TestOneMaterialClassification:
@@ -459,9 +460,9 @@ class TestOneMaterialClassification:
     a pipe is made of."""
 
     def test_bbox_server_uses_the_shared_implementation(self):
-        import leaflet_bbox_server
+        from leakrelocation import map_server
         from leakrelocation.assettype import family_from_assettype
-        assert leaflet_bbox_server.material_family is family_from_assettype
+        assert map_server.material_family is family_from_assettype
 
     @pytest.mark.parametrize("label,family", [
         ("Steel Pipe", "STEEL"),

@@ -16,6 +16,7 @@ binning is a subtraction of two cumulative counts, so re-binning for a chart
 cannot disagree with the slider reading off the same array.
 """
 import json
+import math
 
 PAGE_CSS = """
 :root{
@@ -427,7 +428,9 @@ def number(value, places=1):
     if value is None:
         return "&mdash;"
     if isinstance(value, float):
-        if value != value or value in (float("inf"), float("-inf")):
+        # NaN and the infinities are not numbers a table cell can show, and
+        # str(nan) is the word "nan".
+        if not math.isfinite(value):
             return "&mdash;"
         return f"{value:,.{places}f}"
     return f"{value:,}"
@@ -540,6 +543,21 @@ MODE_LABELS = {
 }
 
 
+# What each leak set is, for the bar. Two outputs that are otherwise identical
+# in shape, and nothing on the page would otherwise say which is on screen.
+LEAK_SOURCE_LABELS = {
+    "historic": "Historic (LMS) leaks",
+    "maximo": "Enterprise (Maximo) leaks",
+}
+
+
+def source_name(report):
+    source = report.get("leak_source")
+    if not source:
+        return ""
+    return LEAK_SOURCE_LABELS.get(source, f"{source} leaks")
+
+
 def mode_bar(report, switch_links=None):
     """Which rule produced this output, and a way to the other one.
 
@@ -548,12 +566,18 @@ def mode_bar(report, switch_links=None):
     and the two pages are otherwise identical.
     """
     mode = report.get("diameter_mode")
-    if not mode and not switch_links:
+    leaks = source_name(report)
+    if not mode and not switch_links and not leaks:
         return ""
     title, gloss = MODE_LABELS.get(
         mode, (mode or "Unrecorded diameter rule", ""))
-    parts = ['<span class="what">Diameter rule</span>'
-             f'<span class="now">{escape(title)}</span>']
+    parts = []
+    if leaks:
+        parts.append(f'<span class="what">Leaks</span>'
+                     f'<span class="now">{escape(leaks)}</span>'
+                     f'<span class="what">&middot;</span>')
+    parts.append('<span class="what">Diameter rule</span>'
+                 f'<span class="now">{escape(title)}</span>')
     if gloss:
         parts.append(f'<span class="what">&mdash; {escape(gloss)}</span>')
     for name, href in (switch_links or {}).items():
@@ -874,6 +898,19 @@ def dashboard_html(report, title="Leak relocation distance", switch_links=None):
         <code>ok</code> means the leak date was compared against the pipe's life
         and the pipe was in service. Anything else means the check could not be
         made, so for those rows the date rule decided nothing.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Where each leak's date came from</h2>
+      {count_table(report["date_source"], "Date field", hot=("(blank)",))}
+      <p class="note">
+        A blank row had no date at all, so nothing was checked for it. Layer 206
+        also carries <code>DISCOVEREDDATE</code>, <code>REPAIREDDATE</code> and
+        <code>COMPLETEDDATE</code>; <code>python run.py --leak-date-fallback</code>
+        uses them when the revised date is empty, which puts those leaks through
+        the same pipe-life rule as the rest. It will refuse some relocations this
+        output allowed &mdash; that is the rule working, not a regression.
       </p>
     </div>
   </div>

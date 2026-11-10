@@ -9,6 +9,8 @@ Kept in one place so a module split does not mean a second copy of log/warn.
 # no known parent package".
 import os as _os
 import sys as _sys
+import time
+from contextlib import contextmanager
 
 _PACKAGE_PARENT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 if _PACKAGE_PARENT not in _sys.path:
@@ -41,3 +43,29 @@ def detail(text):
     """
     if config.VERBOSE:
         log(text)
+
+
+_TIMINGS = []
+
+
+def timed(label):
+    """Context manager recording elapsed time for a stage."""
+    @contextmanager
+    def _timer():
+        started = time.time()
+        try:
+            yield
+        finally:
+            _TIMINGS.append((label, time.time() - started))
+
+    return _timer()
+
+
+def report_timings():
+    if not config.TIMINGS or not _TIMINGS:
+        return
+    step("Stage timings")
+    width = max(len(label) for label, _ in _TIMINGS)
+    for label, seconds in _TIMINGS:
+        log(f"  {label:<{width}}  {seconds:8.1f}s")
+    log(f"  {'total':<{width}}  {sum(s for _, s in _TIMINGS):8.1f}s")

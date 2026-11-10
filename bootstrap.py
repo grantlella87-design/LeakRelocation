@@ -25,6 +25,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
 
+# The same floor as requires-python in pyproject.toml. Checked here because an
+# older Python installs everything without complaint and then fails on the
+# first run, somewhere unhelpful.
+MINIMUM_PYTHON = (3, 11)
+
 # Zscaler's own "My IP Address" page. Fetched over http rather than https on
 # purpose: when Zscaler is active it re-signs TLS with an internal root, and this
 # script runs before the venv exists, so there is no truststore yet to verify
@@ -158,6 +163,11 @@ def proxy_for(status, force_proxy, no_proxy, proxy_url):
                   "If the install cannot reach PyPI, re-run with --force-proxy")
 
 
+def python_is_new_enough(version=None):
+    """Whether this interpreter can run the project. See MINIMUM_PYTHON."""
+    return tuple(version or sys.version_info)[:2] >= MINIMUM_PYTHON
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -190,6 +200,12 @@ def main(argv=None):
 
     log("=== LeakRelocation bootstrap ===")
     log(f"Python: {sys.version.split()[0]} ({sys.executable})")
+    if not python_is_new_enough():
+        log(f"This project needs Python {MINIMUM_PYTHON[0]}.{MINIMUM_PYTHON[1]} "
+            "or newer, and the virtual environment is built from the Python "
+            "that runs this script.")
+        log("  Install a newer one, then: py -3.12 bootstrap.py")
+        return 1
 
     requirements = Path(args.requirements)
     if not requirements.is_file():

@@ -85,16 +85,3 @@ def test_no_relative_imports_remain():
                 if line.startswith(("from .", "import .")):
                     offenders.append(f"{module_name}.py:{number}: {line.strip()}")
     assert offenders == []
-
-
-@pytest.mark.parametrize("script", [
-    "leak_relocation_geopandas.py",
-    "leaflet_bbox_server.py",
-])
-def test_top_level_scripts_load_by_file_path(script):
-    path = os.path.join(SRC, script)
-    spec = importlib.util.spec_from_file_location(f"byfile_{script}", path)
-    module = importlib.util.module_from_spec(spec)
-    with redirect_stdout(io.StringIO()):
-        spec.loader.exec_module(module)
-    assert module is not None

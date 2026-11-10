@@ -514,3 +514,68 @@ class TestResolveFieldName:
 
     def test_empty_columns(self):
         assert matching.resolve_field_name([], ["anything"]) is None
+
+
+class TestTheSearchRadius:
+    """How far the matcher will look for a pipe to relocate a leak onto.
+
+    It was 3,000 ft, which meant an output could contain a leak "relocated"
+    most of a mile onto the only pipe in reach - a pairing that happened to find
+    something rather than a relocation anyone would stand behind. One pass of
+    100 ft reports those leaks as unmatched instead, which is the honest answer.
+    """
+
+    def test_the_maximum_is_one_hundred_feet(self):
+        assert config.MAX_RADIUS_FT == 100.0
+
+    def test_there_is_one_pass_and_no_widening(self):
+        """The first pass already reaches the maximum, so the search never
+        widens: a leak either has an eligible pipe within 100 ft or it does
+        not relocate."""
+        assert config.INITIAL_RADIUS_FT == 100.0
+        assert config.MAX_RADIUS_FT <= config.INITIAL_RADIUS_FT
+
+    def test_every_radius_is_a_positive_number(self):
+        for name in ("INITIAL_RADIUS_FT", "RADIUS_INCREMENT_FT", "MAX_RADIUS_FT"):
+            value = getattr(config, name)
+            assert isinstance(value, float), name
+            assert value > 0, name
+
+    @pytest.mark.parametrize("name,env", [
+        ("INITIAL_RADIUS_FT", "LEAKRELOCATION_INITIAL_RADIUS_FT"),
+        ("RADIUS_INCREMENT_FT", "LEAKRELOCATION_RADIUS_INCREMENT_FT"),
+        ("MAX_RADIUS_FT", "LEAKRELOCATION_MAX_RADIUS_FT"),
+    ])
+    def test_each_can_be_raised_without_editing_the_code(self, name, env,
+                                                         monkeypatch):
+        """Widening it again should be a setting, not a commit."""
+        import importlib
+        monkeypatch.setenv(env, "250")
+        from leakrelocation import config as live
+        importlib.reload(live)
+        try:
+            assert getattr(live, name) == 250.0
+        finally:
+            monkeypatch.delenv(env)
+            importlib.reload(live)
+
+    def test_nonsense_in_the_environment_falls_back_to_the_default(
+            self, monkeypatch):
+        """A typo must not leave the matcher with no radius at all."""
+        import importlib
+        monkeypatch.setenv("LEAKRELOCATION_MAX_RADIUS_FT", "not a number")
+        from leakrelocation import config as live
+        importlib.reload(live)
+        try:
+            assert live.MAX_RADIUS_FT == 100.0
+        finally:
+            monkeypatch.delenv("LEAKRELOCATION_MAX_RADIUS_FT")
+            importlib.reload(live)
+
+    def test_the_ring_rounding_is_unaffected_by_the_cap(self):
+        """matched_radius_from_distance reports which pass would have found a
+        pipe and does not clamp to the maximum, so an older output written
+        under a wider search still reads correctly."""
+        assert matching.matched_radius_from_distance(50) == 100.0
+        assert matching.matched_radius_from_distance(100) == 100.0
+        assert matching.matched_radius_from_distance(2900) == 2900.0

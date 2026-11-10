@@ -1,7 +1,7 @@
 """Tests for the map page and its attribute pane.
 
 The static viewer generator, its committed HTML snapshot and the standalone
-context-map builder are gone: src/leaflet_bbox_server.py is the only map now, and
+context-map builder are gone: leakrelocation.map_server is the only map now, and
 it is a superset of what the static one showed. What is left here covers that
 page and the shared attribute pane.
 """
@@ -27,7 +27,7 @@ def read_source(relative):
 def page():
     """The rendered map page."""
     pytest.importorskip("geopandas")
-    import leaflet_bbox_server as server
+    from leakrelocation import map_server as server
     saved = server.BOUNDS
     server.BOUNDS = {"west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
                      "center_lat": 42.5, "center_lon": -71.5}
@@ -61,7 +61,7 @@ class TestTheMapPageHasThePane:
     def test_full_height_map_rule_is_not_there(self):
         """The pane makes body a flex column. A leftover "#map{height:100%}"
         makes the map fill the page and hides the table."""
-        source = read_source("src/leaflet_bbox_server.py")
+        source = read_source("src/leakrelocation/map_server.py")
         assert "#map{height:100%;width:100%}" not in source
         assert "#map { height: 100%; width: 100%; }" not in source
 
@@ -96,12 +96,6 @@ class TestAttributePane:
 
     def test_collapse_resizes_the_map(self):
         assert "invalidateSize" in viewer_pane.PANE_JS
-
-    def test_pane_assets_helper(self):
-        css, html, js = viewer_pane.pane_assets()
-        assert css is viewer_pane.PANE_CSS
-        assert html is viewer_pane.PANE_HTML
-        assert js is viewer_pane.PANE_JS
 
 
 class TestSelectionClearsOnAnOutsideClick:
@@ -161,8 +155,8 @@ class TestBboxServerMaterialColumns:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     def frame(self, **columns):
         import geopandas as gpd
@@ -235,8 +229,8 @@ class TestLeakAddressReachesTheMap:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     def leak_frame(self, **columns):
         import geopandas as gpd
@@ -292,8 +286,8 @@ class TestTheLeakLocationOnTheMap:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     def leak_frame(self, **columns):
         import geopandas as gpd
@@ -366,8 +360,8 @@ class TestTheMapOpensWithoutItsSources:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     def test_no_layer_is_marked_optional_any_more(self, server):
         """The flag decided who was allowed to degrade. They all are."""
@@ -471,8 +465,8 @@ class TestTheLeakFieldNotes:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     def leak_frame(self, server, **columns):
         import geopandas as gpd
@@ -552,8 +546,8 @@ class TestTheDistanceDashboardRoute:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     @pytest.fixture
     def gpkg(self, tmp_path, server, monkeypatch):
@@ -609,7 +603,7 @@ class TestTheDistanceDashboardRoute:
     def test_the_link_is_its_own_control(self, server):
         """Not a line inside updateInfo. Adding to that function has twice left
         a brace unbalanced, which only the browser caught."""
-        source = read_source("src/leaflet_bbox_server.py")
+        source = read_source("src/leakrelocation/map_server.py")
         info = source[source.index("function updateInfo()"):]
         info = info[:info.index("div.innerHTML=html}")]
         assert "/dashboard" not in info
@@ -674,8 +668,8 @@ class TestSwitchingBetweenDiameterRules:
     def server(self):
         pytest.importorskip("geopandas")
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        import leaflet_bbox_server
-        return leaflet_bbox_server
+        from leakrelocation import map_server
+        return map_server
 
     def write_audit(self, path, rows):
         import geopandas as gpd
@@ -805,3 +799,147 @@ class TestSwitchingBetweenDiameterRules:
         page = server.dashboard_page("exact")
         assert 'id="thresh"' in page
         assert "Against the other diameter rule" not in page
+
+
+class TestTheMapShowsBothLeakSets:
+    """The two leak sets write separate GeoPackages so neither overwrites the
+    other, which means the map has to be told which output a layer reads."""
+
+    @pytest.fixture
+    def server(self):
+        pytest.importorskip("geopandas")
+        sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+        from leakrelocation import map_server
+        return map_server
+
+    def write(self, path, layer, keys):
+        import geopandas as gpd
+        import pandas as pd
+        from shapely.geometry import Point
+        frame = pd.DataFrame([{"OrigLeakOID": k, "LeakKey": str(k)} for k in keys])
+        gpd.GeoDataFrame(
+            frame, geometry=[Point(-71 - i * 0.01, 42) for i in range(len(keys))],
+            crs="EPSG:4326").to_file(str(path), layer=layer, driver="GPKG")
+
+    def test_a_layer_defaults_to_the_historic_output(self, server):
+        assert server.gpkg_for({"source": "gpkg", "layer": "relocated_leaks"}) \
+            == server.OUTPUT_GPKG
+
+    def test_a_maximo_layer_reads_the_maximo_output(self, server):
+        path = server.gpkg_for({"source": "gpkg", "gpkg": "maximo",
+                                "layer": "relocated_leaks"})
+        assert path != server.OUTPUT_GPKG
+        assert "Maximo" in path.name
+
+    def test_the_maximo_layers_are_configured(self, server):
+        for key in ("maximo_leaks_relocated", "maximo_connectors"):
+            assert key in server.LAYERS, key
+            assert server.LAYERS[key]["gpkg"] == "maximo"
+            assert server.LAYERS[key]["group"] == "maximo"
+
+    def test_they_are_off_by_default(self, server):
+        """Someone who has only run the historic leaks should not open the map
+        to two empty entries and a warning about a file they never made."""
+        for key in ("maximo_leaks_relocated", "maximo_connectors"):
+            assert server.LAYERS[key]["default"] is False
+
+    def test_every_group_a_layer_names_exists(self, server):
+        for key, cfg in server.LAYERS.items():
+            assert cfg["group"] in server.GROUPS, key
+
+    def test_the_two_outputs_do_not_share_a_cache_entry(
+            self, server, tmp_path, monkeypatch):
+        """relocated_leaks exists in both outputs. One cache entry keyed on the
+        bare layer name would hand the Maximo layer the historic leaks."""
+        historic = tmp_path / "HistoricLeakRelocation.gpkg"
+        maximo = tmp_path / "MaximoLeakRelocation.gpkg"
+        self.write(historic, "relocated_leaks", [1, 2, 3])
+        self.write(maximo, "relocated_leaks", [9])
+        monkeypatch.setattr(server, "OUTPUT_GPKG", historic)
+        monkeypatch.setattr(server.config, "MAXIMO_OUTPUT_GPKG", maximo)
+        monkeypatch.setattr(server.config, "DIAMETER_MATCH_MODE", "exact")
+
+        cache = {}
+        with redirect_stdout(io.StringIO()):
+            from_historic = server.source_frame(
+                "main_leaks_relocated",
+                {"source": "gpkg", "layer": "relocated_leaks"}, cache)
+            from_maximo = server.source_frame(
+                "maximo_leaks_relocated",
+                {"source": "gpkg", "gpkg": "maximo",
+                 "layer": "relocated_leaks"}, cache)
+        assert len(from_historic) == 3
+        assert len(from_maximo) == 1
+
+    def test_a_missing_maximo_output_leaves_that_layer_empty_not_broken(
+            self, server, tmp_path, monkeypatch):
+        monkeypatch.setattr(server, "OUTPUT_GPKG", tmp_path / "nothing.gpkg")
+        monkeypatch.setattr(server.config, "MAXIMO_OUTPUT_GPKG",
+                            tmp_path / "also_nothing.gpkg")
+        with redirect_stdout(io.StringIO()):
+            frame = server.source_frame(
+                "maximo_leaks_relocated",
+                {"source": "gpkg", "gpkg": "maximo",
+                 "layer": "relocated_leaks"}, {})
+        assert len(frame) == 0
+
+    def test_the_page_lists_the_maximo_group(self, server, monkeypatch):
+        monkeypatch.setattr(server, "BOUNDS", {
+            "west": -72.0, "south": 42.0, "east": -71.0, "north": 43.0,
+            "center_lat": 42.5, "center_lon": -71.5,
+        })
+        page = server.html_page()
+        assert "ENTERPRISE (MAXIMO) LEAKS" in page
+        assert "Maximo leaks - relocated location" in page
+
+
+class TestTheRequestsThatAreNotPages:
+    """What the server says to a request for something it does not have."""
+
+    @pytest.fixture
+    def base(self):
+        pytest.importorskip("geopandas")
+        import threading
+        from http.server import ThreadingHTTPServer
+
+        from leakrelocation import map_server
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), map_server.Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        yield f"http://127.0.0.1:{httpd.server_address[1]}"
+        httpd.shutdown()
+        httpd.server_close()
+
+    def status(self, url):
+        import urllib.error
+        import urllib.request
+        try:
+            with urllib.request.urlopen(url, timeout=10) as reply:
+                return reply.status
+        except urllib.error.HTTPError as ex:
+            return ex.code
+
+    def test_the_favicon_request_is_answered_quietly(self, base):
+        """Every browser asks. A 404 for it shows up in the console as an
+        error on a page that is working."""
+        assert self.status(base + "/favicon.ico") == 204
+
+    def test_an_unknown_path_is_still_not_found(self, base):
+        assert self.status(base + "/nothing-here") == 404
+
+
+class TestTheDashboardLinkFitsItsText:
+    """Leaflet sizes every link in a .leaflet-bar as a 26 or 30 px square
+    button, which is right for + and - and clipped "Distance dashboard" to its
+    first few letters, the rest running off the edge of the white box."""
+
+    def test_leaflets_square_button_size_is_overridden(self, page):
+        import re
+        rule = re.search(r"\.leaflet-bar\.dash-link a[^{]*\{([^}]*)\}", page)
+        assert rule, "the dashboard link has no rule of its own"
+        assert "width:auto" in rule.group(1)
+        assert "height:auto" in rule.group(1)
+
+    def test_it_outranks_the_touch_rule_too(self, page):
+        """.leaflet-touch .leaflet-bar a is two classes deep; a plain
+        .dash-link a loses to it on a touch screen."""
+        assert ".leaflet-touch .leaflet-bar.dash-link a" in page

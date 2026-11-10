@@ -21,11 +21,12 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
 
 pytest.importorskip("geopandas")
 pytest.importorskip("keyring")
+from leakrelocation import arcgis, config, dates, layer_cache, layer_fields
 
 
 @pytest.fixture(scope="module")
 def lr():
-    path = os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py")
+    path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
     spec = importlib.util.spec_from_file_location("lr_smoke", path)
     module = importlib.util.module_from_spec(spec)
     with redirect_stdout(io.StringIO()):
@@ -52,19 +53,19 @@ class TestBuildOutFields:
     @pytest.mark.parametrize("layer_name", ["distribution pipes", "service pipes"])
     def test_pipe_layers_resolve(self, lr, layer_name):
         with redirect_stdout(io.StringIO()):
-            out_fields = lr.build_out_fields(PIPE_META, layer_name)
+            out_fields = layer_fields.build_out_fields(PIPE_META, layer_name)
         assert out_fields and out_fields != "*"
 
     @pytest.mark.parametrize("field", ["nominaldiameter", "operatingpressure",
                                        "ASSETGROUP", "ASSETTYPE"])
     def test_pipe_attributes_are_requested(self, lr, field):
         with redirect_stdout(io.StringIO()):
-            out_fields = lr.build_out_fields(PIPE_META, "distribution pipes")
+            out_fields = layer_fields.build_out_fields(PIPE_META, "distribution pipes")
         assert field in out_fields
 
     def test_leak_layer_resolves(self, lr):
         with redirect_stdout(io.StringIO()):
-            out_fields = lr.build_out_fields(LEAK_META, "historic leaks")
+            out_fields = layer_fields.build_out_fields(LEAK_META, "historic leaks")
         assert "LMSLEAKNUMBER" in out_fields
         assert "jurisdiction" in out_fields
 
@@ -72,7 +73,7 @@ class TestBuildOutFields:
         """It is not matched on, so nothing else in the run would notice it
         missing - the column would just be empty on the map."""
         with redirect_stdout(io.StringIO()):
-            out_fields = lr.build_out_fields(LEAK_META, "historic leaks")
+            out_fields = layer_fields.build_out_fields(LEAK_META, "historic leaks")
         assert "ADDRESS" in out_fields
 
     def test_every_location_field_is_requested_not_just_the_first(self, lr):
@@ -80,8 +81,8 @@ class TestBuildOutFields:
         them this service populates is the open question, so one refresh has to
         collect all of them rather than resolve to the first that exists."""
         with redirect_stdout(io.StringIO()):
-            out_fields = lr.build_out_fields(LEAK_META, "historic leaks")
-        for name in lr.LEAK_LOCATION_CANDIDATES:
+            out_fields = layer_fields.build_out_fields(LEAK_META, "historic leaks")
+        for name in layer_fields.LEAK_LOCATION_CANDIDATES:
             assert name in out_fields, name
 
     def test_a_leak_layer_without_the_location_fields_still_resolves(self, lr):
@@ -91,21 +92,21 @@ class TestBuildOutFields:
             "OBJECTID", "GlobalID", "LASTUPDATE", "LMSLEAKNUMBER",
             "jurisdiction", "ADDRESS"]]}
         with redirect_stdout(io.StringIO()):
-            out_fields = lr.build_out_fields(meta, "historic leaks")
+            out_fields = layer_fields.build_out_fields(meta, "historic leaks")
         assert "ADDRESS" in out_fields
         assert "NEARESTXSTREET" not in out_fields
 
     def test_the_location_fields_are_not_asked_of_a_pipe_layer(self, lr):
         with redirect_stdout(io.StringIO()):
-            out_fields = lr.build_out_fields(PIPE_META, "distribution pipes")
-        for name in lr.LEAK_LOCATION_CANDIDATES:
+            out_fields = layer_fields.build_out_fields(PIPE_META, "distribution pipes")
+        for name in layer_fields.LEAK_LOCATION_CANDIDATES:
             assert name.lower() not in out_fields.lower(), name
 
     def test_the_address_is_not_asked_of_a_pipe_layer(self, lr):
         """The pipe layers have no address field, and asking for a field a layer
         does not have makes the service reject the whole query."""
         with redirect_stdout(io.StringIO()):
-            out_fields = lr.build_out_fields(PIPE_META, "distribution pipes")
+            out_fields = layer_fields.build_out_fields(PIPE_META, "distribution pipes")
         assert "ADDRESS" not in out_fields.upper()
 
     def test_a_pipe_layer_without_assettype_fails_loudly(self, lr):
@@ -115,14 +116,14 @@ class TestBuildOutFields:
         to be discovered much later as an empty PipeMaterialRaw."""
         with pytest.raises(RuntimeError, match="ASSETTYPE is the material type"), \
                 redirect_stdout(io.StringIO()):
-            lr.build_out_fields({"fields": [{"name": "zzz"}]}, "distribution pipes")
+            layer_fields.build_out_fields({"fields": [{"name": "zzz"}]}, "distribution pipes")
 
     def test_empty_metadata_still_falls_back_to_all_fields(self, lr):
         """No field list is not the same as a field list without ASSETTYPE:
         there is nothing to check against, and "*" returns ASSETTYPE if the layer
         has it."""
         with redirect_stdout(io.StringIO()):
-            assert lr.build_out_fields({}, "distribution pipes") == "*"
+            assert layer_fields.build_out_fields({}, "distribution pipes") == "*"
 
 
 class TestCandidateGroupsExist:
@@ -143,7 +144,7 @@ class TestCandidateGroupsExist:
         "LEAK_ADDRESS_CANDIDATES",
     ])
     def test_defined_and_non_empty(self, lr, name):
-        assert getattr(lr, name), name
+        assert getattr(layer_fields, name), name
 
     def test_the_pressure_list_is_defined_and_deliberately_empty(self, lr):
         """The supplemental CSV has no pressure column of any kind, so there is no
@@ -153,8 +154,8 @@ class TestCandidateGroupsExist:
         tests/test_supplemental_csv.py checks the emptiness against the committed
         file rather than against this comment.
         """
-        assert isinstance(lr.SUPP_PRESSURE_CANDIDATES, list)
-        assert lr.SUPP_PRESSURE_CANDIDATES == []
+        assert isinstance(layer_fields.SUPP_PRESSURE_CANDIDATES, list)
+        assert layer_fields.SUPP_PRESSURE_CANDIDATES == []
 
 
 class TestCacheKnowsWhichFieldsItHolds:
@@ -168,12 +169,12 @@ class TestCacheKnowsWhichFieldsItHolds:
     """
 
     def test_the_signature_is_stable(self, lr):
-        assert lr.out_field_request_signature() == lr.out_field_request_signature()
+        assert layer_fields.out_field_request_signature() == layer_fields.out_field_request_signature()
 
     def test_the_signature_covers_the_address(self, lr, monkeypatch):
-        before = lr.out_field_request_signature()
-        monkeypatch.setattr(lr, "LEAK_ADDRESS_CANDIDATES", [])
-        assert lr.out_field_request_signature() != before
+        before = layer_fields.out_field_request_signature()
+        monkeypatch.setattr(layer_fields, "LEAK_ADDRESS_CANDIDATES", [])
+        assert layer_fields.out_field_request_signature() != before
 
     @pytest.mark.parametrize("attribute", [
         "MODIFIED_FIELD_CANDIDATES",
@@ -189,35 +190,36 @@ class TestCacheKnowsWhichFieldsItHolds:
         "JURISDICTION_CANDIDATES",
     ])
     def test_every_requested_group_moves_the_signature(self, lr, monkeypatch, attribute):
-        before = lr.out_field_request_signature()
-        monkeypatch.setattr(lr, attribute, [*getattr(lr, attribute), "NEWFIELD"])
-        assert lr.out_field_request_signature() != before, attribute
+        before = layer_fields.out_field_request_signature()
+        monkeypatch.setattr(
+            layer_fields, attribute, [*getattr(layer_fields, attribute), "NEWFIELD"])
+        assert layer_fields.out_field_request_signature() != before, attribute
 
     def test_case_and_order_do_not_move_the_signature(self, lr, monkeypatch):
         """resolve_field_name ignores case and returns the layer's own spelling,
         so re-casing or reordering a list changes nothing about what comes back.
         Invalidating every cache for that would be a gratuitous re-download."""
-        before = lr.out_field_request_signature()
-        monkeypatch.setattr(lr, "LEAK_KEY_CANDIDATES",
-                            [name.lower() for name in reversed(lr.LEAK_KEY_CANDIDATES)])
-        assert lr.out_field_request_signature() == before
+        before = layer_fields.out_field_request_signature()
+        monkeypatch.setattr(layer_fields, "LEAK_KEY_CANDIDATES",
+                            [name.lower() for name in reversed(layer_fields.LEAK_KEY_CANDIDATES)])
+        assert layer_fields.out_field_request_signature() == before
 
     def test_a_written_cache_carries_the_signature(self, lr, tmp_path, monkeypatch):
         import geopandas as gpd
         from shapely.geometry import Point
-        monkeypatch.setattr(lr, "LAYER_CACHE_FOLDER", str(tmp_path))
-        monkeypatch.setattr(lr, "USE_LAYER_CACHE", True)
-        monkeypatch.setattr(lr, "FORCE_LAYER_REFRESH", False)
+        monkeypatch.setattr(layer_cache, "LAYER_CACHE_FOLDER", str(tmp_path))
+        monkeypatch.setattr(layer_cache, "USE_LAYER_CACHE", True)
+        monkeypatch.setattr(config, "FORCE_LAYER_REFRESH", False)
         gdf = gpd.GeoDataFrame({"OBJECTID": [1]}, geometry=[Point(0, 0)],
                                crs="EPSG:4326")
         with redirect_stdout(io.StringIO()):
-            lr.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
-            loaded, meta = lr.read_layer_cache("leaks", "http://x/206", "1=1")
+            layer_cache.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
+            loaded, meta = layer_cache.read_layer_cache("leaks", "http://x/206", "1=1")
         # Per layer kind: the digest a leak cache carries is the leak one, and a
         # pipe cache's is not, so adding a leak field cannot invalidate the
         # 1.27 million row service pipe cache.
-        assert meta["out_field_signature"] == lr.out_field_request_signature("leaks")
-        assert meta["out_field_signature"] != lr.out_field_request_signature(
+        assert meta["out_field_signature"] == layer_fields.out_field_request_signature("leaks")
+        assert meta["out_field_signature"] != layer_fields.out_field_request_signature(
             "service pipes")
         assert loaded is not None and len(loaded) == 1
 
@@ -226,25 +228,25 @@ class TestCacheKnowsWhichFieldsItHolds:
         million service pipes as well, over the same connection that was
         resetting mid-download. The pipe layers are not affected by a leak field
         and their digest must not move for one."""
-        before = lr.out_field_request_signature("service pipes")
-        monkeypatch.setattr(lr, "LEAK_LOCATION_CANDIDATES",
-                            [*lr.LEAK_LOCATION_CANDIDATES, "NEWFIELD"])
-        assert lr.out_field_request_signature("service pipes") == before
-        assert lr.out_field_request_signature("historic leaks") != before
+        before = layer_fields.out_field_request_signature("service pipes")
+        monkeypatch.setattr(layer_fields, "LEAK_LOCATION_CANDIDATES",
+                            [*layer_fields.LEAK_LOCATION_CANDIDATES, "NEWFIELD"])
+        assert layer_fields.out_field_request_signature("service pipes") == before
+        assert layer_fields.out_field_request_signature("historic leaks") != before
 
     def test_a_pipe_field_does_not_invalidate_the_leak_cache(self, lr, monkeypatch):
-        before = lr.out_field_request_signature("historic leaks")
-        monkeypatch.setattr(lr, "PIPE_DIAMETER_CANDIDATES",
-                            [*lr.PIPE_DIAMETER_CANDIDATES, "NEWFIELD"])
-        assert lr.out_field_request_signature("historic leaks") == before
+        before = layer_fields.out_field_request_signature("historic leaks")
+        monkeypatch.setattr(layer_fields, "PIPE_DIAMETER_CANDIDATES",
+                            [*layer_fields.PIPE_DIAMETER_CANDIDATES, "NEWFIELD"])
+        assert layer_fields.out_field_request_signature("historic leaks") == before
 
     def test_a_shared_field_still_invalidates_both(self, lr, monkeypatch):
-        before = {name: lr.out_field_request_signature(name)
+        before = {name: layer_fields.out_field_request_signature(name)
                   for name in ("historic leaks", "service pipes")}
-        monkeypatch.setattr(lr, "JURISDICTION_CANDIDATES",
-                            [*lr.JURISDICTION_CANDIDATES, "NEWFIELD"])
+        monkeypatch.setattr(layer_fields, "JURISDICTION_CANDIDATES",
+                            [*layer_fields.JURISDICTION_CANDIDATES, "NEWFIELD"])
         for name, digest in before.items():
-            assert lr.out_field_request_signature(name) != digest, name
+            assert layer_fields.out_field_request_signature(name) != digest, name
 
     def test_a_cache_that_already_has_the_new_columns_is_kept(
             self, lr, tmp_path, monkeypatch):
@@ -252,17 +254,17 @@ class TestCacheKnowsWhichFieldsItHolds:
         already answers it. Re-downloading then buys nothing at all."""
         import geopandas as gpd
         from shapely.geometry import Point
-        monkeypatch.setattr(lr, "LAYER_CACHE_FOLDER", str(tmp_path))
-        monkeypatch.setattr(lr, "USE_LAYER_CACHE", True)
-        monkeypatch.setattr(lr, "FORCE_LAYER_REFRESH", False)
+        monkeypatch.setattr(layer_cache, "LAYER_CACHE_FOLDER", str(tmp_path))
+        monkeypatch.setattr(layer_cache, "USE_LAYER_CACHE", True)
+        monkeypatch.setattr(config, "FORCE_LAYER_REFRESH", False)
         gdf = gpd.GeoDataFrame({"OBJECTID": [1], "ADDRESS": ["12 Elm St"]},
                                geometry=[Point(0, 0)], crs="EPSG:4326")
         with redirect_stdout(io.StringIO()):
-            lr.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
-        monkeypatch.setattr(lr, "LEAK_ADDRESS_CANDIDATES", ["ADDRESS", "ADDRESS2"])
+            layer_cache.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
+        monkeypatch.setattr(layer_fields, "LEAK_ADDRESS_CANDIDATES", ["ADDRESS", "ADDRESS2"])
         buffer = io.StringIO()
         with redirect_stdout(buffer):
-            loaded, meta = lr.read_layer_cache("leaks", "http://x/206", "1=1",
+            loaded, meta = layer_cache.read_layer_cache("leaks", "http://x/206", "1=1",
                                                "OBJECTID,ADDRESS")
         assert loaded is not None and len(loaded) == 1
         assert "already carries every one of them" in buffer.getvalue()
@@ -271,17 +273,17 @@ class TestCacheKnowsWhichFieldsItHolds:
             self, lr, tmp_path, monkeypatch):
         import geopandas as gpd
         from shapely.geometry import Point
-        monkeypatch.setattr(lr, "LAYER_CACHE_FOLDER", str(tmp_path))
-        monkeypatch.setattr(lr, "USE_LAYER_CACHE", True)
-        monkeypatch.setattr(lr, "FORCE_LAYER_REFRESH", False)
+        monkeypatch.setattr(layer_cache, "LAYER_CACHE_FOLDER", str(tmp_path))
+        monkeypatch.setattr(layer_cache, "USE_LAYER_CACHE", True)
+        monkeypatch.setattr(config, "FORCE_LAYER_REFRESH", False)
         gdf = gpd.GeoDataFrame({"OBJECTID": [1]}, geometry=[Point(0, 0)],
                                crs="EPSG:4326")
         with redirect_stdout(io.StringIO()):
-            lr.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
-        monkeypatch.setattr(lr, "LEAK_ADDRESS_CANDIDATES", ["ADDRESS", "ADDRESS2"])
+            layer_cache.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
+        monkeypatch.setattr(layer_fields, "LEAK_ADDRESS_CANDIDATES", ["ADDRESS", "ADDRESS2"])
         buffer = io.StringIO()
         with redirect_stdout(buffer):
-            loaded, meta = lr.read_layer_cache("leaks", "http://x/206", "1=1",
+            loaded, meta = layer_cache.read_layer_cache("leaks", "http://x/206", "1=1",
                                                "OBJECTID,ADDRESS")
         assert loaded is None and meta is None
         assert "no ADDRESS" in buffer.getvalue()
@@ -292,18 +294,18 @@ class TestCacheKnowsWhichFieldsItHolds:
         that populates a new column for every record."""
         import geopandas as gpd
         from shapely.geometry import Point
-        monkeypatch.setattr(lr, "LAYER_CACHE_FOLDER", str(tmp_path))
-        monkeypatch.setattr(lr, "USE_LAYER_CACHE", True)
-        monkeypatch.setattr(lr, "FORCE_LAYER_REFRESH", False)
+        monkeypatch.setattr(layer_cache, "LAYER_CACHE_FOLDER", str(tmp_path))
+        monkeypatch.setattr(layer_cache, "USE_LAYER_CACHE", True)
+        monkeypatch.setattr(config, "FORCE_LAYER_REFRESH", False)
         gdf = gpd.GeoDataFrame({"OBJECTID": [1]}, geometry=[Point(0, 0)],
                                crs="EPSG:4326")
         with redirect_stdout(io.StringIO()):
-            lr.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
+            layer_cache.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
         # Same cache, read after the code started asking for another field.
-        monkeypatch.setattr(lr, "LEAK_ADDRESS_CANDIDATES", ["ADDRESS", "ADDRESS2"])
+        monkeypatch.setattr(layer_fields, "LEAK_ADDRESS_CANDIDATES", ["ADDRESS", "ADDRESS2"])
         buffer = io.StringIO()
         with redirect_stdout(buffer):
-            loaded, meta = lr.read_layer_cache("leaks", "http://x/206", "1=1")
+            loaded, meta = layer_cache.read_layer_cache("leaks", "http://x/206", "1=1")
         assert loaded is None and meta is None
         assert "requested fields have changed" in buffer.getvalue()
 
@@ -313,21 +315,21 @@ class TestCacheKnowsWhichFieldsItHolds:
 
         import geopandas as gpd
         from shapely.geometry import Point
-        monkeypatch.setattr(lr, "LAYER_CACHE_FOLDER", str(tmp_path))
-        monkeypatch.setattr(lr, "USE_LAYER_CACHE", True)
-        monkeypatch.setattr(lr, "FORCE_LAYER_REFRESH", False)
+        monkeypatch.setattr(layer_cache, "LAYER_CACHE_FOLDER", str(tmp_path))
+        monkeypatch.setattr(layer_cache, "USE_LAYER_CACHE", True)
+        monkeypatch.setattr(config, "FORCE_LAYER_REFRESH", False)
         gdf = gpd.GeoDataFrame({"OBJECTID": [1]}, geometry=[Point(0, 0)],
                                crs="EPSG:4326")
         with redirect_stdout(io.StringIO()):
-            lr.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
-        _, meta_path = lr.layer_cache_paths("leaks")
+            layer_cache.write_layer_cache("leaks", "http://x/206", "1=1", 1, "LASTUPDATE", gdf)
+        _, meta_path = layer_cache.layer_cache_paths("leaks")
         with open(meta_path, encoding="utf-8") as handle:
             meta = json.load(handle)
         del meta["out_field_signature"]
         with open(meta_path, "w", encoding="utf-8") as handle:
             json.dump(meta, handle)
         with redirect_stdout(io.StringIO()):
-            loaded, read_meta = lr.read_layer_cache("leaks", "http://x/206", "1=1")
+            loaded, read_meta = layer_cache.read_layer_cache("leaks", "http://x/206", "1=1")
         assert loaded is None and read_meta is None
 
 
@@ -384,7 +386,7 @@ class TestNarrowedExceptionHandlers:
         {"x": 1},
     ])
     def test_malformed_geometry_becomes_none(self, lr, geometry):
-        assert lr.esri_geometry_to_shape(geometry) is None
+        assert arcgis.esri_geometry_to_shape(geometry) is None
 
     @pytest.mark.parametrize("value", [
         "not a date",
@@ -393,27 +395,37 @@ class TestNarrowedExceptionHandlers:
         float("nan"),
     ])
     def test_unparseable_dates_become_none(self, lr, value):
-        assert lr.date_value_to_epoch_ms(value) is None
+        assert dates.date_value_to_epoch_ms(value) is None
 
     def test_a_real_epoch_still_converts(self, lr):
-        assert lr.date_value_to_epoch_ms(1640995200000) == 1640995200000
+        assert dates.date_value_to_epoch_ms(1640995200000) == 1640995200000
 
     @pytest.mark.parametrize(("value", "result"), [
-        ("2022-01-01", 2022),
-        ("9999999-01-01", 9999999),
-        ({"a": 1}, 1),
+        ("2022-01-01", 1_640_995_200_000),   # read as the date it is
+        ("9999999-01-01", None),             # not a date, and not a number
+        ({"a": 1}, None),                    # neither
     ])
-    def test_a_value_containing_a_digit_returns_that_digit(self, lr, value, result):
-        """Recording existing behaviour, not endorsing it.
+    def test_a_value_with_a_digit_in_it_is_no_longer_read_as_that_digit(
+            self, lr, value, result):
+        """This used to record the opposite, as a known wart.
 
-        parse_number runs first and pulls the first number out of str(value), so
-        anything with a digit in it short-circuits the date parse: the ISO string
-        "2022-01-01" becomes 2022 milliseconds after the epoch. This is upstream
-        of the narrowed handler and unchanged by it. It only matters for the delta
-        watermark, and it fails safe - a garbage watermark falls back to a full
-        refresh - which is presumably why it has gone unnoticed.
+        parse_number ran first and pulled the first number out of str(value), so
+        anything with a digit short-circuited the date parse and the ISO string
+        "2022-01-01" became 2022 milliseconds after the epoch. The note here said
+        it only mattered for the delta watermark, where it failed safe - a
+        garbage watermark falls back to a full refresh - which is why it had gone
+        unnoticed.
+
+        It stopped being harmless when a second leak source arrived. The
+        enterprise (Maximo) leaks come from SQL, which returns dates as datetimes
+        and ISO strings rather than as epoch milliseconds, so every one of them
+        would have been read as its year: 1 January 1970, older than every pipe,
+        rejected by the in-service check, with nothing saying why.
+
+        A value is now treated as epoch milliseconds only when it is a number or
+        a string that is nothing but a number. See looks_numeric.
         """
-        assert lr.date_value_to_epoch_ms(value) == result
+        assert dates.date_value_to_epoch_ms(value) == result
 
     @pytest.mark.parametrize("value", [
         None,
@@ -426,11 +438,11 @@ class TestNarrowedExceptionHandlers:
     ])
     def test_bad_watermarks_fall_back_to_the_safe_default(self, lr, value):
         with redirect_stdout(io.StringIO()):
-            assert lr.epoch_ms_to_sql_timestamp(value) == "timestamp '1970-01-01 00:00:00'"
+            assert dates.epoch_ms_to_sql_timestamp(value) == "timestamp '1970-01-01 00:00:00'"
 
     def test_a_real_watermark_still_converts(self, lr):
         with redirect_stdout(io.StringIO()):
-            result = lr.epoch_ms_to_sql_timestamp(1640995200000)
+            result = dates.epoch_ms_to_sql_timestamp(1640995200000)
         assert result == "timestamp '2022-01-01 00:00:00'"
 
 
@@ -450,22 +462,22 @@ class TestWhichColumnsACacheAlreadyHas:
 
     def test_nothing_missing_when_every_column_is_there(self, lr):
         gdf = self.frame(lr, ["OBJECTID", "ADDRESS", "CITY"])
-        assert lr.missing_requested_columns(gdf, "OBJECTID,ADDRESS") == []
+        assert layer_cache.missing_requested_columns(gdf, "OBJECTID,ADDRESS") == []
 
     def test_the_missing_one_is_named(self, lr):
         gdf = self.frame(lr, ["OBJECTID"])
-        assert lr.missing_requested_columns(gdf, "OBJECTID,ADDRESS") == ["ADDRESS"]
+        assert layer_cache.missing_requested_columns(gdf, "OBJECTID,ADDRESS") == ["ADDRESS"]
 
     def test_case_does_not_matter(self, lr):
         """The service answers with its own spelling - GLOBALID on the pipe
         layers, GlobalID on the leaks - so matching case-sensitively would
         condemn a perfectly good cache."""
         gdf = self.frame(lr, ["OBJECTID", "GLOBALID"])
-        assert lr.missing_requested_columns(gdf, "OBJECTID,GlobalID") == []
+        assert layer_cache.missing_requested_columns(gdf, "OBJECTID,GlobalID") == []
 
     def test_a_list_is_accepted_as_well_as_a_string(self, lr):
         gdf = self.frame(lr, ["OBJECTID"])
-        assert lr.missing_requested_columns(gdf, ["OBJECTID"]) == []
+        assert layer_cache.missing_requested_columns(gdf, ["OBJECTID"]) == []
 
     @pytest.mark.parametrize("required", ["*", "", None])
     def test_an_unanswerable_request_is_not_answered(self, lr, required):
@@ -473,7 +485,7 @@ class TestWhichColumnsACacheAlreadyHas:
         everything; in neither case can the columns prove the cache is current,
         so it reports unknown and the caller refreshes rather than assuming."""
         gdf = self.frame(lr, ["OBJECTID"])
-        assert lr.missing_requested_columns(gdf, required) is None
+        assert layer_cache.missing_requested_columns(gdf, required) is None
 
 
 class TestWhereALeakIs:
@@ -502,9 +514,9 @@ class TestWhereALeakIs:
     def test_only_the_service_fields_are_requested(self, lr):
         """SuppTown is read from the supplemental CSV. Asking the service for a
         field the layer does not have makes it reject the whole query."""
-        assert "SuppTown" not in lr.LEAK_LOCATION_CANDIDATES
-        assert "ADDRESS" not in lr.LEAK_LOCATION_CANDIDATES  # already requested
-        assert lr.LEAK_LOCATION_CANDIDATES == ["NEARESTXSTREET", "CITY"]
+        assert "SuppTown" not in layer_fields.LEAK_LOCATION_CANDIDATES
+        assert "ADDRESS" not in layer_fields.LEAK_LOCATION_CANDIDATES  # already requested
+        assert layer_fields.LEAK_LOCATION_CANDIDATES == ["NEARESTXSTREET", "CITY"]
 
 
 class TestTheDiameterRuleReachesTheMatcher:
@@ -520,7 +532,7 @@ class TestTheDiameterRuleReachesTheMatcher:
         """Not read from config inside diameter_match: the matcher runs in
         worker processes, and passing it keeps the rule with the run."""
         source = open(
-            os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py"),
+            os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py"),
             encoding="utf-8").read()
         call = source[source.index("diameter_result = diameter_match("):]
         call = call[:call.index(")") + 1]
@@ -530,7 +542,7 @@ class TestTheDiameterRuleReachesTheMatcher:
         """Sorting by distance alone would let the widened run take a match
         away from the strict one."""
         source = open(
-            os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py"),
+            os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py"),
             encoding="utf-8").read()
         assert "candidates.sort(key=candidate_sort_key)" in source
         assert 'candidates.sort(key=lambda item: item["distance_ft"])' not in source
@@ -551,7 +563,7 @@ class TestTheDiameterRuleReachesTheMatcher:
         """Without both columns a GeoPackage cannot say which rule produced it,
         and a row cannot say whether its diameter was a fact or an assumption."""
         source = open(
-            os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py"),
+            os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py"),
             encoding="utf-8").read()
         assert source.count('"DiameterMode": DIAMETER_MATCH_MODE') == 3
         assert '"DiameterMatch"' in source
@@ -563,7 +575,100 @@ class TestTheDiameterRuleReachesTheMatcher:
         """"No exact diameter match" on a widened run would be a lie about what
         was tried."""
         source = open(
-            os.path.join(REPO_ROOT, "src", "leak_relocation_geopandas.py"),
+            os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py"),
             encoding="utf-8").read()
         assert "diameter within one nominal size" in source
         assert 'reason = ("No exact diameter/material/pressure match' not in source
+
+
+class TestARunThatMatchesNothingStillWrites:
+    """It used to die at the last step with "Unknown column geometry" - a
+    message about a geopandas column, when the news was that nothing matched.
+
+    That is the shape of a first run against a new leak source whose
+    coordinates are being read in the wrong CRS: every leak lands where there
+    are no pipes, nothing matches, and the error says nothing about it.
+    """
+
+    def frame(self, lr, rows, geometry):
+        import geopandas as gpd
+        return gpd.GeoDataFrame(rows, geometry=geometry, crs="EPSG:2249")
+
+    def test_an_empty_frame_still_has_geometry(self, lr):
+        empty = lr.empty_or_frame([], "EPSG:2249")
+        assert len(empty) == 0
+        assert empty.geometry is not None
+        assert empty.crs is not None
+
+    def test_rows_build_the_frame_as_before(self, lr):
+        from shapely.geometry import Point
+        built = lr.empty_or_frame(
+            [{"LeakKey": "1", "geometry": Point(0, 0)}], "EPSG:2249")
+        assert len(built) == 1
+        assert built.crs.to_epsg() == 2249
+
+    def test_write_outputs_survives_zero_matches(self, lr, tmp_path, monkeypatch):
+        from shapely.geometry import LineString, Point
+        leaks = self.frame(lr, [{
+            "OBJECTID": 1, "GLOBALID": "{A}", "LMSLEAKNUMBER": "1",
+            "ADDRESS": "", "REVISEDLEAKDATE": None}], [Point(760000, 2960000)])
+        supplemental = {"A": {"material": "Cast Iron", "diameter": 8.0,
+                              "pressure": "", "facility": "Main"}}
+        # A pipe of the wrong diameter, so nothing can match.
+        pipe = self.frame(lr, [{
+            "OBJECTID": 1, "GLOBALID": "{P}", "material": "Cast Iron",
+            "nominaldiameter": 12.0, "operatingpressure": 0.5,
+            "CREATIONDATE": 946_684_800_000.0, "dateretired": None}],
+            [LineString([(760020, 2959500), (760020, 2960500)])])
+
+        monkeypatch.setattr(lr, "OUTPUT_GPKG",
+                            str(tmp_path / "ZeroMatches.gpkg"))
+        monkeypatch.setattr(lr, "TARGET_CRS", "EPSG:2249")
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            tasks, initial = lr.prepare_leaks(leaks, supplemental)
+            sources = {"distribution": lr.prepare_pipes(pipe, "distribution"),
+                       "service": lr.prepare_pipes(pipe.iloc[0:0], "service")}
+            lr.init_worker(sources)
+            results = [lr.match_one_leak(task) for task in tasks]
+            counters = lr.write_outputs(tasks, results, sources, initial)
+
+        assert counters["unmatched"] == 1
+        assert counters.get("matched", 0) == 0
+        assert "No leak was relocated" in buffer.getvalue()
+        assert "wrong CRS" in buffer.getvalue()
+
+    def test_the_three_layers_are_written_even_when_empty(
+            self, lr, tmp_path, monkeypatch):
+        """An empty output is still an output. A caller that reads the layers -
+        the map, the dashboard - should find them and show nothing, not fail to
+        open the file."""
+        import geopandas as gpd
+        from shapely.geometry import LineString, Point
+        leaks = self.frame(lr, [{
+            "OBJECTID": 1, "GLOBALID": "{A}", "LMSLEAKNUMBER": "1",
+            "ADDRESS": "", "REVISEDLEAKDATE": None}], [Point(760000, 2960000)])
+        supplemental = {"A": {"material": "Cast Iron", "diameter": 8.0,
+                              "pressure": "", "facility": "Main"}}
+        pipe = self.frame(lr, [{
+            "OBJECTID": 1, "GLOBALID": "{P}", "material": "Cast Iron",
+            "nominaldiameter": 12.0, "operatingpressure": 0.5,
+            "CREATIONDATE": 946_684_800_000.0, "dateretired": None}],
+            [LineString([(760020, 2959500), (760020, 2960500)])])
+        out = str(tmp_path / "ZeroMatches.gpkg")
+        monkeypatch.setattr(lr, "OUTPUT_GPKG", out)
+        monkeypatch.setattr(lr, "TARGET_CRS", "EPSG:2249")
+        with redirect_stdout(io.StringIO()):
+            tasks, initial = lr.prepare_leaks(leaks, supplemental)
+            sources = {"distribution": lr.prepare_pipes(pipe, "distribution"),
+                       "service": lr.prepare_pipes(pipe.iloc[0:0], "service")}
+            lr.init_worker(sources)
+            results = [lr.match_one_leak(task) for task in tasks]
+            lr.write_outputs(tasks, results, sources, initial)
+
+        assert len(gpd.read_file(out, layer="relocated_leaks")) == 0
+        assert len(gpd.read_file(out, layer="relocated_leak_offset_lines")) == 0
+        # The audit still records the leak and why it did not match.
+        audit = gpd.read_file(out, layer="leak_relocation_audit")
+        assert len(audit) == 1
+        assert audit.iloc[0]["MatchStatus"] == "NoMatch"

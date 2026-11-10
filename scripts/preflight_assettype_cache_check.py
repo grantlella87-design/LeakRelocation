@@ -11,22 +11,20 @@ reports the fill rate for each column and the values actually present.
 
 Exits non-zero when a cache is missing, unenriched, or enriched but empty.
 """
+import argparse
 import sys
 
 import pandas as pd
 from _bootstrap import config
 
 from leakrelocation import schema
+from leakrelocation.output import log
 
 CACHES = ["distribution_pipes", "service_pipes"]
 
 # Declared in leakrelocation.schema, because this project writes them.
 REQUIRED = list(schema.PIPE_CACHE_COLUMNS)
 MUST_BE_POPULATED = list(schema.PIPE_CACHE_MUST_BE_POPULATED)
-
-
-def log(message=""):
-    print(message, flush=True)
 
 
 def check_cache(name):
@@ -94,7 +92,10 @@ def check_cache(name):
     return True
 
 
-def main():
+def main(argv=None):
+    argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter).parse_args(argv)
     log("ASSETTYPE cache preflight")
     log(f"cache dir: {config.LAYER_CACHE_DIR}")
     results = [check_cache(name) for name in CACHES]

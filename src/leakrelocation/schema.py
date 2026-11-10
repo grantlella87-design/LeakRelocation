@@ -60,16 +60,13 @@ PIPE_CACHE_MUST_BE_POPULATED = (
 
 # --- Relocation GeoPackage ---------------------------------------------------
 #
-# Written by write_outputs() in src/leak_relocation_geopandas.py.
+# Written by write_outputs() in leakrelocation/workflow.py.
 
 RELOCATED_LEAKS_LAYER = "relocated_leaks"
 OFFSET_LINES_LAYER = "relocated_leak_offset_lines"
+AUDIT_LAYER = "leak_relocation_audit"
 
 LEAK_KEY = "LeakKey"
-# The material of the pipe a leak was matched to.
-MATCH_MATERIAL = "MatchMaterial"
-MATCH_DIAMETER = "MatchDiameter"
-MATCH_PRESSURE = "MatchPressure"
 MATCH_STATUS = "MatchStatus"
 # The pipe's own attributes, as recorded at match time.
 PIPE_MATERIAL = "PipeMaterial"
@@ -82,18 +79,12 @@ DISTANCE_FT = "DistanceFt"
 # How much diameter slack the match took - exact, one_size_up, one_size_down -
 # and which rule the run was using. Together they say whether a relocation is
 # one the strict rule would also have made.
+# Which column supplied the leak's date - the primary field, one of the
+# fallbacks, or blank when the row had none. A relocation that was checked
+# against the pipe's life should say what it was checked with.
+LEAK_DATE_SOURCE = "LeakDateSource"
+# Which leak set a row came from: "historic" (LMS, layer 206) or "maximo"
+# (enterprise, from SQL). Two outputs that look identical otherwise.
+LEAK_SOURCE = "LeakSource"
 DIAMETER_MATCH = "DiameterMatch"
 DIAMETER_MODE = "DiameterMode"
-
-
-def require(frame, columns, what):
-    """Raise unless every column is present, naming what is missing.
-
-    Used instead of falling back to a different column, which is how a wrong
-    guess became a wrong answer nobody noticed.
-    """
-    missing = [name for name in columns if name not in frame.columns]
-    if missing:
-        raise KeyError(
-            f"{what} is missing {missing}. Present: {sorted(frame.columns)}"
-        )

@@ -1,739 +1,124 @@
 # LeakRelocation
 
-Historic leak relocation workflow for DNV / GeoPandas production processing.
+Moves gas leak points onto the pipe they were on.
 
-Reads MA historic leaks, MA distribution pipes and MA service pipes from the
-ArcGIS REST services, supplements leak attributes from the CSV committed under
-`input/`, matches each leak to the nearest pipe with a matching diameter and
-material/family, snaps the leak to that pipe, and writes a GeoPackage with
-relocated points, offset guide lines and an audit table.
+A leak is recorded where someone stood, not where the pipe is. This reads the
+Massachusetts leaks and the distribution and service pipes from the ArcGIS REST
+services, matches each leak to the nearest pipe of the same material and
+diameter that existed at the time, snaps the leak onto it, and writes a
+GeoPackage with the relocated points, a guide line from old position to new,
+and an audit row for every leak saying what happened and why.
 
-The diameter has to match exactly by default; `--diameter fuzzy` accepts one
-nominal size up or down and writes its own output, so both can be compared.
+A clone and a GIS sign-in are all a run needs. Nothing reads a shared drive.
 
-A clone and a GIS token are the whole of what a run needs. Nothing reads a shared
-network folder any more.
+## Quick start
 
-## Key rules
-
-**Material** comes from decoded `ASSETGROUP + ASSETTYPE`. Do not use the DNV
-`material` Grade field as the material class for relocation assessment.
-
-**Diameter matching has two modes, and they write different files.** `exact` is
-the default and the original rule. `fuzzy` also accepts a pipe one nominal size
-up or down. See [Diameter matching](#diameter-matching).
-
-**A leak only relocates onto a pipe that existed when it was recorded.** The date
-is `REVISEDLEAKDATE` on layer 206, and which end of the pipe's life is checked
-depends on the layer:
-
-| Layer | Rule |
-| --- | --- |
-| 6 Distribution Pipe, 7 Service Pipe | `REVISEDLEAKDATE` **after** `CREATIONDATE` |
-| 62 Pipeline Line (A), on the MA service | `REVISEDLEAKDATE` **before** `dateretired` |
-
-Both comparisons are strict. A leak with no revised date, or a pipe missing the
-date its rule needs, is matched anyway and the audit table records which — a data
-gap does not silently remove a relocation. The `DateCheck` column reads `ok` when
-the dates were actually compared.
-
-`CREATIONDATE` is when the GIS record was created, not when the pipe was laid;
-those layers also carry `installationdate` and `inservicedate`. A pipe installed
-in 1960 and migrated into the system in 2015 has `CREATIONDATE` 2015, so a 2010
-leak fails the check even though the pipe was in the ground.
-
-## Diameter matching
-
-A leak carries a diameter from the supplemental CSV and a pipe carries one from
-the service, and by default they have to be the same nominal size. That is
-right when both records are good and it is the reason some leaks never relocate:
-there is a pipe of the right material a few feet away, and its diameter is one
-size off.
-
-`fuzzy` widens the rule to the next nominal size up or down.
-
-```bat
-python run.py                    the exact rule (unchanged)
-python run.py --diameter fuzzy   one nominal size up or down
-```
-
-The nominal sizes, in inches:
-
-    1   1¼   1½   2   4   6   8   12   16   20   24   30   36   42   48
-
-### Sizes that are not on the list
-
-The data carries diameters the list does not: 0.5 and 0.75 on service pipes, 3
-and 10 on mains. The same rule applies to them, and the rule is stated so that
-it can:
-
-> two diameters match when there is **no nominal size strictly between them**.
-
-For a listed size that is exactly "one size up or down" — 8″ reaches 6″ and 12″,
-and not 16″, because 12″ sits between 8″ and 16″. For an unlisted size it falls
-out of the same sentence: the 10″ pipe reaches 8″ and 12″, the 3″ reaches 2″ and
-4″, and 0.75″ and 1″ reach each other.
-
-It is written that way rather than as "look up my two neighbours" because the
-neighbour form is **asymmetric** at the uncommon sizes. A 0.75″ leak would reach
-1″ while a 1″ leak would not reach back down to 0.75″, since 1″ is the bottom of
-the list. "Nothing listed in between" gives the same answer whichever side you
-ask from.
-
-### An exact diameter always wins
-
-Within the widened rule, an exact diameter outranks an adjacent one **at any
-distance** — a 900 ft exact match beats a 20 ft one-size-off match. So every
-leak the strict run relocated keeps the same pipe, and the difference between
-the two outputs is only the leaks the widening rescued. That is what makes the
-comparison readable: `Lost` and `Moved to another pipe` should both be zero, and
-the dashboard says so in red if they are not.
-
-Set `LEAKRELOCATION_PREFER_EXACT_DIAMETER=0` to take the nearest pipe in the
-size window instead. Existing relocations can change under that setting.
-
-### Both outputs, side by side
-
-Each rule writes its own GeoPackage, so running both leaves both on disk:
-
-| Rule | GeoPackage |
-| --- | --- |
-| `exact` | `HistoricLeakRelocation.gpkg` |
-| `fuzzy` | `HistoricLeakRelocation_fuzzy_diameter.gpkg` |
-
-Every audit row records `DiameterMode` — which rule produced it — and
-`DiameterMatch`, one of `exact`, `one_size_up` or `one_size_down`. So a
-GeoPackage says which rule wrote it without anyone having to remember which file
-is which, and a single relocation says whether its diameter was a fact or an
-assumption. `DiameterMatch` is on the relocated points too, so the map popup
-shows it.
-
-### Switching between them
-
-The map server serves both and links each to the other:
-
-    http://127.0.0.1:8765/dashboard?mode=exact
-    http://127.0.0.1:8765/dashboard?mode=fuzzy
-
-The map's top-left control lists both; a rule that has not been run yet shows
-the command in its tooltip rather than a dead link. On each page a bar names the
-rule in words, and a panel gives the difference between the two outputs:
-
-| Figure | Meaning |
-| --- | --- |
-| Gained | relocated under the widened rule and not under the strict one — the whole point |
-| Lost | relocated under the strict rule and not the widened one. Should be zero |
-| Moved to another pipe | matched in both, to different pipes. Should be zero |
-
-The gained leaks are then broken down by how much slack they took, which pipe
-layer found them, the size step (`8″ → 12″`), and how far they moved against the
-median of the whole output. They are the rows where the diameter is an
-assumption, so they are worth reviewing as a set.
-
-The comparison is oriented strict → widened whichever page is open, so the same
-pair of files cannot read as "+1,104 gained" from one side and "1,104 lost" from
-the other.
-
-For files to keep or send on:
-
-```bat
-python scripts\relocation_dashboard.py --mode fuzzy
-python scripts\relocation_dashboard.py --both
-```
-
-Both are paired on the leak's own id, not its number: 25,733 rows of the
-supplemental file share a leak number, so joining on the number would compare
-different leaks.
-
-## Layout
-
-| Path | Contents |
-| --- | --- |
-| `bootstrap.py` | Zscaler-aware environment setup: venv plus requirements. |
-| `run.py` | Single entry point: download, decode, match, write, map. |
-| `src/leak_relocation_geopandas.py` | The production workflow. |
-| `src/leaflet_bbox_server.py` | Local map viewer backend. |
-| `src/leakrelocation/config.py` | Every path, URL and tuning knob. |
-| `src/leakrelocation/matching.py` | Pure material/diameter matching logic, including the nominal-size ladder. |
-| `src/leakrelocation/assettype.py` | ASSETGROUP/ASSETTYPE subtype decoding. |
-| `src/leakrelocation/viewer_pane.py` | Attribute table pane docked under the map. |
-| `scripts/` | Sign-in and cache-repair tools. |
-| `input/` | The supplemental leak CSV. Committed, so a run needs no share. |
-| `reference/` | Service metadata copies the tests check against. |
-| `vendor/leaflet/` | Leaflet, committed so the map needs no internet. |
-| `tests/` | Tests that need no network and no shared drive. |
-
-### Supplemental leak data
-
-`input/HL_SupplementalData.csv` is the leak attribute file, committed so a run does
-not depend on a mapped drive, a VPN, or a shared folder that has been reorganised.
-It carries **98,464 MA rows** across 33 columns.
-
-It is the only source of leak **material** and **diameter** — layer 206 has
-neither, which is why the match cannot be made from the service alone.
-
-Because the file travels with the repository, the header names in the workflow are
-now facts rather than guesses, and `tests/test_supplemental_csv.py` checks them
-against it offline. What that turned up:
-
-| Field | Column | Notes |
-| --- | --- | --- |
-| **join key** | `HistoricalLeaksID` | Layer 206's `GlobalID`. Unique on all 98,464 rows. |
-| leak number | `LeakNumber` | Carried for labelling and the audit, **not** joined on — see below. `Name` holds the same value on all 98,464 rows. |
-| diameter | `Diameter` | Filled on 94.7%. `Abdn_Diameter_Main` and `Abdn_Diameter_Service` are different measurements, not fallbacks. |
-| material | `LeakMaterialType` | Filled on 95.8%. The `Abdn_Material*` columns are far sparser and sat behind a name that always resolves. |
-| facility | `FacilityType` | `Distribution Main` or `Service`, which is what decides the pipe layers a leak may relocate onto. |
-| pressure | — | **There is no pressure column of any kind.** Five names used to be guessed for one. |
-
-#### The join is on the GlobalID, not the leak number
-
-**The leak number is not unique in this file.** 25,733 rows (26.1%) share a number
-with another row, across 10,990 numbers, and 5,364 of those numbers have rows that
-disagree about the material or the diameter. Leak 1000001 is three rows: a Cast
-Iron 8" main, a Bare Steel 1.25" service, and a second copy of the main.
-
-Joining on the number therefore gave a leak whichever of its namesakes' rows came
-last, and discarded the rest. Measured against the committed file, that was:
-
-| | |
-| --- | --- |
-| leaks given the wrong material | 4,476 |
-| leaks given the wrong diameter | 6,247 |
-| leaks given the wrong facility type | 6,285 |
-| **leaks wrong in at least one of the three** | **8,425** |
-| rows discarded outright | 14,743 |
-
-The facility type is not cosmetic: it decides which pipe layers a leak may
-relocate onto, so those 6,285 were being routed by another leak's data.
-
-The join is on `HistoricalLeaksID` — layer 206's `GlobalID` — which is unique on
-every row, so all 98,464 rows are kept and each leak gets its own. Both sides are
-normalised through `normalize_key`, which strips the braces and upper-cases, so
-`{8D0318B7-…}` and `8d0318b7-…` join.
-
-A leak with no `GlobalID`, or a supplemental file without the column, is **not**
-quietly joined on the number instead: the run counts it as unmatched, or stops.
-Falling back is what produced plausible, wrong output.
-
-The eight material values are `Cast Iron`, `Bare Steel`, `Plastic - MD`, `Coated
-Steel`, `Copper`, `Plastic - HD`, `Wrought Iron` and blank. Note that
-`Plastic - MD` and `Plastic - HD` are **not** DNV ASSETTYPE domain labels: they
-reach a pipe through the material family, so the 15,313 leaks carrying them depend
-on `ALLOW_MATERIAL_FAMILY_FALLBACK` being on.
-
-### Service metadata reference
-
-`reference/mapserver_json/NY_DNV_Synergi_RiskResults_Assets_NY/` is a
-point-in-time copy of the DNV MapServer metadata, taken 2026-08-07 from
-
-    https://gis.nationalgrid.com/dnv/rest/services/NY/DNV_Synergi_RiskResults_Assets_NY/MapServer?f=pjson
-
-It is the reason the field names in the workflow are facts rather than guesses.
-`tests/test_dnv_service_metadata.py` reads it to confirm that every field name
-the workflow uses still exists, that `SERVICE_ASSETTYPE_LABELS` matches the real
-ASSETTYPE domain, and that every domain label lands in the expected material
-family — offline, with no token.
-
-Only the layers this project reads are kept:
-
-| File | Contents |
-| --- | --- |
-| `layer_006_Distribution_Pipe.json` | Distribution pipes, with the ASSETTYPE subtype domains. |
-| `layer_007_Service_Pipe.json` | Service pipes, same domains. |
-| `layer_206_Hist_GasLeak.json` | Historic leaks. Carries no material or diameter field, which is why both come from the supplemental CSV. `ADDRESS` and `REVISEDLEAKDATE` are read from it. |
-| `manifest.json` | Every layer id on the service and its source URL. |
-| `service.json` | Service-level metadata. |
-
-The original copy held all 102 layer JSONs, 150 MB, of which these were the only
-files anything read. Re-copy from the URL above if another layer is ever needed.
-
-### Scripts
-
-| Script | Purpose |
-| --- | --- |
-| `arcgis_signin.py` | Sign in on its own, inspect or clear the cached token, test the redirect. |
-| `preflight_assettype_cache_check.py` | Report which pipe caches are present. |
-| `describe_layer.py` | Print a layer's fields, dates and subtype domains; `--save` writes it into `reference/`. |
-| `field_fill_report.py` | Which fields actually hold values, in the caches and (with `--service`) in the service. |
-| `probe_leak_fields.py` | Why a leak field is empty: counts it with and without the `jurisdiction = 'MA'` filter, null against blank, and shows real values. |
-| `relocation_dashboard.py` | Build the relocation-distance dashboard as one self-contained HTML file; `--mode`, `--both`. |
-| `enrich_assettype_cache.py` | Repair an existing cache. Not needed for a normal run — `run.py` decodes the material itself. |
-
-The viewer builders, the audit and the inspect scripts are gone: `run.py` serves
-one map that shows everything they reported on, and the material decode moved
-into the workflow.
-
-## Configuration
-
-Paths and endpoints used to be hard-coded in most files. They now live in
-`src/leakrelocation/config.py`, and every value has an environment-variable
-override. The defaults reproduce the previous behaviour, so nothing needs to be
-set to run as before.
-
-| Variable | Default |
-| --- | --- |
-| `LEAKRELOCATION_WORK_ROOT` | `~/Downloads/LeakRelocation-GeoPandas` |
-| `LEAKRELOCATION_CACHE_DIR` | `<work root>/layer_cache` |
-| `LEAKRELOCATION_OUTPUT_GPKG` | `<work root>/production_moved_leak_outputs/HistoricLeakRelocation.gpkg` |
-| `LEAKRELOCATION_SUPPLEMENTAL_CSV` | `input/HL_SupplementalData.csv`, in the repository |
-| `LEAKRELOCATION_GIS_ROOT` | `https://gis.nationalgrid.com` |
-| `LEAKRELOCATION_VERBOSE` | `0` — set to `1` for field resolution and setup detail |
-| `LEAKRELOCATION_TIMINGS` | `0` — set to `1` for per-stage elapsed times |
-| `LEAKRELOCATION_CACHE_FRESH_SECONDS` | `3600` — trust a cache younger than this without asking the server; `0` always checks |
-| `LEAKRELOCATION_PARALLEL_LOAD` | `1` — load the three layers concurrently |
-| `LEAKRELOCATION_RETRY_ATTEMPTS` | `4` — attempts per request before a transient failure ends the run |
-| `LEAKRELOCATION_RETRY_BACKOFF` | `2` — seconds before the first retry, doubling with jitter |
-| `LEAKRELOCATION_DOWNLOAD_WORKERS` | `8` — parallel batch downloads; lower it if the network keeps dropping them |
-| `LEAKRELOCATION_LOOPBACK_OAUTH` | `1` — sign in via a loopback redirect; `0` uses the out-of-band page |
-| `LEAKRELOCATION_LOOPBACK_PORT` | `8080` — must match a redirect URI on the portal app registration |
-
-### Output location
-
-The GeoPackage is written **locally**, under
-`<work root>/production_moved_leak_outputs/`. Writing straight to a network
-location made every run depend on network write throughput, and a partial write
-left the shared copy broken. Set `LEAKRELOCATION_OUTPUT_GPKG` to publish
-deliberately when a run looks good.
-
-### Signing in
-
-Authentication uses a loopback redirect: the browser lands on a page this
-process serves, which reports success and closes itself. Nothing displays the
-authorization code and no tab is left behind.
-
-This requires `http://localhost:8080/` to be listed as a redirect URI on the
-portal app registration. If it is not, the run warns and falls back to the
-out-of-band page — the one that shows `SUCCESS code=...` and cannot be closed
-programmatically, because that page belongs to the portal rather than to this
-process.
-
-A token is cached in Windows Credential Manager, and a cache younger than
-`LEAKRELOCATION_CACHE_FRESH_SECONDS` skips the server check entirely, so most
-repeat runs need no sign-in at all.
-
-### The layer cache and newly requested fields
-
-A cache holds the columns that were requested when it was written, and the
-refresh is a delta: only records whose `LASTUPDATE` moved are downloaded again.
-So adding a field to the request lists does not bring it into an existing cache —
-it would arrive for a handful of changed records and be blank for the rest, which
-reads like a service that has stopped populating the field.
-
-Each cache therefore stores a signature of the fields the code asked for. When
-that signature does not match, the layer is downloaded in full instead, once, and
-the run says so:
-
-    historic leaks: the requested fields have changed since this cache was
-    written. Refreshing the layer in full so the new fields are populated for
-    every record.
-
-The signature is per layer kind, and two things keep it from costing more than it
-has to:
-
-- a leak field and a pipe field have separate digests, so collecting one more
-  leak column no longer re-downloads 1,274,797 service pipes that were never
-  affected by it;
-- when the signature does not match, the cache's own columns are checked before
-  it is thrown away. A cache that already carries every requested field is kept:
-
-      historic leaks: the requested fields have changed, but this cache already
-      carries every one of them. Keeping it.
-
-Adding `ADDRESS` changed the leak signature, so the first run after it
-re-downloads the leak layer. Later runs use the cache as before.
-
-### If a field is empty on the map
-
-An empty column has two causes that need opposite fixes, and they are told apart
-with:
-
-```bat
-python scripts\field_fill_report.py
-python scripts\field_fill_report.py --service
-```
-
-The first reads the local caches and the output GeoPackage and reports, per field,
-how many rows hold a value. The second asks the service the same question - one
-count query per field, no data returned - so:
-
-| What the report shows | What it means |
-| --- | --- |
-| `not in this source` | the download predates the field. `python run.py --refresh` |
-| `0` here, filled on the service | it is being lost after the download — a bug here |
-| `0` in both | the service does not populate it. Nothing here can fill it in |
-
-`--service` also asks about the fields this project does **not** request, so when
-a configured field turns out to be empty the alternatives are right there. On the
-MA leaks, `REVISEDLEAKDATE` and `ADDRESS` came back present but empty on all
-98,501 rows, which is why the audit table reads `no_leak_date` for 98% of them —
-the date rule has nothing to compare. Layer 206 carries `DISCOVEREDDATE`,
-`REPAIREDDATE` and `COMPLETEDDATE` as well, and the report says which of those MA
-fills in.
-
-`ADDRESS` and `REVISEDLEAKDATE` were added to the leak query after the first
-caches were written, so a cache from before then simply has no such column and the
-map says so beside the layer's own name.
-
-### Why a leak field is empty
-
-`ADDRESS` **is** a field on layer 206, it **is** in the `outFields` this project
-sends, and the column **is** in the cache — with no value on any of the 98,501 MA
-rows. The fill report cannot say which of three things that is, because all three
-look identical from inside a MA-only cache. This can:
-
-```bat
-python scripts\probe_leak_fields.py
-```
-
-It counts each field four ways — with and without the `jurisdiction = 'MA'`
-filter, null against empty string — and pulls sample values from rows that
-actually have one rather than from the first five rows, which in the middle case
-below are all empty. It downloads nothing and writes nothing.
-
-| Verdict | What to do |
-| --- | --- |
-| the service has it and this project asks for it | it is lost between the two — a bug here |
-| populated on the layer, on no `MA` row | nothing in the request can fill it in; the fallback below is the answer |
-| empty for every row on the layer | same, and stop asking |
-
-`ADDRESS IS NOT NULL` is true of the empty string, so the probe asks for `<> ''`
-as well on text fields — the fill report once counted 92,707 blanks as fully
-populated for exactly that reason.
-
-### Where a leak is, when it has no address
-
-`LeakAddress` in the audit table and `LeakLocation` in the map popup are composed
-by `src/leakrelocation/leak_location.py`, from one street-level part and one
-municipality part, best available of each:
-
-| | street | municipality |
-| --- | --- | --- |
-| first choice | `ADDRESS` | `CITY` |
-| fallback | `NEARESTXSTREET` | `SuppTown` (from the supplemental CSV) |
-
-So a leak reads `12 Elm St / WATERTOWN` when the service has an address and
-`OAK ST / WATERTOWN` when it does not. Both callers share that module, so the
-popup over a leak and its row in the GeoPackage cannot describe it differently.
-This is a fallback for rows that lack a street address — not a replacement for
-one.
-
-### The relocation-distance dashboard
-
-How far each leak moved is the only measure of how much its original record was
-trusted. A few feet is a snap onto the right main; two thousand feet is not a
-relocation but a guess that happened to find a pipe. The dashboard draws that
-line wherever the reader wants it.
-
-It is served by the map server, so `python run.py` already has it — the
-**Distance dashboard** link sits top-left on the map, at
-<http://127.0.0.1:8000/dashboard>. For a copy to keep or send on:
-
-```bat
-python scripts\relocation_dashboard.py
-python scripts\relocation_dashboard.py --open
-```
-
-That writes `relocation_distance_dashboard.html` beside the GeoPackage and
-prints the headline numbers to the terminal.
-
-**The sliding scale** is the centre of it: drag it and the page reports, exactly,
-how many relocations fall on each side — overall and split by pipe layer. It
-steps in 0.1 ft up to 100 ft and in 5 ft beyond, because production distances run
-from 0.036 ft to the 3,000 ft maximum search radius and a flat grid would put a
-third of the data in one bin. Every figure is a stored count, never an
-interpolation, and the fixed-threshold table is computed separately from the
-curve so the two disagreeing would fail a test rather than mislead a reader.
-
-Alongside it:
-
-| Panel | What it answers |
-| --- | --- |
-| Median, p90, p95, p99, furthest | the report-ready "95% of leaks moved less than X ft" |
-| Where the relocations fall | the shape of the distribution, with the threshold drawn on it |
-| Share within a distance | the cumulative curve, overall and per pipe layer |
-| Which pass found the pipe | how many needed the search widened past its first 100 ft — a leak with nothing eligible nearby is a different result from a close snap |
-| By pipe layer / facility / leak material | mains are sparser than services, so those rows differing is expected; a material whose median move is far above the rest is a sign its records are placed less reliably |
-| Material agreement | what share sit on a pipe of exactly the recorded material, against the family fallback |
-| Why a leak did not match | the leaks that were never relocated, and so appear in no distance figure |
-| Date check | `no_leak_date` on 98% of a production run, marked so the panel is not read as a clean bill of health |
-| The furthest 50 | the review queue, row by row |
-
-Nothing is fetched from the internet — no CDN, no web font — for the same reason
-Leaflet is vendored: the proxy would not serve it. The file embeds aggregate
-counts, group statistics and those 50 rows, not the 90,987-row table, so it is
-safe to send and small enough to mail (~130 KB).
-
-### If the network drops a request
-
-A layer download is hundreds of POSTs over many minutes through the proxy, so one
-being dropped is ordinary. It used to be fatal:
-
-    RuntimeError: distribution pipes delta: objectId POST batch 20/322 failed:
-    ('Connection aborted.', ConnectionResetError(10054, 'An existing connection
-    was forcibly closed by the remote host'))
-
-with the other layer 584 batches of 588 through, and all of it thrown away.
-
-Transient failures are now retried — a reset, a dropped or refused connection, a
-timeout, and the statuses that mean *not now* (429, 502, 503, 504). Four attempts
-by default, waiting 2s then 4s then 8s, each with jitter so eight parallel batches
-do not all come back in the same instant. Each retry says so:
-
-    WARNING: POST .../query: ConnectionError: ('Connection aborted.', ...).
-    Attempt 1 of 4; retrying in 2.3s
-
-HTTP 500 is **not** retried: ArcGIS returns a genuine query error that way, and
-repeating a bad query only makes it fail more slowly.
-
-Workers also reuse one connection each instead of opening a new TLS connection per
-batch — 588 handshakes for one layer, eight at a time, was itself part of why the
-proxy was resetting them.
-
-If a batch still fails all four attempts, the run stops and names the two knobs
-worth turning: `LEAKRELOCATION_DOWNLOAD_WORKERS=2` for a network that dislikes
-parallelism, and `LEAKRELOCATION_RETRY_ATTEMPTS` for one that is merely flaky.
-
-### If a run is slow
-
-```bash
-LEAKRELOCATION_TIMINGS=1 python src/leak_relocation_geopandas.py
-```
-
-prints elapsed time per stage — supplemental CSV, layer loading, CRS
-normalisation, index building, matching, writing — so the slow stage is
-identified rather than guessed at.
-
-To see what the workflow has resolved:
-
-```bash
-python -c "import sys; sys.path.insert(0,'src'); from leakrelocation import config; print(config.describe())"
-```
-
-## Setup
+Python 3.11 or newer, on Windows:
 
 ```bat
 python bootstrap.py
-```
-
-That is the whole of it. `bootstrap.py` asks Zscaler whether it is in the path,
-creates `.venv` if there is not one, and installs `requirements.txt` into it —
-adding `--proxy http://zscaler.nationalgrid.com:80` to pip when Zscaler is active
-and leaving it off when it is not. It uses the standard library only, because it
-is the script that runs before anything is installed.
-
-| Flag | Effect |
-| --- | --- |
-| `--dry-run` | Print the commands, change nothing. |
-| `--force-proxy` | Use the proxy without checking. |
-| `--no-proxy` | Never use the proxy. |
-| `--skip-check` | Do not contact Zscaler at all. |
-| `--venv PATH` | Somewhere other than `.venv`. |
-
-The check is `http://ip.zscaler.com/`, Zscaler's own **My IP Address** page, read
-for the sentence it returns when you are *not* behind it:
-
-    The request received from you didn't come from a Zscaler IP therefore you are
-    not going through the Zscaler proxy service.
-
-Deliberately **http**, not https: when Zscaler is active it re-signs TLS, and this
-runs before the venv exists, so there is no `truststore` yet to verify against the
-Windows certificate store. An https probe would fail in exactly the case that
-needs the proxy. Because plain http can be hijacked, a reply that does not look
-like Zscaler's page at all — a captive portal, a block page — is reported as
-`unknown` rather than taken for either answer, and `unknown` installs directly and
-tells you to re-run with `--force-proxy` if that cannot reach PyPI.
-
-Doing it by hand instead:
-
-```bat
-python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-Install from `requirements.txt` rather than picking packages by hand: `truststore`
-is in there for a reason. The corporate proxy re-signs HTTPS with an internal root
-that Windows trusts and certifi does not, so without it every request to
-`gis.nationalgrid.com` ends in
-
-    SSLCertVerificationError: self-signed certificate in certificate chain
-
-`auth.make_session()` warns when it cannot import it — `truststore injection
-failed: No module named 'truststore'` is that warning, and the sign-in traceback
-that follows is its consequence, not a separate problem.
-
-If pip itself fails on certificates rather than on reaching the host, the proxy
-flag will not help: pip does not use `truststore`. Point it at the corporate root
-instead, with `PIP_CERT` or `pip config set global.cert <path to the PEM>`.
-
-## Running
-
-One command does everything: check the token, download the three layers, decode
-the pipe material from ASSETGROUP + ASSETTYPE, match, write the GeoPackage, and
-serve the map.
-
-```bat
+.venv\Scripts\activate
 python run.py
 ```
 
-| Flag | Effect |
+`bootstrap.py` creates `.venv` and installs the requirements, going through the
+corporate proxy when it detects one. `run.py` signs in, downloads the layers,
+relocates the leaks, and opens a map of the result at <http://127.0.0.1:8765/>.
+
+The first run downloads well over a million pipes and takes a while. Later runs
+fetch only what changed.
+
+More on installing, proxies and certificates: [docs/setup.md](docs/setup.md).
+
+## Commands
+
+| | |
 | --- | --- |
-| `--no-view` | Stop after the GeoPackage. |
-| `--view-only` | Skip the workflow and serve the map. |
-| `--refresh` | Ignore the layer caches and re-download. |
-| `--port 8800` | Serve the map somewhere else. |
-| `--no-browser` | Serve without opening a browser. |
-| `--skip-signin-check` | Do not verify the token first. |
+| `python run.py` | Relocate the historic (LMS) leaks and open the map. |
+| `python run.py --no-view` | Stop after writing the GeoPackage. |
+| `python run.py --view-only` | Just the map, from the last run's output. |
+| `python run.py --refresh` | Ignore the layer caches and download again. |
+| `python run.py --diameter fuzzy` | Also accept a pipe one nominal size up or down. Writes its own GeoPackage. |
+| `python run.py --leak-date-fallback` | Use the other dates on a leak when its revised date is empty. |
+| `python scripts\maximo_leaks.py` | Relocate the enterprise (Maximo) leaks, read from SQL. |
+| `python scripts\relocation_dashboard.py` | Write the relocation-distance dashboard as one HTML file. |
+| `python scripts\apply_relocated_geometry.py` | Move the leaks on the live layer to their relocated positions. **A dry run unless `--apply` is given.** |
 
-### The map
+Every command answers `--help`.
 
-`run.py` serves `src/leaflet_bbox_server.py`. The layers sit under two parents,
-each carrying everything that belongs to one kind of leak:
+Diagnostics, none of which change anything:
 
-| MAINS | SERVICES |
+| | |
 | --- | --- |
-| Main lines — material coded | Service lines — material coded |
-| Main leaks — original location | Service leaks — original location |
-| Main leaks — relocated location | Service leaks — relocated location |
-| Main leaks — connecting line | Service leaks — connecting line |
+| `python scripts\arcgis_signin.py --test-query` | Sign in and prove the token works. `--status`, `--clear`, `--check`. |
+| `python scripts\field_fill_report.py` | Which fields actually hold values, in the caches; `--service` asks the service too. |
+| `python scripts\probe_leak_fields.py` | Why a leak field is empty: on our rows, or on every row. |
+| `python scripts\describe_layer.py` | A layer's fields, dates and subtype domains; `--save` keeps a copy in `reference/`. |
+| `python scripts\preflight_assettype_cache_check.py` | Whether the pipe caches carry a decoded material. |
+| `python scripts\enrich_assettype_cache.py` | Repair an existing pipe cache. A normal run does not need it. |
 
-Plus **abandoned / retired pipe** under OTHER. Ticking a parent switches its four
-children together; each child still toggles on its own, and the parent shows a
-dash when only some are on. Mains and services are independent — turning one off
-leaves the other exactly as it was.
+## What it writes
 
-The split follows the same routing the matcher used, so the map agrees with the
-output: relocated points and connecting lines are one GeoPackage layer each, split
-on `LinkedLayer`, and the original leaks are one cache split on the supplemental
-facility type. A facility type that names neither is searched against both by the
-workflow, so it appears under both here rather than being hidden from one.
+Under `~/Downloads/LeakRelocation-GeoPandas/production_moved_leak_outputs/`
+(set `LEAKRELOCATION_WORK_ROOT` to move it):
 
-Leaflet's own layer control is a flat list and cannot express a parent, so the
-data layers use a small grouped control instead; the basemaps and the two
-reference shapes stay in Leaflet's.
+| File | From |
+| --- | --- |
+| `HistoricLeakRelocation.gpkg` | `python run.py` |
+| `HistoricLeakRelocation_fuzzy_diameter.gpkg` | `python run.py --diameter fuzzy` |
+| `MaximoLeakRelocation.gpkg` | `python scripts\maximo_leaks.py` |
 
-Each leak carries its street `ADDRESS` from layer 206, in the attribute table and
-in the popup below the leak number. The relocated points and the audit table
-carry the same value as `LeakAddress`. Nothing matches on it — it is there so a
-leak can be identified by where it is and not only by its number.
+Each GeoPackage has three layers:
 
-`run.py` always runs it. **Every** layer degrades on its own: a layer whose cache
-or GeoPackage is not there is empty and says why, in the terminal and in the info
-box on the page — `Main lines - material coded: not available - Missing cache
-file: … Download it with: python run.py --no-view`. So a fresh checkout, which has
-no caches at all, still opens the viewer instead of a traceback.
+| Layer | Contents |
+| --- | --- |
+| `relocated_leaks` | One point per relocated leak, on its pipe. |
+| `relocated_leak_offset_lines` | A line from each leak's recorded position to its relocated one. |
+| `leak_relocation_audit` | One row per leak, relocated or not: the pipe it matched, the distance, or the reason nothing matched. |
 
-That used to be true only of the abandoned layer, and `run.py` refused to serve at
-all when a pipe cache was missing.
+These files hold real asset data. They are written outside the repository and
+`.gitignore` keeps them out of it.
 
-The abandoned layer reads `retired_pipes.pkl.gz`, which the workflow writes when
-it loads layer 62. Its materials need layer 62's subtype domains, so run
-`python scripts\describe_layer.py --save` once to put them in `reference/`.
+## The rules, briefly
 
-Clicking a row in the attribute table shows that feature's attributes on the map
-and leaves the row highlighted, and both survive the layer reload that a pan or
-zoom triggers. The selection is remembered by OBJECTID rather than by the table
-row or the Leaflet layer, because the map throws both away every time it moves.
+- **Material** comes from the pipe's decoded `ASSETGROUP` + `ASSETTYPE`, never
+  from the DNV `material` field, which is a grade.
+- **Diameter** must be the same nominal size, or one size either way under
+  `--diameter fuzzy`.
+- **Distance**: a leak relocates only onto a pipe within 100 ft. Otherwise it
+  is reported as unmatched rather than paired with something far away.
+- **Time**: a leak relocates only onto a pipe that existed when the leak was
+  recorded.
+- A leak's material and diameter come from `input/HL_SupplementalData.csv`,
+  joined on the leak's GlobalID — never on its leak number, which is not
+  unique.
 
-Clicking anywhere that is not a row and not a feature — the map background, or
-the empty space in the pane below the last row — drops the highlight and closes
-the popup. Sorting and clicking inside an open popup are not outside clicks and
-keep the selection.
+The detail, and the reasoning, is in [docs/matching-rules.md](docs/matching-rules.md).
 
-Material comes from the decoded `ASSETGROUP + ASSETTYPE` subtype domains, which
-is what the matching uses too, so the map and the match agree. Colours live in
-one place, `MATERIAL_COLORS` in that file; the page's palette is generated from
-it, so editing it changes the map.
+## Documentation
 
-Both pipe layers are **on when the page opens**, along with the leaks and the
-relocated output. Every layer can be switched off from the control top right.
+| | |
+| --- | --- |
+| [Setup](docs/setup.md) | Installing, the proxy, certificates. |
+| [The matching rules](docs/matching-rules.md) | Material, the search radius, leak dates, exact and fuzzy diameter. |
+| [The leak sources](docs/leak-sources.md) | Historic leaks and the supplemental CSV; Maximo leaks and the SQL query. |
+| [The map and the dashboard](docs/map-and-dashboard.md) | Reading the map, the attribute table, the distance dashboard. |
+| [Updating the leak layer](docs/geometry-write-back.md) | Writing relocated positions back to the live service, and undoing it. |
+| [Configuration](docs/configuration.md) | Every environment variable; sign-in; how the layer cache works. |
+| [Troubleshooting](docs/troubleshooting.md) | Empty fields, dropped connections, slow runs. |
+| [Development](docs/development.md) | How the code is laid out, tests, lint, CI. |
+| [Changelog](CHANGELOG.md) | What changed, and why. |
 
-The pipe layers are read from the downloaded caches and served by bounding box, a
-capped number of features at a time, re-fetched as the map moves. They are far
-too large to write into a single GeoJSON and hand to a browser. With the whole
-state in view the cap is reached and the info box says `TRUNCATED - zoom in`;
-that is the cap, not missing data.
+## Repository layout
 
-The map zooms to **level 28**, as deep as Leaflet goes without complaint — 22,
-24, 25, 26 and 28 were each checked in a browser and all zoomed and drew cleanly.
-The tile providers only have imagery to 19, so past that the last tile is upscaled
-and looks soft while the pipes stay sharp, because they are vectors rather than
-baked into the tiles. For scale a pixel is about 4 cm at zoom 22, 9 mm at 24 and
-0.6 mm at 28 — well past survey accuracy, so the deep levels are for separating
-overlapping lines, not for measuring. `LEAKRELOCATION_MAP_MAX_ZOOM` changes it.
-
-Leaflet is committed under `vendor/leaflet/`, so the page has it with no internet
-and nothing to build first. The map falls back to a CDN only if that copy is
-missing, and warns when it does.
-
-There is no longer an enrichment step to remember. The material decode happens
-inside the workflow, which is why the order can no longer be got wrong; it used
-to stop after the download with `material is missing, so this cache is not
-ASSETTYPE-enriched` and have to be restarted after a second command.
-
-Every stage still runs on its own:
-
-```bat
-python scripts\arcgis_signin.py --test-query      :: sign in, prove the token works
-python scripts\arcgis_signin.py --check           :: test the redirect only
-python src\leak_relocation_geopandas.py           :: download, decode, match, write
-python src\leaflet_bbox_server.py                 :: serve the map on its own
-
-:: diagnostics
-python scripts\preflight_assettype_cache_check.py
-python scripts\enrich_assettype_cache.py          :: repair an existing cache
-python scripts\enrich_assettype_cache.py --dry-run       :: report, write nothing
-```
-
-### Attribute pane
-
-The relocation viewer docks an attribute table under the map, one tab per
-layer:
-
-- Click a row to zoom to that feature and open its popup.
-- Click a feature on the map to select and scroll to its row.
-- Click the map background, or the pane below the rows, to clear the selection.
-- Click a column header to sort; numeric columns sort numerically.
-- Filter rows with the search box (matches any attribute value).
-- **Hide** collapses the pane and gives the space back to the map.
-
-Rendering is capped at 500 rows per view — a production layer holds tens of
-thousands of features and an uncapped table would lock the browser. The row
-count shows `showing N of M` when the cap applies; narrow the set with the
-filter.
-
-## Tests
-
-The matching logic is tested without network access, an ArcGIS token or the
-shared drive:
-
-```bash
-python -m pytest
-```
-
-`tests/characterize.py` snapshots the behaviour of the workflow's pure
-functions. Run it before and after a change and diff the two files to confirm
-a refactor did not alter results:
-
-```bash
-python tests/characterize.py before.json
-# ...make changes...
-python tests/characterize.py after.json
-diff before.json after.json
-```
-
-## Making changes
-
-Edit the source in this repository and run the tests. There is no deployed copy to
-keep in step: patching one in place is how this workflow ended up with five
-functions defined twice.
-
-## Local workflow
-
-The repository holds everything a run reads. The only thing written outside it is
-the working data, under `~/Downloads/LeakRelocation-GeoPandas` — caches and the
-output GeoPackage — overridable with `LEAKRELOCATION_WORK_ROOT`.
-
-Changes reach the repository through git directly. The previous
-`Sync-LeakRelocation-ToGit.ps1` copy-and-commit step has been removed: it
-rewrote tracked files from the local working folder on every run, which is how
-edits made here were repeatedly overwritten.
+| Path | Contents |
+| --- | --- |
+| `run.py` | The main entry point. |
+| `bootstrap.py` | Environment setup. Standard library only. |
+| `scripts/` | The other commands. |
+| `src/leakrelocation/` | The package. See [Development](docs/development.md). |
+| `input/` | The supplemental leak CSV and the Maximo query template. |
+| `reference/` | A copy of the service metadata, which the tests check field names against. |
+| `vendor/leaflet/` | Leaflet, committed so the map needs no internet. |
+| `tests/` | The test suite. No network, no token, no asset data. |
+| `docs/` | Everything above in detail. |

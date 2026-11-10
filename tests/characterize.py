@@ -23,10 +23,10 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 class _WithFallbacks:
     """Looks up names on the workflow module, then on the package modules.
 
-    The workflow imports only what it calls, so helpers now living in
-    leakrelocation.matching or leakrelocation.auth are reachable through the
-    package instead. Probing all of them keeps the snapshot comparable to one
-    taken before the modules were split out.
+    The workflow imports only what it calls, so helpers living in the modules
+    beside it - matching, arcgis, layer_fields and the rest - are reached
+    through the package instead. Probing all of them keeps the snapshot
+    comparable to one taken before a function moved from one to another.
     """
 
     def __init__(self, module, *fallbacks):
@@ -44,17 +44,25 @@ def load_module():
     """Load the module under test. Set LR_MODULE_PATH to characterise a
     different copy (e.g. the pre-refactor file) with the same probes."""
     path = os.environ.get("LR_MODULE_PATH") or os.path.join(
-        REPO_ROOT, "src", "leak_relocation_geopandas.py")
+        REPO_ROOT, "src", "leakrelocation", "workflow.py")
     spec = importlib.util.spec_from_file_location("lr_under_test", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
     try:
         sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-        from leakrelocation import auth, matching
+        from leakrelocation import (
+            arcgis,
+            auth,
+            dates,
+            layer_cache,
+            layer_fields,
+            matching,
+        )
     except ImportError:
         return module
-    return _WithFallbacks(module, matching, auth)
+    return _WithFallbacks(
+        module, matching, arcgis, layer_fields, dates, layer_cache, auth)
 
 
 def safe(fn, *args):

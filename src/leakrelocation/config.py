@@ -60,9 +60,6 @@ INPUT_DIR = REPO_ROOT / "input"
 SUPPLEMENTAL_CSV = _path_from_env(
     "LEAKRELOCATION_SUPPLEMENTAL_CSV", INPUT_DIR / "HL_SupplementalData.csv")
 
-# The workflow module in this repository.
-WORKFLOW_SCRIPT = Path(__file__).resolve().parent.parent / "leak_relocation_geopandas.py"
-
 # Committed point-in-time copy of the DNV service metadata. It carries the
 # ASSETTYPE subtype domains, which is what makes a material decode possible
 # without a token - see assettype.decoder_for_layer.
@@ -116,6 +113,13 @@ def _int_from_env(name, default):
         return default
 
 
+def _float_from_env(name, default):
+    try:
+        return float(os.environ.get(name, "").strip())
+    except (TypeError, ValueError):
+        return default
+
+
 def _flag_from_env(name, default=False):
     value = os.environ.get(name, "").strip().lower()
     if not value:
@@ -142,9 +146,27 @@ USE_RETIRED_PIPE_LAYER = _flag_from_env("LEAKRELOCATION_USE_RETIRED_LAYER", True
 # --- Matching / request tuning ------------------------------------------------
 
 WHERE_MA = "jurisdiction = 'MA'"
-INITIAL_RADIUS_FT = 100.0
-RADIUS_INCREMENT_FT = 100.0
-MAX_RADIUS_FT = 3000.0
+
+# How far the matcher will look for a pipe to relocate a leak onto.
+#
+# It searches outward from the leak, starting at INITIAL_RADIUS_FT and widening
+# by RADIUS_INCREMENT_FT until it finds an eligible pipe or reaches
+# MAX_RADIUS_FT. With all three at 100 ft there is one pass and no widening: a
+# leak either has a pipe of the right material and diameter within 100 ft or it
+# does not relocate.
+#
+# This was 3,000 ft, which meant an output could contain a leak "relocated"
+# most of a mile onto the only pipe in reach - a pairing that happened to find
+# something rather than a relocation anyone would stand behind. A leak with
+# nothing suitable within 100 ft is now reported as unmatched, which is the
+# honest answer and leaves it for someone to look at.
+#
+# Raising it again is a matter of setting LEAKRELOCATION_MAX_RADIUS_FT; the
+# audit records SearchRadiusFt per row either way, so a wider run still says
+# which pass found each pipe.
+INITIAL_RADIUS_FT = _float_from_env("LEAKRELOCATION_INITIAL_RADIUS_FT", 100.0)
+RADIUS_INCREMENT_FT = _float_from_env("LEAKRELOCATION_RADIUS_INCREMENT_FT", 100.0)
+MAX_RADIUS_FT = _float_from_env("LEAKRELOCATION_MAX_RADIUS_FT", 100.0)
 REQUIRE_PRESSURE_MATCH = False
 ALLOW_MATERIAL_FAMILY_FALLBACK = True
 
@@ -161,11 +183,55 @@ ALLOW_MATERIAL_FAMILY_FALLBACK = True
 DIAMETER_MATCH_MODE = os.environ.get(
     "LEAKRELOCATION_DIAMETER_MODE", "exact").strip().lower() or "exact"
 
+# Use the other date fields on the leak row when the primary one is empty.
+#
+# REVISEDLEAKDATE came back empty on all 98,501 MA rows, so DateCheck reads
+# "no_leak_date" for 98.1% of the audit and the pipe-life rule decides nothing.
+# DISCOVEREDDATE, REPAIREDDATE and COMPLETEDDATE sit on the same row.
+#
+# Off by default because turning it on changes which leaks relocate: a leak
+# that matched unchecked can be refused once there is a date to check it
+# against. That is the rule working rather than a regression, but it is a
+# change to output someone is already reading, so it is asked for rather than
+# assumed. The fallback dates are collected and counted either way, so a run
+# always reports how many leaks it would rescue.
+USE_LEAK_DATE_FALLBACK = _flag_from_env("LEAKRELOCATION_LEAK_DATE_FALLBACK", False)
+
 # An exact diameter wins over an adjacent one whatever the distance, so every
 # leak the strict run relocated keeps the same pipe in the widened run and the
 # difference between the two outputs is only the leaks the widening rescued.
 # Turn this off to take the nearest pipe within the size window instead.
 PREFER_EXACT_DIAMETER = _flag_from_env("LEAKRELOCATION_PREFER_EXACT_DIAMETER", True)
+
+
+def set_run_options(diameter_mode="", leak_date_fallback=False,
+                    force_refresh=False):
+    """Apply what was asked for on the command line; return the diameter rule.
+
+    Everything in this module is read from the environment when it is first
+    imported, which is before any command line has been parsed. So a flag is
+    applied twice: to the value here, which the rest of this process reads, and
+    to the environment, which the matching workers read when they start as
+    separate processes.
+
+    Call it before importing leakrelocation.workflow. That module works out
+    which GeoPackage it writes from the diameter rule as it is imported, so
+    choosing afterwards would write the widened output over the strict one.
+
+    Only what is asked for changes: an empty or False argument leaves the
+    value the environment already gave.
+    """
+    global DIAMETER_MATCH_MODE, USE_LEAK_DATE_FALLBACK, FORCE_LAYER_REFRESH
+    if diameter_mode:
+        DIAMETER_MATCH_MODE = diameter_mode.strip().lower() or "exact"
+        os.environ["LEAKRELOCATION_DIAMETER_MODE"] = DIAMETER_MATCH_MODE
+    if leak_date_fallback:
+        USE_LEAK_DATE_FALLBACK = True
+        os.environ["LEAKRELOCATION_LEAK_DATE_FALLBACK"] = "1"
+    if force_refresh:
+        FORCE_LAYER_REFRESH = True
+        os.environ["FORCE_LAYER_REFRESH"] = "1"
+    return DIAMETER_MATCH_MODE
 
 
 def output_gpkg_for(mode=None, base=None):
@@ -182,6 +248,37 @@ def output_gpkg_for(mode=None, base=None):
         return path
     return path.with_name(f"{path.stem}_{chosen}_diameter{path.suffix}")
 
+# --- Enterprise (Maximo) leaks ------------------------------------------------
+#
+# A second leak source. The historic (LMS) leaks come from ArcGIS layer 206 and
+# are supplemented from a committed CSV; these come from one SQL query that
+# returns their material and diameter with them.
+
+# The connection string is read from this variable and never written anywhere.
+# It carries credentials, so it is not a config value, not a file, and not a
+# command-line argument - all three persist.
+MAXIMO_DSN_ENV = "LEAKRELOCATION_MAXIMO_DSN"
+
+# The query itself lives in a file so a DBA can read and edit it without
+# touching Python. The committed template documents the column aliases the
+# project requires; point this at your own copy rather than editing it in place
+# if the real query is not something that should be committed.
+MAXIMO_QUERY_ENV = "LEAKRELOCATION_MAXIMO_QUERY"
+MAXIMO_QUERY_FILE = _path_from_env(
+    MAXIMO_QUERY_ENV, INPUT_DIR / "maximo_leaks.sql")
+
+# What the X and Y columns are in. Not a guess: reading a projected easting as
+# a longitude puts every leak in the wrong hemisphere, and the run would still
+# finish and still write a GeoPackage. EPSG:4326 is lon/lat; the MA state plane
+# in US feet is EPSG:2249.
+MAXIMO_LEAK_CRS = os.environ.get(
+    "LEAKRELOCATION_MAXIMO_CRS", "EPSG:4326").strip() or "EPSG:4326"
+
+# Its own output, so a Maximo run never overwrites the historic one.
+MAXIMO_OUTPUT_GPKG = _path_from_env(
+    "LEAKRELOCATION_MAXIMO_OUTPUT_GPKG",
+    OUTPUT_DIR / "MaximoLeakRelocation.gpkg")
+
 REQUEST_PAGE_SIZE = _int_from_env("LEAKRELOCATION_PAGE_SIZE", 2000)
 REQUEST_TIMEOUT_SECONDS = _int_from_env("LEAKRELOCATION_TIMEOUT", 120)
 # A layer download is hundreds of requests over many minutes through a
@@ -195,7 +292,6 @@ VERIFY_SSL = _flag_from_env("LEAKRELOCATION_VERIFY_SSL", True)
 
 USE_LAYER_CACHE = _flag_from_env("USE_LAYER_CACHE", True)
 FORCE_LAYER_REFRESH = _flag_from_env("FORCE_LAYER_REFRESH", False)
-DELTA_REFRESH_SAFETY_SECONDS = 300
 
 # A cache younger than this is trusted without asking the server whether it has
 # changed. Each check costs a count query plus a delta query per layer, and

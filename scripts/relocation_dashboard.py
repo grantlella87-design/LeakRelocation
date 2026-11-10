@@ -24,11 +24,11 @@ import sys
 
 from _bootstrap import config
 
-from leakrelocation import distance_dashboard, distance_report
+from leakrelocation import distance_dashboard, distance_report, schema
+from leakrelocation.matching import DIAMETER_MODES
 from leakrelocation.output import fail, log, step
 
-AUDIT_LAYER = "leak_relocation_audit"
-MODES = ("exact", "fuzzy")
+MODES = DIAMETER_MODES
 
 
 def default_name(mode):
@@ -62,21 +62,14 @@ def parse_args(argv=None):
 
 def read_audit(path):
     """The audit layer as a frame, or a fatal message saying why not."""
-    import geopandas as gpd
-
     from pathlib import Path
     if not Path(path).is_file():
         fail(f"No GeoPackage at {path}\n"
              f"  Run the workflow first: python run.py")
     try:
-        return gpd.read_file(str(path), layer=AUDIT_LAYER)
-    except Exception as ex:  # noqa: BLE001 - see below
-        # Which exception an unreadable layer raises depends on the engine
-        # geopandas chose: pyogrio raises DataLayerError for a missing layer and
-        # DataSourceError for an unrecognised file, fiona raises its own
-        # DriverError, and a half-written GeoPackage can fail inside GDAL in
-        # ways neither documents. All of them mean the same thing here.
-        fail(f"Could not read the {AUDIT_LAYER} layer from {path}: {ex}\n"
+        return distance_report.read_audit(path)
+    except distance_report.AuditUnreadable as ex:
+        fail(f"Could not read the {schema.AUDIT_LAYER} layer from {path}: {ex}\n"
              f"  If the file is from an older run, rebuild it: python run.py")
 
 
@@ -153,10 +146,9 @@ def read_audit_or_none(path):
     from pathlib import Path
     if not Path(path).is_file():
         return None
-    import geopandas as gpd
     try:
-        return gpd.read_file(str(path), layer=AUDIT_LAYER)
-    except Exception as ex:  # noqa: BLE001 - as in read_audit
+        return distance_report.read_audit(path)
+    except distance_report.AuditUnreadable as ex:
         log(f"WARNING could not read {path} for comparison: {ex}")
         return None
 

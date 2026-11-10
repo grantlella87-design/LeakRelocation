@@ -4,9 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "leakrelocation"
-version = "0.1.0"
-description = "Historic leak relocation workflow for DNV / GeoPandas production processing"
-requires-python = ">=3.9"
+version = "1.0.0"
+description = "Relocates gas leak points onto the pipe they were on, from ArcGIS REST layers, with GeoPandas"
+readme = "README.md"
+# datetime.UTC, which the code uses throughout, arrived in 3.11.
+requires-python = ">=3.11"
 dependencies = [
     "geopandas>=0.14",
     "pandas>=2.0",
@@ -14,10 +16,15 @@ dependencies = [
     "pyproj>=3.5",
     "requests>=2.31",
     "keyring>=24.0",
+    # Verifies TLS against the operating system's certificate store, which is
+    # where a corporate proxy's root certificate lives. See requirements.txt.
+    "truststore>=0.9",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4"]
+# The enterprise (Maximo) leaks are read over ODBC. Nothing else needs it.
+maximo = ["pyodbc>=5.0"]
+dev = ["pytest>=7.4", "ruff>=0.6"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -28,3 +35,30 @@ include = ["leakrelocation*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["vendor", "reference"]
+
+[tool.ruff.lint]
+# Named explicitly, so the result does not change with the ruff version's idea
+# of a default. Errors, unused and undefined names, import order, likely bugs,
+# broad excepts (each one here says why), outdated syntax, and stale noqa.
+select = ["E", "F", "W", "I", "B", "BLE", "UP", "S110", "S112", "RUF100"]
+# Long lines are almost all messages printed to the person running it, and
+# breaking those mid-sentence makes them harder to search for.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Every entry point puts the repository's src/ on sys.path before it imports
+# the package, so the package works when run as a script or loaded by path -
+# tests/test_module_loading.py holds it to that. The imports that follow are
+# necessarily not at the top of the file.
+"src/leakrelocation/*.py" = ["E402"]
+"scripts/*.py" = ["E402"]
+"tests/*.py" = ["E402"]
+"run.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["leakrelocation"]

@@ -21,7 +21,6 @@ Only local caches are modified; relocation is not run. The original cache is
 backed up once before the first write.
 """
 import argparse
-import importlib.util
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -31,6 +30,7 @@ from _bootstrap import config
 
 from leakrelocation import schema
 from leakrelocation.assettype import build_assettype_decoder, norm_code
+from leakrelocation.output import log
 
 LAYERS = {
     "distribution": {"cache_name": "distribution_pipes.pkl.gz", "url_attr": "DISTRIBUTION_PIPE_URL"},
@@ -45,20 +45,21 @@ MANAGED_COLUMNS = ([schema.ASSETGROUP, schema.ASSETTYPE] + DECODED_COLUMNS
 RETRY_DELAYS = [2, 5, 15]
 
 
-def log(message):
-    print(message, flush=True)
+def live_service():
+    """The real service: the layer URLs, a signed-in session and a request.
 
+    Everything below takes this as an argument, so the tests can hand in a
+    stub that answers from memory instead.
+    """
+    from types import SimpleNamespace
 
-def load_workflow_module():
-    """Load the workflow module for its authenticated session and request
-    helpers."""
-    path = config.WORKFLOW_SCRIPT
-    if not path.exists():
-        raise RuntimeError(f"Workflow module not found: {path}")
-    spec = importlib.util.spec_from_file_location("leak_relocation_workflow", str(path))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    from leakrelocation import arcgis, auth
+    return SimpleNamespace(
+        DISTRIBUTION_PIPE_URL=config.DISTRIBUTION_PIPE_URL,
+        SERVICE_PIPE_URL=config.SERVICE_PIPE_URL,
+        make_session=auth.make_session,
+        request_json=arcgis.request_json,
+    )
 
 
 def request_with_retry(module, session, url, params, label):
@@ -213,7 +214,7 @@ def enrich_layer(module, session, layer_key, args):
 
     decoded = pd.DataFrame([
         decoder.get((norm_code(group), norm_code(atype)), {})
-        for group, atype in zip(df["ASSETGROUP"], df["ASSETTYPE"])
+        for group, atype in zip(df["ASSETGROUP"], df["ASSETTYPE"], strict=True)
     ])
     for col in DECODED_COLUMNS:
         df[col] = decoded[col] if col in decoded.columns else None
@@ -268,12 +269,11 @@ def main(argv=None):
     layer_keys = sorted(LAYERS) if args.layer == "both" else [args.layer]
 
     log("ASSETTYPE cache enrichment")
-    log(f"workflow module: {config.WORKFLOW_SCRIPT}")
     log(f"cache dir:       {config.LAYER_CACHE_DIR}")
     log(f"layers:          {', '.join(layer_keys)}")
     log("This modifies local pipe caches only. It does not run relocation.")
 
-    module = load_workflow_module()
+    module = live_service()
     session = module.make_session()
 
     for layer_key in layer_keys:
