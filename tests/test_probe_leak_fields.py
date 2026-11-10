@@ -162,23 +162,17 @@ def stub():
 
 
 @pytest.fixture
-def workflow(monkeypatch):
-    import importlib.util
-    import io
-    from contextlib import redirect_stdout
-
-    path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
-    spec = importlib.util.spec_from_file_location("lr_probe", path)
-    module = importlib.util.module_from_spec(spec)
-    with redirect_stdout(io.StringIO()):
-        spec.loader.exec_module(module)
-
+def signed_in(monkeypatch):
+    """A session that already carries a token, so nothing tries to sign in."""
+    pytest.importorskip("geopandas")
+    pytest.importorskip("keyring")
     import requests
+
+    from leakrelocation import auth
+
     session = requests.Session()
     session._arcgis_access_token = "test-token"
-    module.make_session = lambda *a, **k: session
-    monkeypatch.setitem(sys.modules, "leakrelocation.workflow", module)
-    return module
+    monkeypatch.setattr(auth, "make_session", lambda *a, **k: session)
 
 
 def run(stub, fields):
@@ -192,7 +186,7 @@ def run(stub, fields):
 
 
 class TestAgainstTheService:
-    def test_a_field_empty_only_on_our_rows_is_not_called_a_bug(self, stub, workflow):
+    def test_a_field_empty_only_on_our_rows_is_not_called_a_bug(self, stub, signed_in):
         """REVISEDLEAKDATE: 140,000 rows on the layer have one, no MA row does.
         Reading that as a bug here sends someone looking through the request for
         a fault that is not in it."""
@@ -200,48 +194,48 @@ class TestAgainstTheService:
         assert "none of the rows this project downloads" in printed
         assert "bug here" not in printed
 
-    def test_a_field_empty_everywhere_says_so(self, stub, workflow):
+    def test_a_field_empty_everywhere_says_so(self, stub, signed_in):
         printed = run(stub, "ADDRESS")
         assert "empty for every row" in printed
 
-    def test_a_field_we_lose_is_named_as_our_bug(self, stub, workflow):
+    def test_a_field_we_lose_is_named_as_our_bug(self, stub, signed_in):
         """CITY is populated on 98,400 MA rows and is in the outFields, so an
         empty cache column can only have been dropped here."""
         printed = run(stub, "CITY")
         assert "bug here" in printed
 
-    def test_a_blank_is_counted_as_empty_not_as_a_value(self, stub, workflow):
+    def test_a_blank_is_counted_as_empty_not_as_a_value(self, stub, signed_in):
         """`ADDRESS IS NOT NULL` is true of the empty string, so counting only
         nulls would report a column of blanks as fully populated - the exact
         mistake the fill report already made once."""
         run(stub, "ADDRESS")
         assert any("<> ''" in where for where in stub["asked"])
 
-    def test_a_date_field_is_never_compared_to_a_string(self, stub, workflow):
+    def test_a_date_field_is_never_compared_to_a_string(self, stub, signed_in):
         run(stub, "REVISEDLEAKDATE")
         dates = [w for w in stub["asked"] if "REVISEDLEAKDATE" in w]
         assert dates
         assert all("<> ''" not in where for where in dates)
 
-    def test_values_are_pulled_from_rows_that_have_one(self, stub, workflow):
+    def test_values_are_pulled_from_rows_that_have_one(self, stub, signed_in):
         """The first five rows of a MA-only query are all empty in the case this
         is trying to see, so sampling them would show nothing either way."""
         run(stub, "CITY")
         fetched = [w for w in stub["asked"] if "IS NOT NULL" in w]
         assert fetched
 
-    def test_the_whole_layer_is_asked_not_only_our_rows(self, stub, workflow):
+    def test_the_whole_layer_is_asked_not_only_our_rows(self, stub, signed_in):
         run(stub, "ADDRESS")
         assert any("jurisdiction" not in where for where in stub["asked"])
 
-    def test_a_rejected_field_does_not_stop_the_probe(self, stub, workflow):
+    def test_a_rejected_field_does_not_stop_the_probe(self, stub, signed_in):
         stub["reject"] = {"NEARESTXSTREET"}
         printed = run(stub, "NEARESTXSTREET,CITY")
         assert "CITY" in printed
         assert "could not be determined" in printed
 
     def test_a_field_the_layer_does_not_have_is_refused_before_querying(
-            self, stub, workflow):
+            self, stub, signed_in):
         """The service rejects a query naming a field the layer does not have,
         so the name is checked against the metadata first and the message says
         what the layer does have."""
@@ -253,7 +247,7 @@ class TestAgainstTheService:
         assert "no NOSUCHFIELD field" in str(raised.value)
         assert stub["asked"] == []
 
-    def test_nothing_is_downloaded(self, stub, workflow):
+    def test_nothing_is_downloaded(self, stub, signed_in):
         """A probe that pulls 98,501 features to answer a counting question is
         the slow way to be told what returnCountOnly says in one request."""
         run(stub, "ADDRESS,CITY")

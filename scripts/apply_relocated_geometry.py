@@ -28,6 +28,7 @@ import sys
 from _bootstrap import config
 
 from leakrelocation import apply_geometry as ag
+from leakrelocation import arcgis, auth
 from leakrelocation.output import fail, log, step, warn
 
 RELOCATED_LAYER = "relocated_leaks"
@@ -68,12 +69,6 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
-def load_workflow():
-    import importlib
-    workflow = importlib.import_module("leakrelocation.workflow")
-    return workflow
-
-
 def read_relocated(path):
     from pathlib import Path
 
@@ -90,7 +85,7 @@ def read_relocated(path):
     return gdf
 
 
-def do_rollback(args, workflow, session):
+def do_rollback(args, session):
     payload = ag.read_rollback(args.rollback)
     updates = payload["updates"]
     layer_url = payload.get("layer_url") or args.layer_url
@@ -109,18 +104,17 @@ def do_rollback(args, workflow, session):
     ag.check_geometry_only(
         updates, payload.get("object_id_field") or "OBJECTID")
     succeeded, failed = ag.apply_updates(
-        workflow, session, layer_url, updates, payload.get("wkid"))
+        session, layer_url, updates, payload.get("wkid"))
     ag.summarise([], [], succeeded, failed)
     return 1 if failed else 0
 
 
 def main(argv=None):
     args = parse_args(argv)
-    workflow = load_workflow()
-    session = workflow.make_session()
+    session = auth.make_session()
 
     if args.rollback:
-        return do_rollback(args, workflow, session)
+        return do_rollback(args, session)
 
     gpkg = args.gpkg or str(config.output_gpkg_for(config.DIAMETER_MATCH_MODE))
     step("Updating the leak layer's geometry from the relocation")
@@ -131,7 +125,7 @@ def main(argv=None):
     relocated = read_relocated(gpkg)
     log(f"Relocated leaks in the output: {len(relocated):,}")
 
-    meta = workflow.layer_metadata(session, args.layer_url.rstrip("/"))
+    meta = arcgis.layer_metadata(session, args.layer_url.rstrip("/"))
     wkid = meta["wkid"]
     # Read off the layer, not assumed. A layer is free to call its object id
     # something other than OBJECTID, and sending the wrong key identifies no
@@ -155,7 +149,7 @@ def main(argv=None):
 
     step("Reading the current geometry and GlobalIDs from the service")
     current = ag.current_state(
-        workflow, session, args.layer_url, [m["object_id"] for m in moves],
+        session, args.layer_url, [m["object_id"] for m in moves],
         wkid, object_id_field=object_id_field, globalid_field=globalid_field)
     log(f"Features found on the service: {len(current):,} of {len(moves):,}")
     with_ids = sum(1 for entry in current.values() if entry["globalid"])
@@ -224,13 +218,13 @@ def main(argv=None):
          for move in ready],
         object_id_field)
     succeeded, failed = ag.apply_updates(
-        workflow, session, args.layer_url, updates, wkid)
+        session, args.layer_url, updates, wkid)
     ag.summarise(ready, held, succeeded, failed)
 
     step("Checking the GlobalIDs survived")
     applied = {move["object_id"] for move in ready} & set(succeeded or [])
     changed = ag.verify_globalids(
-        workflow, session, args.layer_url,
+        session, args.layer_url,
         [move for move in ready if move["object_id"] in applied], wkid,
         object_id_field=object_id_field, globalid_field=globalid_field)
 

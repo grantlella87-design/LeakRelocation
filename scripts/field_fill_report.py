@@ -158,13 +158,12 @@ def service_counts(url, layer_label, fields, where, candidates=()):
     One count query per field. Nothing is downloaded, so this is cheap even
     against a layer of a million features.
     """
-    import importlib
-    workflow = importlib.import_module("leakrelocation.workflow")
+    from leakrelocation import arcgis, auth
 
-    session = workflow.make_session()
+    session = auth.make_session()
     log(f"\n=== {layer_label} on the service ===")
     log(f"   {url}")
-    total = workflow.query_count(session, url, where, layer_label)
+    total = arcgis.query_count(session, url, where, layer_label)
     if total is None:
         # query_count warns and returns None when the reply carries no count.
         # Everything below divides by it, so stop here rather than crash the
@@ -173,17 +172,19 @@ def service_counts(url, layer_label, fields, where, candidates=()):
              f"per-field counts cannot be put in proportion. Skipping it.")
         return
     log(f"   {'field':<24} {'with a value':>13}  of {total:,}")
-    ask(session, workflow, url, layer_label, fields, where, total)
+    ask(session, url, layer_label, fields, where, total)
     if candidates:
         log("   -- not requested by this project, for comparison --")
-        ask(session, workflow, url, layer_label, candidates, where, total)
+        ask(session, url, layer_label, candidates, where, total)
 
 
-def ask(session, workflow, url, layer_label, fields, where, total):
+def ask(session, url, layer_label, fields, where, total):
+    from leakrelocation import arcgis
+
     for field in fields:
         clause = f"{where} AND {field} IS NOT NULL"
         try:
-            count = workflow.query_count(session, url, clause, f"{layer_label}.{field}")
+            count = arcgis.query_count(session, url, clause, f"{layer_label}.{field}")
         except Exception as ex:  # noqa: BLE001 - one field must not stop the report
             log(f"   {field:<24} {'could not ask':>13}  ({ex})")
             continue
@@ -239,12 +240,10 @@ def main(argv=None):
         warn("No caches to read. Download them first: python run.py --no-view")
 
     if args.service:
-        import importlib
-        workflow = importlib.import_module("leakrelocation.workflow")
         for name, (label, url) in CACHES.items():
             fields = list(EXPECTED.get(name, ()))
             try:
-                service_counts(url, label, fields, workflow.WHERE_MA,
+                service_counts(url, label, fields, config.WHERE_MA,
                                CANDIDATES.get(name, ()))
             except Exception as ex:  # noqa: BLE001 - keep going to the next layer
                 warn(f"{label}: could not be asked ({ex})")

@@ -34,6 +34,7 @@ pytest.importorskip("keyring")
 import requests
 
 from leakrelocation import config
+from leakrelocation import arcgis
 
 
 @pytest.fixture(scope="module")
@@ -43,9 +44,13 @@ def lr():
     module = importlib.util.module_from_spec(spec)
     with redirect_stdout(io.StringIO()):
         spec.loader.exec_module(module)
-    # Keep the tests quick; the behaviour under test is the retrying, not the wait.
-    module.REQUEST_RETRY_BACKOFF_SECONDS = 0
     return module
+
+
+@pytest.fixture(autouse=True)
+def no_waiting(monkeypatch):
+    """Keep the tests quick; what is under test is the retrying, not the wait."""
+    monkeypatch.setattr(arcgis, "REQUEST_RETRY_BACKOFF_SECONDS", 0)
 
 
 class ResetHandler(BaseHTTPRequestHandler):
@@ -108,14 +113,14 @@ class TestARealResetIsRetried:
     def test_a_post_recovers(self, lr, server, session):
         ResetHandler.resets_left = 2
         with redirect_stdout(io.StringIO()):
-            data = lr.request_json_post(session, server, {"f": "json"})
+            data = arcgis.request_json_post(session, server, {"f": "json"})
         assert data["features"], "the request never produced data"
         assert ResetHandler.seen == 3, "expected two failures then a success"
 
     def test_a_get_recovers(self, lr, server, session):
         ResetHandler.resets_left = 1
         with redirect_stdout(io.StringIO()):
-            data = lr.request_json(session, server, {"f": "json"})
+            data = arcgis.request_json(session, server, {"f": "json"})
         assert data["features"]
         assert ResetHandler.seen == 2
 
@@ -125,23 +130,23 @@ class TestARealResetIsRetried:
         ResetHandler.resets_left = 99
         with pytest.raises(requests.exceptions.ConnectionError), \
                 redirect_stdout(io.StringIO()):
-            lr.request_json_post(session, server, {"f": "json"})
-        assert ResetHandler.seen == lr.REQUEST_RETRY_ATTEMPTS
+            arcgis.request_json_post(session, server, {"f": "json"})
+        assert ResetHandler.seen == arcgis.REQUEST_RETRY_ATTEMPTS
 
     def test_each_attempt_is_reported(self, lr, server, session):
         """A run that pauses for tens of seconds should say why."""
         ResetHandler.resets_left = 1
         buffer = io.StringIO()
         with redirect_stdout(buffer):
-            lr.request_json_post(session, server, {"f": "json"})
+            arcgis.request_json_post(session, server, {"f": "json"})
         printed = buffer.getvalue()
         assert "ConnectionError" in printed
         assert "retrying in" in printed
-        assert f"of {lr.REQUEST_RETRY_ATTEMPTS}" in printed
+        assert f"of {arcgis.REQUEST_RETRY_ATTEMPTS}" in printed
 
     def test_a_first_attempt_that_works_is_not_retried(self, lr, server, session):
         with redirect_stdout(io.StringIO()):
-            lr.request_json_post(session, server, {"f": "json"})
+            arcgis.request_json_post(session, server, {"f": "json"})
         assert ResetHandler.seen == 1
 
 
@@ -150,24 +155,24 @@ class TestTransientStatuses:
         ResetHandler.status_failures_left = 2
         ResetHandler.failure_status = 503
         with redirect_stdout(io.StringIO()):
-            data = lr.request_json_post(session, server, {"f": "json"})
+            data = arcgis.request_json_post(session, server, {"f": "json"})
         assert data["features"]
         assert ResetHandler.seen == 3
 
     def test_five_hundred_is_not_retried(self, lr):
         """ArcGIS returns a genuine query error as a 500, and repeating a bad
         query only makes it fail more slowly."""
-        assert 500 not in lr.TRANSIENT_STATUSES
-        assert 429 in lr.TRANSIENT_STATUSES
+        assert 500 not in arcgis.TRANSIENT_STATUSES
+        assert 429 in arcgis.TRANSIENT_STATUSES
         for status in (502, 503, 504):
-            assert status in lr.TRANSIENT_STATUSES
+            assert status in arcgis.TRANSIENT_STATUSES
 
     def test_a_four_hundred_is_passed_straight_through(self, lr, server, session):
         ResetHandler.status_failures_left = 5
         ResetHandler.failure_status = 400
         with pytest.raises(RuntimeError, match="HTTP 400"), \
                 redirect_stdout(io.StringIO()):
-            lr.request_json_post(session, server, {"f": "json"})
+            arcgis.request_json_post(session, server, {"f": "json"})
         assert ResetHandler.seen == 1, "a 400 must not be retried"
 
 
@@ -175,12 +180,12 @@ class TestWhatCountsAsTransient:
     def test_the_exceptions_cover_a_reset(self, lr):
         """requests wraps urllib3's ProtocolError and Python's
         ConnectionResetError - WinError 10054 - in ConnectionError."""
-        assert requests.exceptions.ConnectionError in lr.TRANSIENT_EXCEPTIONS
-        assert requests.exceptions.Timeout in lr.TRANSIENT_EXCEPTIONS
-        assert requests.exceptions.ChunkedEncodingError in lr.TRANSIENT_EXCEPTIONS
+        assert requests.exceptions.ConnectionError in arcgis.TRANSIENT_EXCEPTIONS
+        assert requests.exceptions.Timeout in arcgis.TRANSIENT_EXCEPTIONS
+        assert requests.exceptions.ChunkedEncodingError in arcgis.TRANSIENT_EXCEPTIONS
 
     def test_an_http_error_is_not_swallowed_as_transient(self, lr):
-        assert requests.exceptions.HTTPError not in lr.TRANSIENT_EXCEPTIONS
+        assert requests.exceptions.HTTPError not in arcgis.TRANSIENT_EXCEPTIONS
 
     def test_the_attempt_count_is_configurable(self):
         assert config.REQUEST_RETRY_ATTEMPTS >= 2
@@ -190,9 +195,9 @@ class TestWhatCountsAsTransient:
         """Eight batches run at once, so a proxy that drops several together must
         not get them all back in the same instant."""
         delays = []
-        monkeypatch.setattr(lr.time, "sleep", delays.append)
-        monkeypatch.setattr(lr, "REQUEST_RETRY_BACKOFF_SECONDS", 2)
-        monkeypatch.setattr(lr, "REQUEST_RETRY_ATTEMPTS", 4)
+        monkeypatch.setattr(arcgis.time, "sleep", delays.append)
+        monkeypatch.setattr(arcgis, "REQUEST_RETRY_BACKOFF_SECONDS", 2)
+        monkeypatch.setattr(arcgis, "REQUEST_RETRY_ATTEMPTS", 4)
         calls = {"n": 0}
 
         def always_reset():
@@ -201,7 +206,7 @@ class TestWhatCountsAsTransient:
 
         with pytest.raises(requests.exceptions.ConnectionError), \
                 redirect_stdout(io.StringIO()):
-            lr.send_with_retry(always_reset, "test")
+            arcgis.send_with_retry(always_reset, "test")
 
         assert calls["n"] == 4
         assert len(delays) == 3
@@ -224,7 +229,7 @@ class TestWorkerSessionsAreReused:
                 # dies - and CPython hands the next allocation the same
                 # address. Recording ids alone made this fail about 3% of the
                 # time on a point that has nothing to do with thread locals.
-                seen[name] = [lr.worker_session("token") for _ in range(3)]
+                seen[name] = [arcgis.worker_session("token") for _ in range(3)]
             return go
 
         threads = [threading.Thread(target=record(f"w{index}")) for index in range(3)]
@@ -240,18 +245,18 @@ class TestWorkerSessionsAreReused:
         assert len({id(one) for one in firsts}) == 3, "threads shared a session"
 
     def test_the_token_is_carried(self, lr):
-        assert lr.worker_session("abc")._arcgis_access_token == "abc"
+        assert arcgis.worker_session("abc")._arcgis_access_token == "abc"
 
     def test_a_new_token_replaces_the_old_one_on_the_same_session(self, lr):
-        first = lr.worker_session("one")
-        second = lr.worker_session("two")
+        first = arcgis.worker_session("one")
+        second = arcgis.worker_session("two")
         assert first is second
         assert second._arcgis_access_token == "two"
 
 
 class TestTheFailureMessageIsActionable:
     def test_it_names_the_knobs(self):
-        path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
+        path = os.path.join(REPO_ROOT, "src", "leakrelocation", "arcgis.py")
         with open(path, encoding="utf-8") as handle:
             source = handle.read()
         assert "LEAKRELOCATION_DOWNLOAD_WORKERS=2" in source

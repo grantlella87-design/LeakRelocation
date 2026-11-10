@@ -29,6 +29,7 @@ from leakrelocation.matching import (
     RETIRED_AFTER_LEAK,
     date_rule_result,
 )
+from leakrelocation import dates, layer_fields
 
 DAY = 86_400_000
 LEAK = 1_600_000_000_000          # 2020-09-13
@@ -117,14 +118,14 @@ class TestTheFieldsAreRequestedAndPinned:
         """One name per leak source, strict order: layer 206's first, the
         Maximo query's second. No frame carries both, so the order only decides
         which is looked for first."""
-        assert workflow.LEAK_DATE_CANDIDATES == ["REVISEDLEAKDATE", "MAXIMOLEAKDATE"]
+        assert layer_fields.LEAK_DATE_CANDIDATES == ["REVISEDLEAKDATE", "MAXIMOLEAKDATE"]
 
     def test_the_pipe_life_fields(self, workflow):
-        assert workflow.PIPE_CREATED_CANDIDATES == ["CREATIONDATE"]
-        assert workflow.PIPE_RETIRED_CANDIDATES == ["dateretired"]
+        assert layer_fields.PIPE_CREATED_CANDIDATES == ["CREATIONDATE"]
+        assert layer_fields.PIPE_RETIRED_CANDIDATES == ["dateretired"]
 
     def test_every_pipe_layer_has_a_rule(self, workflow):
-        assert workflow.LAYER_DATE_RULES == {
+        assert layer_fields.LAYER_DATE_RULES == {
             "distribution": IN_SERVICE_AT_LEAK,
             "service": IN_SERVICE_AT_LEAK,
             "retired": RETIRED_AFTER_LEAK,
@@ -135,7 +136,7 @@ class TestTheFieldsAreRequestedAndPinned:
                            ["OBJECTID", "LMSLEAKNUMBER", "REVISEDLEAKDATE"]],
                 "object_id_field": "OBJECTID"}
         with redirect_stdout(io.StringIO()):
-            out = workflow.build_out_fields(meta, "historic leaks")
+            out = layer_fields.build_out_fields(meta, "historic leaks")
         assert "REVISEDLEAKDATE" in out
 
     def test_the_pipe_download_asks_for_both_life_dates(self, workflow):
@@ -144,7 +145,7 @@ class TestTheFieldsAreRequestedAndPinned:
                             "nominaldiameter", "CREATIONDATE", "dateretired"]],
                 "object_id_field": "OBJECTID"}
         with redirect_stdout(io.StringIO()):
-            out = workflow.build_out_fields(meta, "distribution pipes")
+            out = layer_fields.build_out_fields(meta, "distribution pipes")
         assert "CREATIONDATE" in out
         assert "dateretired" in out
 
@@ -215,14 +216,14 @@ class TestPipeRecordsCarryTheDates:
 
 class TestTheAuditDateColumns:
     def test_epoch_is_rendered_as_a_date(self, workflow):
-        assert workflow.epoch_ms_to_iso(LEAK) == "2020-09-13"
+        assert dates.epoch_ms_to_iso(LEAK) == "2020-09-13"
 
     def test_a_missing_date_is_blank_not_the_epoch(self, workflow):
         """1970-01-01 in an audit column reads as a real date."""
-        assert workflow.epoch_ms_to_iso(None) == ""
+        assert dates.epoch_ms_to_iso(None) == ""
 
     def test_an_unrepresentable_value_is_blank(self, workflow):
-        assert workflow.epoch_ms_to_iso(1e30) == ""
+        assert dates.epoch_ms_to_iso(1e30) == ""
 
 
 class TestADateIsReadWhateverShapeItArrivesIn:
@@ -238,7 +239,7 @@ class TestADateIsReadWhateverShapeItArrivesIn:
 
     def test_epoch_milliseconds_still_read_as_epoch_milliseconds(self, workflow):
         for value in (1_156_392_000_000.0, 1_156_392_000_000, "1156392000000"):
-            assert workflow.date_value_to_epoch_ms(value) == 1_156_392_000_000, value
+            assert dates.date_value_to_epoch_ms(value) == 1_156_392_000_000, value
 
     @pytest.mark.parametrize("value,iso", [
         ("2019-04-02", "2019-04-02"),
@@ -246,37 +247,37 @@ class TestADateIsReadWhateverShapeItArrivesIn:
         ("2019-04-02T14:30:00Z", "2019-04-02"),
     ])
     def test_a_date_string_is_read_as_a_date(self, workflow, value, iso):
-        assert workflow.epoch_ms_to_iso(
-            workflow.date_value_to_epoch_ms(value)) == iso
+        assert dates.epoch_ms_to_iso(
+            dates.date_value_to_epoch_ms(value)) == iso
 
     def test_a_datetime_object_is_read_as_a_date(self, workflow):
         import datetime as dt
         for value in (dt.datetime(2019, 4, 2), dt.date(2019, 4, 2)):
-            assert workflow.epoch_ms_to_iso(
-                workflow.date_value_to_epoch_ms(value)) == "2019-04-02", value
+            assert dates.epoch_ms_to_iso(
+                dates.date_value_to_epoch_ms(value)) == "2019-04-02", value
 
     def test_a_date_string_is_never_read_as_its_year(self, workflow):
         """The specific failure: 2019 milliseconds is 1 January 1970."""
-        assert workflow.date_value_to_epoch_ms("2019-04-02") != 2019
-        assert workflow.epoch_ms_to_iso(2019) == "1970-01-01"
+        assert dates.date_value_to_epoch_ms("2019-04-02") != 2019
+        assert dates.epoch_ms_to_iso(2019) == "1970-01-01"
 
     @pytest.mark.parametrize("value", [None, "", "   ", "not a date", float("nan")])
     def test_a_non_date_is_no_date_rather_than_a_wrong_one(self, workflow, value):
-        assert workflow.date_value_to_epoch_ms(value) is None
+        assert dates.date_value_to_epoch_ms(value) is None
 
     def test_what_counts_as_numeric(self, workflow):
-        assert workflow.looks_numeric(5) is True
-        assert workflow.looks_numeric(5.0) is True
-        assert workflow.looks_numeric(" 1156392000000 ") is True
-        assert workflow.looks_numeric("2019-04-02") is False
-        assert workflow.looks_numeric("") is False
-        assert workflow.looks_numeric(True) is False, "a bool is not a timestamp"
+        assert dates.looks_numeric(5) is True
+        assert dates.looks_numeric(5.0) is True
+        assert dates.looks_numeric(" 1156392000000 ") is True
+        assert dates.looks_numeric("2019-04-02") is False
+        assert dates.looks_numeric("") is False
+        assert dates.looks_numeric(True) is False, "a bool is not a timestamp"
 
     def test_a_string_date_passes_the_pipe_life_check_it_should(self, workflow):
         """End to end: a 2019 leak against a pipe recorded in 2000 is in
         service. Read as the year 2019 it would have been rejected."""
-        leak_ms = workflow.date_value_to_epoch_ms("2019-04-02")
-        pipe_ms = workflow.date_value_to_epoch_ms(946_684_800_000.0)  # 2000-01-01
+        leak_ms = dates.date_value_to_epoch_ms("2019-04-02")
+        pipe_ms = dates.date_value_to_epoch_ms(946_684_800_000.0)  # 2000-01-01
         allowed, reason = date_rule_result(
             IN_SERVICE_AT_LEAK, leak_ms, pipe_ms, None)
         assert allowed is True
@@ -305,26 +306,26 @@ class TestTheDateFallbackChain:
         with open(path, encoding="utf-8") as handle:
             dates = {field["name"] for field in json.load(handle)["fields"]
                      if field["type"] == "esriFieldTypeDate"}
-        for name in workflow.LEAK_DATE_FALLBACK_CANDIDATES:
+        for name in layer_fields.LEAK_DATE_FALLBACK_CANDIDATES:
             assert name in dates, name
 
     def test_they_are_not_the_primary_field(self, workflow):
-        overlap = set(workflow.LEAK_DATE_FALLBACK_CANDIDATES) & set(
-            workflow.LEAK_DATE_CANDIDATES)
+        overlap = set(layer_fields.LEAK_DATE_FALLBACK_CANDIDATES) & set(
+            layer_fields.LEAK_DATE_CANDIDATES)
         assert overlap == set()
 
     def test_lastupdate_is_not_among_them(self, workflow):
         """LASTUPDATE is when the GIS row was touched, not when the leak
         happened, and the delta refresh already keys on it. Using it as a leak
         date would compare a pipe's life against an edit timestamp."""
-        assert "LASTUPDATE" not in workflow.LEAK_DATE_FALLBACK_CANDIDATES
-        assert "DUEDATE" not in workflow.LEAK_DATE_FALLBACK_CANDIDATES
+        assert "LASTUPDATE" not in layer_fields.LEAK_DATE_FALLBACK_CANDIDATES
+        assert "DUEDATE" not in layer_fields.LEAK_DATE_FALLBACK_CANDIDATES
 
     def test_the_primary_date_wins_when_it_is_there(self, workflow):
         row = {"REVISEDLEAKDATE": "2019-04-02", "DISCOVEREDDATE": "2015-01-01"}
         ms, source, _ = workflow.leak_date_with_source(
             row, "REVISEDLEAKDATE", ["DISCOVEREDDATE"], True)
-        assert workflow.epoch_ms_to_iso(ms) == "2019-04-02"
+        assert dates.epoch_ms_to_iso(ms) == "2019-04-02"
         assert source == "REVISEDLEAKDATE"
 
     def test_the_first_available_fallback_is_used(self, workflow):
@@ -333,7 +334,7 @@ class TestTheDateFallbackChain:
         ms, source, had = workflow.leak_date_with_source(
             row, "REVISEDLEAKDATE",
             ["DISCOVEREDDATE", "REPAIREDDATE", "COMPLETEDDATE"], True)
-        assert workflow.epoch_ms_to_iso(ms) == "2016-06-01"
+        assert dates.epoch_ms_to_iso(ms) == "2016-06-01"
         assert source == "REPAIREDDATE"
         assert had is True
 
@@ -356,14 +357,14 @@ class TestTheDateFallbackChain:
         """A cache downloaded before these were requested has none of them."""
         ms, source, had = workflow.leak_date_with_source(
             {"REVISEDLEAKDATE": "2019-04-02"}, "REVISEDLEAKDATE", [], True)
-        assert workflow.epoch_ms_to_iso(ms) == "2019-04-02"
+        assert dates.epoch_ms_to_iso(ms) == "2019-04-02"
         assert had is False
 
     def test_no_primary_column_at_all_still_uses_a_fallback(self, workflow):
         ms, source, _ = workflow.leak_date_with_source(
             {"DISCOVEREDDATE": "2015-01-01"}, None, ["DISCOVEREDDATE"], True)
         assert source == "DISCOVEREDDATE"
-        assert workflow.epoch_ms_to_iso(ms) == "2015-01-01"
+        assert dates.epoch_ms_to_iso(ms) == "2015-01-01"
 
     def test_a_fallback_date_is_checked_against_the_pipe_the_same_way(
             self, workflow):
@@ -372,7 +373,7 @@ class TestTheDateFallbackChain:
         row = {"REVISEDLEAKDATE": None, "DISCOVEREDDATE": "1995-01-01"}
         ms, _, _ = workflow.leak_date_with_source(
             row, "REVISEDLEAKDATE", ["DISCOVEREDDATE"], True)
-        pipe_created = workflow.date_value_to_epoch_ms(946_684_800_000.0)
+        pipe_created = dates.date_value_to_epoch_ms(946_684_800_000.0)
         allowed, reason = date_rule_result(
             IN_SERVICE_AT_LEAK, ms, pipe_created, None)
         assert allowed is False
@@ -386,7 +387,7 @@ class TestTheDateFallbackChain:
         ms, _, _ = workflow.leak_date_with_source(
             row, "REVISEDLEAKDATE", ["DISCOVEREDDATE"], False)
         allowed, reason = date_rule_result(
-            IN_SERVICE_AT_LEAK, ms, workflow.date_value_to_epoch_ms(946_684_800_000.0),
+            IN_SERVICE_AT_LEAK, ms, dates.date_value_to_epoch_ms(946_684_800_000.0),
             None)
         assert allowed is True
         assert reason == "no_leak_date"
@@ -401,8 +402,8 @@ class TestTheDateFallbackChain:
             "jurisdiction", "ADDRESS", "REVISEDLEAKDATE", "DISCOVEREDDATE",
             "REPAIREDDATE", "COMPLETEDDATE"]]}
         with redirect_stdout(io.StringIO()):
-            out_fields = workflow.build_out_fields(meta, "historic leaks")
-        for name in workflow.LEAK_DATE_FALLBACK_CANDIDATES:
+            out_fields = layer_fields.build_out_fields(meta, "historic leaks")
+        for name in layer_fields.LEAK_DATE_FALLBACK_CANDIDATES:
             assert name in out_fields, name
 
     def test_they_are_not_asked_of_a_pipe_layer(self, workflow):
@@ -412,20 +413,20 @@ class TestTheDateFallbackChain:
             "OBJECTID", "GlobalID", "LASTUPDATE", "nominaldiameter",
             "ASSETGROUP", "ASSETTYPE", "operatingpressure", "jurisdiction"]]}
         with redirect_stdout(io.StringIO()):
-            out_fields = workflow.build_out_fields(meta, "distribution pipes")
-        for name in workflow.LEAK_DATE_FALLBACK_CANDIDATES:
+            out_fields = layer_fields.build_out_fields(meta, "distribution pipes")
+        for name in layer_fields.LEAK_DATE_FALLBACK_CANDIDATES:
             assert name not in out_fields, name
 
     def test_adding_them_moves_the_leak_cache_signature_only(self, workflow,
                                                              monkeypatch):
         """A newly requested column has to force one full refresh of the leak
         layer, and must not invalidate the 1.27 million row pipe cache."""
-        before_leak = workflow.out_field_request_signature("historic leaks")
-        before_pipe = workflow.out_field_request_signature("service pipes")
-        monkeypatch.setattr(workflow, "LEAK_DATE_FALLBACK_CANDIDATES",
-                            [*workflow.LEAK_DATE_FALLBACK_CANDIDATES, "NEWDATE"])
-        assert workflow.out_field_request_signature("historic leaks") != before_leak
-        assert workflow.out_field_request_signature("service pipes") == before_pipe
+        before_leak = layer_fields.out_field_request_signature("historic leaks")
+        before_pipe = layer_fields.out_field_request_signature("service pipes")
+        monkeypatch.setattr(layer_fields, "LEAK_DATE_FALLBACK_CANDIDATES",
+                            [*layer_fields.LEAK_DATE_FALLBACK_CANDIDATES, "NEWDATE"])
+        assert layer_fields.out_field_request_signature("historic leaks") != before_leak
+        assert layer_fields.out_field_request_signature("service pipes") == before_pipe
 
     def test_it_is_off_by_default(self, workflow):
         """Turning it on changes which leaks relocate, so it is asked for."""

@@ -21,6 +21,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
 
 from leakrelocation import config, matching
+from leakrelocation import layer_fields
 
 pytestmark = pytest.mark.skipif(
     not config.SUPPLEMENTAL_CSV.is_file(),
@@ -61,17 +62,17 @@ class TestEveryCandidateResolves:
         return matching.resolve_field_name(headers, candidates)
 
     def test_the_leak_key(self, workflow, headers):
-        assert self.resolved(headers, workflow.SUPP_KEY_CANDIDATES) == "LeakNumber"
+        assert self.resolved(headers, layer_fields.SUPP_KEY_CANDIDATES) == "LeakNumber"
 
     def test_the_diameter(self, workflow, headers):
-        assert self.resolved(headers, workflow.SUPP_DIAMETER_CANDIDATES) == "Diameter"
+        assert self.resolved(headers, layer_fields.SUPP_DIAMETER_CANDIDATES) == "Diameter"
 
     def test_the_material(self, workflow, headers):
-        assert self.resolved(headers, workflow.SUPP_MATERIAL_CANDIDATES) == \
+        assert self.resolved(headers, layer_fields.SUPP_MATERIAL_CANDIDATES) == \
             "LeakMaterialType"
 
     def test_the_facility_type(self, workflow, headers):
-        assert self.resolved(headers, workflow.SUPP_FACILITY_CANDIDATES) == \
+        assert self.resolved(headers, layer_fields.SUPP_FACILITY_CANDIDATES) == \
             "FacilityType"
 
     @pytest.mark.parametrize("attribute", [
@@ -83,7 +84,7 @@ class TestEveryCandidateResolves:
     def test_no_dead_spellings(self, workflow, headers, attribute):
         """The old lists carried LMSLEAKNUMBER, LEAKNUMBER, MAOP and four other
         names this file does not have."""
-        dead = [name for name in getattr(workflow, attribute) if name not in headers]
+        dead = [name for name in getattr(layer_fields, attribute) if name not in headers]
         assert dead == [], f"{attribute} names columns the CSV has not got: {dead}"
 
     @pytest.mark.parametrize("attribute", [
@@ -95,7 +96,7 @@ class TestEveryCandidateResolves:
     def test_no_unreachable_duplicates(self, workflow, attribute):
         """resolve_field_name strips case and punctuation, so "LEAKNUMBER" beside
         "LeakNumber" is one candidate written twice."""
-        candidates = getattr(workflow, attribute)
+        candidates = getattr(layer_fields, attribute)
         simplified = [matching.simplify_field_name(name) for name in candidates]
         assert len(set(simplified)) == len(simplified), candidates
 
@@ -109,7 +110,7 @@ class TestThereIsNoPressureColumn:
                     if "press" in name.lower() or "maop" in name.lower()]
 
     def test_the_candidate_list_is_empty(self, workflow):
-        assert workflow.SUPP_PRESSURE_CANDIDATES == []
+        assert layer_fields.SUPP_PRESSURE_CANDIDATES == []
 
     def test_pressure_matching_is_off(self):
         """Which is what makes the empty list harmless."""
@@ -203,7 +204,7 @@ class TestTheJoinKeyIsTheGlobalId:
 
     def test_it_resolves(self, workflow, headers):
         assert matching.resolve_field_name(
-            headers, workflow.SUPP_GLOBALID_CANDIDATES) == "HistoricalLeaksID"
+            headers, layer_fields.SUPP_GLOBALID_CANDIDATES) == "HistoricalLeaksID"
 
     def test_the_globalid_is_unique_and_the_number_is_not(self):
         """Read from the file rather than asserted from a comment. This is the

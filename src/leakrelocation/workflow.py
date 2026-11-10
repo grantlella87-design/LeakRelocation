@@ -1,31 +1,26 @@
-"""
-Fast non-ArcPy historic leak relocation workflow.
-Uses ArcGIS REST + GeoPandas/Shapely instead of ArcPy geoprocessing.
-Reads MA historic leaks, MA distribution pipes, MA service pipes, supplements leak attributes from the shared CSV,
-matches each leak to the nearest pipe with exact diameter and material/family match, snaps the leak to the matched pipe,
-and writes a GeoPackage with relocated points, offset guide lines, and an audit table.
-"""
+"""The relocation itself: leaks and pipes in, a GeoPackage out.
 
+Reads the MA leaks and the MA distribution and service pipes, takes each
+leak's diameter and material from the supplemental CSV, matches each leak to
+the nearest pipe that agrees on both, snaps the leak onto that pipe, and writes
+relocated points, offset guide lines and an audit table.
+
+The pieces it is built from live beside it: arcgis (requests), layer_cache
+(downloads), layer_fields (which fields), native_crs (projections), dates, and
+matching (the rules). `relocate` is the entry point a different leak source
+calls - scripts/maximo_leaks.py hands it leaks read from SQL.
+"""
 import datetime as dt
-import hashlib
-import json
-import math
 import numbers
 import os
-import random
-import re
 import sys
-import threading
-import time
 import traceback
 from collections import defaultdict
 from concurrent import futures
 
 import geopandas as gpd
 import pandas as pd
-import requests
-from shapely.errors import ShapelyError
-from shapely.geometry import LineString, MultiLineString, Point, shape
+from shapely.geometry import LineString
 from shapely.ops import nearest_points
 from shapely.strtree import STRtree
 
@@ -36,12 +31,18 @@ _PACKAGE_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PACKAGE_PARENT not in sys.path:
     sys.path.insert(0, _PACKAGE_PARENT)
 
-# === Native CRS patch: per-layer MapServer spatial reference ===
-# Each source layer must get its own native CRS from the actual MapServer layer being queried.
-# Do not force all layers to EPSG:2249 before matching.
-from pyproj import CRS
-
-from leakrelocation import config, leak_location as location, schema
+from leakrelocation import (
+    arcgis,
+    auth,
+    config,
+    dates,
+    layer_cache,
+    layer_fields,
+    leak_location as location,
+    native_crs,
+    output,
+    schema,
+)
 from leakrelocation.assettype import build_assettype_decoder, norm_code
 from leakrelocation.matching import (
     DIAMETER_EXACT,
@@ -58,124 +59,11 @@ from leakrelocation.matching import (
     normalize_key,
     parse_number,
     pressure_matches,
-    resolve_field_name,
     route_layers,
 )
 from leakrelocation.output import detail, fail, log, step, warn
 
-LAYER_NATIVE_CRS_CONFIG = {
-    "historic_leaks": {"url_global": "HIST_LEAK_URL"},
-    "distribution_pipes": {"url_global": "DISTRIBUTION_PIPE_URL"},
-    "service_pipes": {"url_global": "SERVICE_PIPE_URL"},
-    # On the MA service, so its native spatial reference is read from its own
-    # metadata like every other layer rather than assumed to match the DNV ones.
-    "retired_pipes": {"url_global": "RETIRED_PIPE_URL"},
-}
-
-ANALYSIS_CRS_LAYER_KEY = "distribution_pipes"
-_NATIVE_CRS_CACHE = {}
-
-
-def _spatial_reference_from_layer_json(layer_json):
-    sr = (
-        layer_json.get("extent", {}).get("spatialReference")
-        or layer_json.get("spatialReference")
-        or {}
-    )
-    if sr.get("wkt"):
-        return CRS.from_wkt(sr["wkt"]), sr
-    wkid = sr.get("latestWkid") or sr.get("wkid")
-    if wkid:
-        return CRS.from_epsg(int(wkid)), sr
-    raise RuntimeError(
-        f"Layer metadata did not include a usable spatialReference: {sr}"
-    )
-
-
-def get_layer_native_crs(session, layer_key):
-    if layer_key in _NATIVE_CRS_CACHE:
-        return _NATIVE_CRS_CACHE[layer_key]
-    if layer_key not in LAYER_NATIVE_CRS_CONFIG:
-        raise KeyError(f"Unknown layer_key for native CRS lookup: {layer_key}")
-    cfg = LAYER_NATIVE_CRS_CONFIG[layer_key]
-    url_global = cfg["url_global"]
-    layer_url = globals().get(url_global)
-    if not layer_url:
-        raise RuntimeError(f"Missing layer URL global {url_global} for {layer_key}")
-    layer_json = request_json(session, layer_url, {"f": "json"})
-    crs, _sr = _spatial_reference_from_layer_json(layer_json)
-    _NATIVE_CRS_CACHE[layer_key] = crs
-    print(
-        f"{layer_key}: native CRS assigned from MapServer [{layer_url}]: {crs.name}",
-        flush=True,
-    )
-    return crs
-
-
-def assign_native_crs(session, layer_key, gdf):
-    crs = get_layer_native_crs(session, layer_key)
-    if gdf is None or len(gdf) == 0:
-        return gdf
-    existing = getattr(gdf, "crs", None)
-    if existing is None:
-        print(
-            f"{layer_key}: dataframe CRS was empty; assigning native CRS {crs.name}",
-            flush=True,
-        )
-    else:
-        print(
-            f"{layer_key}: overriding dataframe CRS [{existing}] with native CRS [{crs.name}]",
-            flush=True,
-        )
-    return gdf.set_crs(crs, allow_override=True)
-
-
-def get_analysis_crs(session):
-    return get_layer_native_crs(session, ANALYSIS_CRS_LAYER_KEY)
-
-
-def to_analysis_crs(session, layer_key, gdf):
-    if gdf is None or len(gdf) == 0:
-        return gdf
-    native = get_layer_native_crs(session, layer_key)
-    analysis = get_analysis_crs(session)
-    if gdf.crs is None:
-        gdf = gdf.set_crs(native, allow_override=True)
-    if gdf.crs != analysis:
-        print(
-            f"{layer_key}: projecting from [{gdf.crs}] to analysis CRS [{analysis.name}]",
-            flush=True,
-        )
-        return gdf.to_crs(analysis)
-    print(f"{layer_key}: already in analysis CRS [{analysis.name}]", flush=True)
-    return gdf
-
-
-def normalize_loaded_layers_to_analysis_crs(
-    session, historic_leaks, distribution_pipes, service_pipes
-):
-    historic_leaks = assign_native_crs(session, "historic_leaks", historic_leaks)
-    distribution_pipes = assign_native_crs(
-        session, "distribution_pipes", distribution_pipes
-    )
-    service_pipes = assign_native_crs(session, "service_pipes", service_pipes)
-    historic_leaks = to_analysis_crs(session, "historic_leaks", historic_leaks)
-    distribution_pipes = to_analysis_crs(
-        session, "distribution_pipes", distribution_pipes
-    )
-    service_pipes = to_analysis_crs(session, "service_pipes", service_pipes)
-    analysis_crs = get_analysis_crs(session)
-    print(f"Analysis CRS for all spatial matching: {analysis_crs.name}", flush=True)
-    return historic_leaks, distribution_pipes, service_pipes, analysis_crs
-    # === End native CRS patch ===
-
-
 SUPPLEMENTAL_CSV = str(config.SUPPLEMENTAL_CSV)
-# The folder the GeoPackage is written into, derived from the file itself so that
-# overriding LEAKRELOCATION_OUTPUT_GPKG moves both. This used to be the network
-# share, which ensure_output_folder then tried to *create*: a run on a machine
-# that could not reach it failed there, before any work was done, even though
-# nothing was ever written to it.
 # Which diameter rule this run uses, and so which GeoPackage it writes. The
 # strict run keeps the original filename; the widened one is suffixed, so the
 # two outputs sit beside each other and can be compared instead of one
@@ -186,6 +74,11 @@ DIAMETER_MATCH_MODE = config.DIAMETER_MATCH_MODE
 # output row, so a GeoPackage says where its leaks came from rather than the
 # reader having to remember which file is which.
 LEAK_SOURCE = "historic"
+# The folder the GeoPackage is written into, derived from the file itself so that
+# overriding LEAKRELOCATION_OUTPUT_GPKG moves both. This used to be the network
+# share, which ensure_output_folder then tried to *create*: a run on a machine
+# that could not reach it failed there, before any work was done, even though
+# nothing was ever written to it.
 OUTPUT_FOLDER = str(config.OUTPUT_GPKG.parent)
 OUTPUT_GPKG = str(config.output_gpkg_for(DIAMETER_MATCH_MODE))
 HIST_LEAK_URL = config.HIST_LEAK_URL
@@ -195,7 +88,9 @@ RETIRED_PIPE_URL = config.RETIRED_PIPE_URL
 USE_RETIRED_PIPE_LAYER = config.USE_RETIRED_PIPE_LAYER
 
 WHERE_MA = config.WHERE_MA
-TARGET_CRS = None  # Native CRS patch: do not force EPSG:2249 before matching
+# The CRS every layer is projected into for matching. Set by relocate() from
+# the distribution pipes' own metadata; nothing is forced to a state plane.
+TARGET_CRS = None
 INITIAL_RADIUS_FT = config.INITIAL_RADIUS_FT
 RADIUS_INCREMENT_FT = config.RADIUS_INCREMENT_FT
 MAX_RADIUS_FT = config.MAX_RADIUS_FT
@@ -203,220 +98,9 @@ REQUIRE_PRESSURE_MATCH = config.REQUIRE_PRESSURE_MATCH
 ALLOW_MATERIAL_FAMILY_FALLBACK = config.ALLOW_MATERIAL_FAMILY_FALLBACK
 USE_MULTIPROCESSING = True
 WORKERS = max(1, min(8, (os.cpu_count() or 4) - 1))
-REQUEST_PAGE_SIZE = config.REQUEST_PAGE_SIZE
-
-USE_OBJECTID_BATCH_DOWNLOAD = True
-OBJECTID_BATCH_SIZE = config.OBJECTID_BATCH_SIZE
-OBJECTID_DOWNLOAD_WORKERS = config.OBJECTID_DOWNLOAD_WORKERS
-REQUEST_TIMEOUT_SECONDS = config.REQUEST_TIMEOUT_SECONDS
-REQUEST_RETRY_ATTEMPTS = config.REQUEST_RETRY_ATTEMPTS
-REQUEST_RETRY_BACKOFF_SECONDS = config.REQUEST_RETRY_BACKOFF_SECONDS
-VERIFY_SSL = config.VERIFY_SSL
-
-PORTAL_ROOT = config.PORTAL_ROOT
-PORTAL_AUTHORIZE_URL = config.PORTAL_AUTHORIZE_URL
-PORTAL_TOKEN_URL = config.PORTAL_TOKEN_URL
-ARCGIS_CLIENT_ID = config.ARCGIS_CLIENT_ID
-ARCGIS_REDIRECT_URI = config.ARCGIS_REDIRECT_URI
-KEYRING_SERVICE = config.KEYRING_SERVICE
-KEYRING_ACCESS_TOKEN_USER = config.KEYRING_ACCESS_TOKEN_USER
-KEYRING_ACCESS_TOKEN_EXPIRES_USER = config.KEYRING_ACCESS_TOKEN_EXPIRES_USER
-TOKEN_EXPIRY_SAFETY_SECONDS = config.TOKEN_EXPIRY_SAFETY_SECONDS
 MESSAGE_EVERY_N_LEAKS = 1000
 VERBOSE_PER_LEAK = False
-
-USE_LAYER_CACHE = config.USE_LAYER_CACHE
-LAYER_CACHE_FOLDER = str(config.LAYER_CACHE_DIR)
-FORCE_LAYER_REFRESH = config.FORCE_LAYER_REFRESH
-DELTA_REFRESH_SAFETY_SECONDS = config.DELTA_REFRESH_SAFETY_SECONDS
-# --- DNV service field names -------------------------------------------------
-#
-# These are no longer guesses. Every name below was read out of the service's
-# own metadata, a copy of which is committed under
-# reference/mapserver_json/NY_DNV_Synergi_RiskResults_Assets_NY/ - layer 6
-# (Distribution Pipe), layer 7 (Service Pipe) and layer 206 (Hist_GasLeak).
-# tests/test_dnv_service_metadata.py checks these lists against that copy, so a
-# name that stops existing fails a test instead of silently resolving to
-# nothing at runtime.
-#
-# The lists that used to be here carried 34 spellings that exist on no layer -
-# NOMINALDIAMETER, OP_PRESSURE, MODIFIEDDATE, a misspelled LMSLEAKSUMBER and so
-# on. Most were case variants, and resolve_field_name compares names with case
-# and punctuation stripped, so they could never have resolved differently from
-# the entry beside them: one spelling covers every casing of the same name, and
-# the resolver returns the layer's own spelling. Where more than one name
-# survives below, they are genuinely different fields.
-MODIFIED_FIELD_CANDIDATES = ["LASTUPDATE"]
-
-# LMSLEAKNUMBER is the leak key; LEAKNUMBER also exists on layer 206 and is
-# kept as the fallback.
-# The leak number a person uses. LMSLEAKNUMBER is layer 206's; the Maximo
-# query aliases its own to LEAKNUMBER, so one list serves both leak sources.
-LEAK_KEY_CANDIDATES = ["LMSLEAKNUMBER", "LEAKNUMBER"]
-
-# The street address of the leak, read out of layer 206's metadata: ADDRESS,
-# esriFieldTypeString, alias "Address", 100 characters, no domain. It is not used
-# by the matching - it is carried through so a leak can be identified on the map
-# and in the audit by where it is rather than only by its number.
-LEAK_ADDRESS_CANDIDATES = ["ADDRESS"]
-
-# The rest of what layer 206 knows about where a leak is. ADDRESS is requested
-# and is present in the cache as a column, but every one of the 98,501 MA rows
-# came back empty; scripts/probe_leak_fields.py asks the service which of the
-# three possible reasons that is. Meanwhile these are the only other location
-# fields the layer has - both read out of the committed metadata, both
-# esriFieldTypeString.
-#
-# Every one of them is requested rather than the first that resolves: which of
-# them this service populates is exactly what is unknown, so one refresh has to
-# collect them all. leakrelocation.leak_location decides what to do with them.
-LEAK_LOCATION_CANDIDATES = [name for name in location.SERVICE_FIELDS
-                            if name not in LEAK_ADDRESS_CANDIDATES]
-
-
-def is_leak_layer_name(layer_name):
-    """Whether a layer name is the historic leak layer.
-
-    One definition, used by build_out_fields and by the cache signature, so the
-    two cannot disagree about which fields a layer is expected to carry.
-    """
-    lowered = str(layer_name).lower()
-    return "historic" in lowered or "leak" in lowered
-
-PIPE_DIAMETER_CANDIDATES = ["nominaldiameter", "outsidediameter"]
-
-# ASSETTYPE *is* the pipe material. Its subtype domain value is the material
-# name - "Copper", "Cast Iron", "Plastic PE" - and decoding needs ASSETGROUP
-# too, because the domain is defined per subtype: code 999 is "UNK" for a pipe
-# and "Unknown Type" for the unknown subtype, and codes 281 and 321 exist only
-# outside the pipe subtypes.
-#
-# Both are requested outright. They were previously bolted on by
-# apply_pipe_domain_out_fields after the fact, and only when the outFields it
-# was handed happened to mention nominaldiameter or operatingpressure - so the
-# material type reached the download by way of a heuristic. It is now asked for
-# directly, and a pipe layer without it fails immediately rather than
-# downloading pipes that have no material.
-#
-# The DNV `material` field is not requested at all. It holds a spec, grade or
-# descriptor - not the material type - and requesting it alongside ASSETTYPE
-# only invited the two to be confused for each other.
-PIPE_MATERIAL_FIELDS = [schema.ASSETGROUP, schema.ASSETTYPE]
-
-PIPE_PRESSURE_CANDIDATES = ["operatingpressure", "maopdesign"]
-
-# --- Temporal validity -------------------------------------------------------
-#
-# A leak is only relocated onto a pipe that existed when the leak was recorded.
-# REVISEDLEAKDATE is on layer 206; CREATIONDATE and dateretired are on layers 6
-# and 7. All three were read out of the committed service metadata.
-#
-# The retired layer lives on a different service, so its own field names are
-# resolved from its metadata at run time and the run stops if they are not there
-# - see resolve_pipe_date_fields.
-# The date the relocation window is measured from. REVISEDLEAKDATE on layer
-# 206, MAXIMOLEAKDATE from the SQL query.
-LEAK_DATE_CANDIDATES = ["REVISEDLEAKDATE", "MAXIMOLEAKDATE"]
-
-# The other dates layer 206 carries, in the order they stand in for a missing
-# REVISEDLEAKDATE.
-#
-# This matters more than it looks. REVISEDLEAKDATE came back empty on all
-# 98,501 MA rows, so DateCheck reads "no_leak_date" for 98.1% of the audit and
-# the pipe-life rule decides nothing at all - a leak is matched to a pipe that
-# may have been laid years after it was reported, and the only sign is a column
-# nobody reads. Discovered, repaired and completed are all real dates on the
-# same row, and any of them places the leak in time far better than nothing.
-#
-# They are always collected and always reported, so the size of the gap is
-# visible. They are only *used* when config.USE_LEAK_DATE_FALLBACK says so,
-# because using them changes which leaks relocate: a leak that matched
-# unchecked may be refused once it has a date to check against. Every row
-# records which field supplied its date, in LeakDateSource.
-LEAK_DATE_FALLBACK_CANDIDATES = ["DISCOVEREDDATE", "REPAIREDDATE",
-                                 "COMPLETEDDATE"]
-PIPE_CREATED_CANDIDATES = ["CREATIONDATE"]
-PIPE_RETIRED_CANDIDATES = ["dateretired"]
-
-# Which end of a pipe's life each layer is checked against.
-LAYER_DATE_RULES = {
-    "distribution": IN_SERVICE_AT_LEAK,
-    "service": IN_SERVICE_AT_LEAK,
-    "retired": RETIRED_AFTER_LEAK,
-}
-
-# The pipe layers spell it GLOBALID and layer 206 spells it GlobalID. One entry
-# covers both: the resolver ignores case and returns the layer's own spelling.
-# The leak's own unique id, and the key its attributes are looked up by. On
-# layer 206 that is the GlobalID; the Maximo query aliases its leak id to
-# MAXIMOLEAKID. Order matters only in that the first present wins, and no frame
-# carries both.
-GLOBALID_CANDIDATES = ["GLOBALID", "MAXIMOLEAKID"]
-OBJECTID_CANDIDATES = ["OBJECTID"]
-
-# Lower case on all three layers.
-JURISDICTION_CANDIDATES = ["jurisdiction"]
-# --- Supplemental CSV headers ------------------------------------------------
-#
-# These were the last unverified names in this file. HL_SupplementalData.csv is
-# now committed under input/, so they are facts as well: every name below was read
-# off its 33 headers, and tests/test_supplemental_csv.py checks these lists
-# against the committed file, offline.
-#
-# The counts in the comments are from that file: 98,464 MA rows.
-#
-# The join key is the leak's GlobalID, not its leak number.
-#
-# HistoricalLeaksID holds layer 206's GlobalID - a braced 36-character GUID on
-# every one of the 98,464 rows, and unique on every one of them. LeakNumber is
-# not: 25,733 rows (26.1%) share a number with another row, across 10,990
-# numbers, and 5,364 of those numbers have rows that disagree about the material
-# or the diameter. Keying on the number therefore imported an arbitrary row's
-# attributes for those leaks - one real example being leak 1000001, which has a
-# Cast Iron 8" main row and a Bare Steel 1.25" service row - and dropped 14,743
-# rows outright.
-#
-# Both sides are normalised with normalize_key, which strips the braces and
-# upper-cases, so {abc...} and ABC... join.
-SUPP_GLOBALID_CANDIDATES = ["HistoricalLeaksID"]
-
-# Kept for labelling and the audit table, not for joining. LeakNumber and Name
-# hold the same value on all 98,464 rows, so Name is a duplicate column rather
-# than a fallback. The old list also carried LMSLEAKNUMBER and LEAKNUMBER, which
-# the CSV does not have - and LEAKNUMBER could never have been reached anyway,
-# because resolve_field_name strips case and it is "LeakNumber" in different
-# clothes.
-SUPP_KEY_CANDIDATES = ["LeakNumber", "Name"]
-
-# Diameter is filled on 94.7%. Abdn_Diameter_Main and Abdn_Diameter_Service are
-# filled on 100% but are different measurements - the main's diameter and the
-# service's - so falling back to either would answer a question about one pipe
-# with a number from another. Diameter is the leak's own, so it is the only entry.
-SUPP_DIAMETER_CANDIDATES = ["Diameter"]
-
-# LeakMaterialType is filled on 95.8%; Abdn_Material on 24.8%, Adbn_Material_Main
-# (spelled that way in the file) on 23.1% and Abdn_Material_Service on 3.0%. All
-# four exist, so the three sparse ones sat behind a name that always resolves and
-# could never be reached.
-#
-# The eight values in the file are Cast Iron, Bare Steel, Plastic - MD, Coated
-# Steel, Copper, Plastic - HD, Wrought Iron and blank. Note that "Plastic - MD"
-# and "Plastic - HD" are not DNV ASSETTYPE domain labels: they match a pipe
-# through the material family, so those 15,313 leaks depend on
-# ALLOW_MATERIAL_FAMILY_FALLBACK being on.
-SUPP_MATERIAL_CANDIDATES = ["LeakMaterialType"]
-
-# The CSV has no pressure column at all - not Pressure, MAOP, MAOPDesign or
-# anything else. The five names that used to be here were guesses for a file
-# nothing in this repository could read. The list is deliberately empty: pressure
-# matching is off by default, load_supplemental says so, and it fails loudly if
-# REQUIRE_PRESSURE_MATCH is ever turned on.
-SUPP_PRESSURE_CANDIDATES = []
-
-# FacilityType is filled on 97.7% with "Distribution Main" or "Service", which is
-# what route_layers reads. PipeType says "Distribution Pipe" or "Service Pipe" on
-# 95.1% and is a different field, kept as the fallback.
-SUPP_FACILITY_CANDIDATES = ["FacilityType", "PipeType"]
+# Per-process spatial indexes, built by init_worker in each matching worker.
 WORKER_TREES = None
 
 
@@ -425,1115 +109,12 @@ def verbose(text):
         log(text)
 
 
-
-
-_TIMINGS = []
-
-
-def timed(label):
-    """Context manager recording elapsed time for a stage."""
-    from contextlib import contextmanager
-
-    @contextmanager
-    def _timer():
-        started = time.time()
-        try:
-            yield
-        finally:
-            _TIMINGS.append((label, time.time() - started))
-
-    return _timer()
-
-
-def report_timings():
-    if not config.TIMINGS or not _TIMINGS:
-        return
-    step("Stage timings")
-    width = max(len(label) for label, _ in _TIMINGS)
-    for label, seconds in _TIMINGS:
-        log(f"  {label:<{width}}  {seconds:8.1f}s")
-    log(f"  {'total':<{width}}  {sum(s for _, s in _TIMINGS):8.1f}s")
-
-
-def resolved_field(columns, candidates, required=False, label="field"):
-    available = list(columns)
-    resolved = resolve_field_name(available, candidates)
-    if resolved is not None:
-        detail(f"Resolved {label}: {resolved}")
-        return resolved
-    if required:
-        fail(
-            f"Could not resolve required {label}. Candidates={candidates}. Available={available}"
-        )
-    # The caller reports what the missing field means for the run; listing every
-    # candidate here only repeats it.
-    detail(f"Could not resolve optional {label}. Candidates={candidates}")
-    return None
-
-
 def ensure_output_folder():
     if not os.path.isdir(OUTPUT_FOLDER):
         os.makedirs(OUTPUT_FOLDER)
         log(f"Created output folder: {OUTPUT_FOLDER}")
     else:
         detail(f"Output folder exists: {OUTPUT_FOLDER}")
-
-
-from leakrelocation.auth import (
-    clear_cached_access_token,
-    get_arcgis_token,
-    make_session,
-)
-
-
-def is_pipe_layer_url(url):
-    """True when this URL addresses one of the DNV pipe layers.
-
-    The layer id is the path segment straight after MapServer, so it is read
-    from there rather than searched for. Testing for "/mapserver/6" as a
-    substring also matched layers 600, 601, 602 and 603, which exist on this
-    service (SOP_polygon, LeakRateArea and SOP_Polygon_Reference) - a query
-    against one of those would have had ASSETGROUP and ASSETTYPE appended to its
-    outFields, and the service rejects a query naming fields the layer does not
-    have. The URL may address the layer itself or an operation on it
-    (".../MapServer/6" or ".../MapServer/6/query"), so the tail varies.
-    """
-    segments = [segment for segment in str(url).split("?")[0].split("/") if segment]
-    lowered = [segment.lower() for segment in segments]
-    if "mapserver" not in lowered:
-        return False
-    index = lowered.index("mapserver") + 1
-    if index >= len(segments) or not segments[index].isdigit():
-        return False
-    return int(segments[index]) in config.PIPE_LAYER_IDS
-
-
-def apply_pipe_domain_out_fields(url, params):
-    """Ensure DNV pipe-layer queries also return ASSETGROUP and ASSETTYPE.
-
-    ASSETTYPE is the pipe material and ASSETGROUP selects the subtype domain
-    that names it, so no pipe query that asks for attributes is of any use
-    without them. build_out_fields now requests both outright; this stays as the
-    backstop for any other code path that builds an outFields list.
-
-    Returns `params` unchanged unless this is a pipe-layer query whose
-    outFields requests attributes but omits ASSETTYPE.
-    """
-    if not isinstance(params, dict):
-        return params
-
-    if not is_pipe_layer_url(url):
-        return params
-
-    out_field_key = None
-    for key in params:
-        if str(key).lower() == "outfields":
-            out_field_key = key
-            break
-    if out_field_key is None:
-        return params
-
-    out_fields = params.get(out_field_key)
-    if not isinstance(out_fields, str):
-        return params
-
-    lowered = out_fields.lower()
-    # Deliberately does not look for "material": that field is not requested
-    # any more, and a request built without it still needs the domain fields.
-    wants_attributes = (
-        "nominaldiameter" in lowered
-        or "operatingpressure" in lowered
-    )
-    if not wants_attributes or "assettype" in lowered:
-        return params
-
-    updated = dict(params)
-    updated[out_field_key] = out_fields + ",ASSETGROUP,ASSETTYPE"
-    log("Appended DNV pipe domain fields to outFields: ASSETGROUP,ASSETTYPE")
-    return updated
-
-
-# One requests.Session per worker thread, reused across batches.
-#
-# A fresh Session per batch meant a fresh TLS handshake per batch: 588 of them for
-# one layer, eight at a time, through a proxy that re-signs every one. Reusing the
-# connection is faster and far gentler on whatever was resetting them.
-_WORKER_STATE = threading.local()
-
-
-def worker_session(token):
-    """The calling thread's session, created on first use."""
-    session = getattr(_WORKER_STATE, "session", None)
-    if session is None:
-        session = requests.Session()
-        _WORKER_STATE.session = session
-    session._arcgis_access_token = token
-    return session
-
-
-# --- Transient network failures ----------------------------------------------
-#
-# A download of the pipe layers is hundreds of requests over many minutes, through
-# a corporate proxy. One of them being dropped is normal; it used to be fatal. A
-# run died on "objectId POST batch 20/322 failed: ConnectionResetError(10054, 'An
-# existing connection was forcibly closed by the remote host')" with another layer
-# 584 batches of 588 through, and every one of those batches was thrown away.
-#
-# These are the failures worth trying again. requests wraps the socket-level ones
-# - urllib3's ProtocolError, Python's ConnectionResetError, WinError 10054 - in
-# ConnectionError, so catching that covers a reset, a dropped connection and a
-# refused one.
-TRANSIENT_EXCEPTIONS = (
-    requests.exceptions.ConnectionError,
-    requests.exceptions.Timeout,
-    requests.exceptions.ChunkedEncodingError,
-)
-
-# Statuses that mean "not now" rather than "not ever". 500 is deliberately absent:
-# ArcGIS returns a genuine query error that way, and repeating a bad query just
-# makes it fail more slowly. 429 and the gateway codes are what a proxy or a busy
-# service returns under load.
-TRANSIENT_STATUSES = (429, 502, 503, 504)
-
-
-def send_with_retry(send, describe):
-    """Run a request, retrying transient failures with backoff.
-
-    `send` is called again from scratch each attempt, so it must build its own
-    request - these are all read-only queries, so repeating one is safe.
-    """
-    last_error = None
-    for attempt in range(1, REQUEST_RETRY_ATTEMPTS + 1):
-        try:
-            response = send()
-            if response.status_code not in TRANSIENT_STATUSES:
-                return response
-            last_error = f"HTTP {response.status_code}"
-        except TRANSIENT_EXCEPTIONS as ex:
-            last_error = f"{type(ex).__name__}: {ex}"
-            if attempt == REQUEST_RETRY_ATTEMPTS:
-                raise
-        if attempt == REQUEST_RETRY_ATTEMPTS:
-            return response
-        delay = REQUEST_RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
-        # Jitter, because the batches run eight at a time: without it a proxy
-        # that drops several at once gets them all back in the same instant.
-        delay += random.uniform(0, delay / 2)
-        warn(f"{describe}: {last_error}. Attempt {attempt} of "
-             f"{REQUEST_RETRY_ATTEMPTS}; retrying in {delay:.1f}s")
-        time.sleep(delay)
-    return response
-
-
-def request_json(session, url, params=None):
-    params = apply_pipe_domain_out_fields(url, params)
-    request_params = dict(params or {})
-
-    token = getattr(session, "_arcgis_access_token", None)
-    if not token:
-        token = get_arcgis_token(session)
-        session._arcgis_access_token = token
-
-    if token and "token" not in request_params:
-        request_params["token"] = token
-
-    response = send_with_retry(
-        lambda: session.get(
-            url, params=request_params, timeout=REQUEST_TIMEOUT_SECONDS,
-            verify=VERIFY_SSL,
-        ),
-        f"GET {url}",
-    )
-
-    response.raise_for_status()
-    data = response.json()
-
-    if "error" in data:
-        error = data.get("error", {})
-        code = str(error.get("code"))
-
-        if code in ("498", "499"):
-            warn(
-                "ArcGIS access token was rejected. Clearing cached token and forcing one fresh login."
-            )
-            clear_cached_access_token()
-            if hasattr(session, "_arcgis_access_token"):
-                delattr(session, "_arcgis_access_token")
-
-            request_params["token"] = get_arcgis_token(session)
-            session._arcgis_access_token = request_params["token"]
-
-            response = session.get(
-                url,
-                params=request_params,
-                timeout=REQUEST_TIMEOUT_SECONDS,
-                verify=VERIFY_SSL,
-            )
-
-            response.raise_for_status()
-            data = response.json()
-
-            if "error" in data:
-                fail(
-                    f"ArcGIS REST error after refreshed access token from {url}: {json.dumps(data.get('error', {}), indent=2)}"
-                )
-        else:
-            fail(f"ArcGIS REST error from {url}: {json.dumps(error, indent=2)}")
-
-    return data
-
-
-def request_json_post(session, url, params):
-    request_params = dict(params or {})
-
-    token = request_params.get("token") or getattr(
-        session, "_arcgis_access_token", None
-    )
-
-    if not token:
-        token = get_arcgis_token(session)
-        session._arcgis_access_token = token
-
-    if token and "token" not in request_params:
-        request_params["token"] = token
-
-    response = send_with_retry(
-        lambda: session.post(
-            url, data=request_params, timeout=REQUEST_TIMEOUT_SECONDS,
-            verify=VERIFY_SSL,
-        ),
-        f"POST {url}",
-    )
-
-    if response.status_code >= 400:
-        snippet = response.text[:1000] if response.text else ""
-        fail(
-            f"ArcGIS POST failed for {url}. HTTP {response.status_code}. Response snippet: {snippet}"
-        )
-
-    data = response.json()
-
-    if "error" in data:
-        error = data.get("error", {})
-        code = str(error.get("code"))
-
-        if code in ("498", "499"):
-            warn(
-                "ArcGIS access token was rejected during POST. Clearing cached token and forcing one fresh login."
-            )
-            clear_cached_access_token()
-            if hasattr(session, "_arcgis_access_token"):
-                delattr(session, "_arcgis_access_token")
-            request_params["token"] = get_arcgis_token(session)
-            session._arcgis_access_token = request_params["token"]
-
-            response = session.post(
-                url,
-                data=request_params,
-                timeout=REQUEST_TIMEOUT_SECONDS,
-                verify=VERIFY_SSL,
-            )
-
-            if response.status_code >= 400:
-                snippet = response.text[:1000] if response.text else ""
-                fail(
-                    f"ArcGIS POST failed after refreshed token for {url}. HTTP {response.status_code}. Response snippet: {snippet}"
-                )
-
-            data = response.json()
-
-            if "error" in data:
-                fail(
-                    f"ArcGIS REST POST error after refreshed access token from {url}: {json.dumps(data.get('error', {}), indent=2)}"
-                )
-        else:
-            fail(f"ArcGIS REST POST error from {url}: {json.dumps(error, indent=2)}")
-
-    return data
-
-
-def layer_metadata(session, layer_url):
-    data = request_json(session, layer_url, {"f": "json"})
-    fields = data.get("fields", [])
-    object_id_field = data.get("objectIdField") or next(
-        (f.get("name") for f in fields if f.get("type") == "esriFieldTypeOID"), None
-    )
-    spatial_reference = (
-        data.get("extent", {}).get("spatialReference")
-        or data.get("spatialReference")
-        or {}
-    )
-    wkid = spatial_reference.get("latestWkid") or spatial_reference.get("wkid")
-    max_record_count = int(data.get("maxRecordCount") or REQUEST_PAGE_SIZE)
-    page_size = (
-        min(REQUEST_PAGE_SIZE, max_record_count)
-        if max_record_count > 0
-        else REQUEST_PAGE_SIZE
-    )
-    return {
-        "object_id_field": object_id_field,
-        "wkid": wkid,
-        "fields": fields,
-        "page_size": page_size,
-    }
-
-
-def esri_point_to_geom(geometry):
-    if not geometry:
-        return None
-    if "x" not in geometry or "y" not in geometry:
-        return None
-    return Point(float(geometry["x"]), float(geometry["y"]))
-
-
-def esri_polyline_to_geom(geometry):
-    if not geometry or "paths" not in geometry:
-        return None
-    lines = []
-    for path in geometry.get("paths", []):
-        coords = [(float(x), float(y)) for x, y, *rest in path]
-        if len(coords) >= 2:
-            lines.append(LineString(coords))
-    if not lines:
-        return None
-    if len(lines) == 1:
-        return lines[0]
-    return MultiLineString(lines)
-
-
-def esri_geometry_to_shape(geometry):
-    if not geometry:
-        return None
-    if "x" in geometry and "y" in geometry:
-        return esri_point_to_geom(geometry)
-    if "paths" in geometry:
-        return esri_polyline_to_geom(geometry)
-    try:
-        return shape(geometry)
-    except (AttributeError, KeyError, TypeError, ValueError, ShapelyError):
-        # Everything a malformed geometry dict raises: a missing "coordinates"
-        # is a KeyError, a non-dict an AttributeError, bad coordinate values a
-        # TypeError or ValueError, and an unknown "type" a GeometryTypeError -
-        # which descends from ShapelyError, not from TypeError, so it has to be
-        # named.
-        return None
-
-
-def safe_cache_name(layer_name):
-    return re.sub(r"[^A-Za-z0-9_]+", "_", layer_name.strip().lower()).strip("_")
-
-
-def ensure_layer_cache_folder():
-    if not os.path.isdir(LAYER_CACHE_FOLDER):
-        os.makedirs(LAYER_CACHE_FOLDER)
-        log(f"Created layer cache folder: {LAYER_CACHE_FOLDER}")
-
-
-def layer_cache_paths(layer_name):
-    ensure_layer_cache_folder()
-    base = safe_cache_name(layer_name)
-    data_path = os.path.join(LAYER_CACHE_FOLDER, base + ".pkl.gz")
-    meta_path = os.path.join(LAYER_CACHE_FOLDER, base + ".meta.json")
-    return data_path, meta_path
-
-
-def metadata_field_names(meta):
-    return [field.get("name") for field in meta.get("fields", []) if field.get("name")]
-
-
-def resolve_from_names(field_names, candidates):
-    return resolve_field_name(field_names, candidates)
-
-
-def modified_field_from_meta(meta, layer_name):
-    field_names = metadata_field_names(meta)
-    field_name = resolve_from_names(field_names, MODIFIED_FIELD_CANDIDATES)
-    if field_name:
-        detail(f"{layer_name}: using delta modified field: {field_name}")
-    else:
-        warn(
-            f"{layer_name}: no modified field found. Delta cache unavailable; full refresh will be used."
-        )
-    return field_name
-
-
-def build_out_fields(meta, layer_name):
-    field_names = metadata_field_names(meta)
-    object_id_field = meta.get("object_id_field")
-    modified_field = modified_field_from_meta(meta, layer_name)
-    wanted = []
-    if object_id_field:
-        wanted.append(object_id_field)
-    if modified_field:
-        wanted.append(modified_field)
-    if is_leak_layer_name(layer_name):
-        candidate_groups = [
-            LEAK_KEY_CANDIDATES,
-            GLOBALID_CANDIDATES,
-            JURISDICTION_CANDIDATES,
-            # The date the relocation window is measured from.
-            LEAK_DATE_CANDIDATES,
-            # Carried for identification, not used by the matching.
-            LEAK_ADDRESS_CANDIDATES,
-        ]
-        # Every location field, not the first that resolves: the point is to
-        # collect whatever the service populates, and which one that is is
-        # exactly what is unknown.
-        for name in LEAK_LOCATION_CANDIDATES if field_names else []:
-            resolved = resolve_from_names(field_names, [name])
-            if resolved:
-                wanted.append(resolved)
-        # The same again for the other dates. Collected whether or not they are
-        # used, so a run can say how many leaks have no revised date but do
-        # have a discovered one - which is the whole case for using them.
-        for name in LEAK_DATE_FALLBACK_CANDIDATES if field_names else []:
-            resolved = resolve_from_names(field_names, [name])
-            if resolved:
-                wanted.append(resolved)
-    else:
-        candidate_groups = [
-            PIPE_DIAMETER_CANDIDATES,
-            PIPE_PRESSURE_CANDIDATES,
-            GLOBALID_CANDIDATES,
-            JURISDICTION_CANDIDATES,
-            # Both ends of the pipe's life. Which one is checked depends on the
-            # layer, but asking for both keeps one outFields list for all of them.
-            PIPE_CREATED_CANDIDATES,
-            PIPE_RETIRED_CANDIDATES,
-        ]
-        # The material type. Every one of these is required, not a first match
-        # among alternatives, so they are added outright rather than resolved as
-        # a candidate group.
-        #
-        # Only checked when the metadata actually lists fields. With no field
-        # list there is nothing to check against, and the fallback at the end of
-        # this function requests every field - which includes these two - so
-        # failing there would break a run that would otherwise have worked.
-        for name in PIPE_MATERIAL_FIELDS if field_names else []:
-            resolved = resolve_from_names(field_names, [name])
-            if resolved:
-                wanted.append(resolved)
-            else:
-                fail(f"{layer_name}: the layer has no {name} field, so pipe "
-                     f"material cannot be read. ASSETTYPE is the material type. "
-                     f"Fields: {sorted(field_names)}")
-    for group in candidate_groups:
-        resolved = resolve_from_names(field_names, group)
-        if resolved:
-            wanted.append(resolved)
-    deduped = []
-    for field in wanted:
-        if field and field not in deduped:
-            deduped.append(field)
-    if not deduped:
-        warn(f"{layer_name}: could not narrow outFields; requesting all fields")
-        return "*"
-    out_fields = ",".join(deduped)
-    detail(f"{layer_name}: using outFields={out_fields}")
-    return out_fields
-
-
-def query_count(session, layer_url, where_clause, layer_name):
-    params = {"f": "json", "where": where_clause, "returnCountOnly": "true"}
-    data = request_json(session, layer_url + "/query", params)
-    count = data.get("count")
-    if count is None:
-        warn(f"{layer_name}: returnCountOnly did not return count.")
-        return None
-    log(f"{layer_name}: server-side count for WHERE [{where_clause}] = {int(count):,}")
-    return int(count)
-
-
-def looks_numeric(value):
-    """Whether this value is a number, or a string that is nothing but one.
-
-    The distinction matters because the two leak sources deliver dates
-    differently. ArcGIS returns epoch milliseconds as a number; a SQL query
-    returns a datetime or an ISO string. parse_number takes the *first* number
-    out of anything, so "2019-04-02" came back as 2019 - which, read as epoch
-    milliseconds, is two seconds past midnight on 1 January 1970. Every Maximo
-    leak would then have failed the pipe-life check for being older than every
-    pipe, and nothing would have said why.
-    """
-    if isinstance(value, bool):
-        return False
-    if isinstance(value, (int, float)):
-        return True
-    text = str(value).strip()
-    if not text:
-        return False
-    try:
-        float(text)
-    except ValueError:
-        return False
-    return True
-
-
-def date_value_to_epoch_ms(value):
-    if value is None:
-        return None
-    if isinstance(value, float) and math.isnan(value):
-        return None
-    if looks_numeric(value):
-        parsed_number = parse_number(value)
-        if parsed_number is not None:
-            return int(parsed_number)
-    try:
-        parsed = pd.to_datetime(value, utc=True)
-        if pd.isna(parsed):
-            return None
-        return int(parsed.timestamp() * 1000)
-    except (TypeError, ValueError, OverflowError):
-        # pandas raises DateParseError and OutOfBoundsDatetime for unparseable
-        # or out-of-range input, and both descend from ValueError; a value of a
-        # type it cannot read raises TypeError. OverflowError covers the int()
-        # conversion of a non-finite timestamp.
-        return None
-
-
-def epoch_ms_to_iso(epoch_ms):
-    """Epoch milliseconds as an ISO date, for the audit columns. "" when absent."""
-    if epoch_ms is None:
-        return ""
-    try:
-        return dt.datetime.fromtimestamp(
-            float(epoch_ms) / 1000.0, dt.UTC).date().isoformat()
-    except (OSError, OverflowError, TypeError, ValueError):
-        return ""
-
-
-def max_modified_epoch_ms(gdf, modified_field):
-    if (
-        gdf is None
-        or len(gdf) == 0
-        or not modified_field
-        or modified_field not in gdf.columns
-    ):
-        return None
-    values = []
-    for value in gdf[modified_field].tolist():
-        epoch_ms = date_value_to_epoch_ms(value)
-        if epoch_ms is not None:
-            values.append(epoch_ms)
-    if not values:
-        return None
-    return max(values)
-
-
-def epoch_ms_to_sql_timestamp(epoch_ms):
-    safe_default = "timestamp '1970-01-01 00:00:00'"
-    if epoch_ms is None:
-        warn("Delta watermark was None. Falling back to full safe delta window.")
-        return safe_default
-    try:
-        value = float(epoch_ms)
-    except (TypeError, ValueError):
-        warn(
-            f"Delta watermark was not numeric [{epoch_ms}]. Falling back to full safe delta window."
-        )
-        return safe_default
-    # No try/except around isfinite: value came from a float() that succeeded,
-    # and math.isfinite cannot fail on a float. The except/pass that used to sit
-    # here could never run.
-    if not math.isfinite(value):
-        warn(
-            f"Delta watermark was not finite [{epoch_ms}]. Falling back to full safe delta window."
-        )
-        return safe_default
-    if value <= 0:
-        warn(
-            f"Delta watermark was <= 0 [{epoch_ms}]. Falling back to full safe delta window."
-        )
-        return safe_default
-    max_reasonable_epoch_ms = 32503680000000.0
-    if value > max_reasonable_epoch_ms:
-        warn(
-            f"Delta watermark was outside valid millisecond range [{epoch_ms}]. Falling back to full safe delta window."
-        )
-        return safe_default
-    try:
-        when = dt.datetime.fromtimestamp(value / 1000.0, dt.UTC).replace(tzinfo=None)
-    except (OSError, OverflowError, ValueError) as ex:
-        # A watermark outside the platform's representable range raises
-        # OverflowError, or OSError on Windows for pre-epoch values.
-        warn(
-            f"Could not convert delta watermark [{epoch_ms}] to timestamp: {ex}. Falling back to full safe delta window."
-        )
-        return safe_default
-    return f"timestamp '{when.strftime('%Y-%m-%d %H:%M:%S')}'"
-
-
-def build_delta_where(base_where, modified_field, last_epoch_ms):
-    return f"({base_where}) AND {modified_field} > {epoch_ms_to_sql_timestamp(last_epoch_ms)}"
-
-
-def out_field_request_signature(layer_name=None):
-    """A digest of the fields this code asks the service for.
-
-    A cache holds the columns that were requested when it was written. Adding a
-    field to the lists above does not change the cache, and the delta refresh
-    only re-downloads rows whose LASTUPDATE moved - so a new field would arrive
-    for a handful of changed records and be blank for the rest, which looks like
-    a service that has stopped populating it rather than a stale cache.
-
-    The signature is stored with the cache and compared on read. It is built from
-    the request configuration alone, so it can be computed without contacting the
-    service, and it changes only when the set of requested names changes.
-
-    It is computed per layer kind. A single digest over every list meant that
-    adding one leak field invalidated the pipe caches too, and re-downloading
-    1.27 million service pipes to collect a leak's street address is a long wait
-    for nothing - the wait during which the connection resets that started all
-    this. `layer_name` is matched the same way build_out_fields matches it.
-    """
-    shared = [
-        MODIFIED_FIELD_CANDIDATES,
-        GLOBALID_CANDIDATES,
-        OBJECTID_CANDIDATES,
-        JURISDICTION_CANDIDATES,
-    ]
-    leak = [
-        LEAK_KEY_CANDIDATES,
-        LEAK_ADDRESS_CANDIDATES,
-        LEAK_LOCATION_CANDIDATES,
-        LEAK_DATE_CANDIDATES,
-        LEAK_DATE_FALLBACK_CANDIDATES,
-    ]
-    pipe = [
-        PIPE_DIAMETER_CANDIDATES,
-        PIPE_PRESSURE_CANDIDATES,
-        PIPE_MATERIAL_FIELDS,
-        PIPE_CREATED_CANDIDATES,
-        PIPE_RETIRED_CANDIDATES,
-    ]
-    if layer_name is None:
-        groups = shared + leak + pipe
-    elif is_leak_layer_name(layer_name):
-        groups = shared + leak
-    else:
-        groups = shared + pipe
-    # Case and order within a group are irrelevant to what comes back, so they
-    # are normalised out: a rename that the resolver would treat as the same
-    # name must not invalidate every cache.
-    canonical = [sorted(name.lower() for name in group) for group in groups]
-    payload = json.dumps(canonical, sort_keys=True).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()[:16]
-
-
-def missing_requested_columns(gdf, required_fields):
-    """Which requested fields this frame does not have.
-
-    Returns None when the answer is unknown - no field list, or a request for
-    every field - so the caller refreshes rather than assuming.
-    """
-    if not required_fields or required_fields == "*":
-        return None
-    if isinstance(required_fields, str):
-        wanted = [name.strip() for name in required_fields.split(",") if name.strip()]
-    else:
-        wanted = list(required_fields)
-    present = {str(column).lower() for column in gdf.columns}
-    return [name for name in wanted if name.lower() not in present]
-
-
-def read_layer_cache(layer_name, layer_url, where_clause, required_fields=None):
-    if not USE_LAYER_CACHE or FORCE_LAYER_REFRESH:
-        return None, None
-    data_path, meta_path = layer_cache_paths(layer_name)
-    if not os.path.isfile(data_path) or not os.path.isfile(meta_path):
-        log(f"{layer_name}: no local cache found.")
-        return None, None
-    try:
-        with open(meta_path, "r", encoding="utf-8") as handle:
-            meta = json.load(handle)
-        if meta.get("layer_url") != layer_url:
-            log(f"{layer_name}: cache URL changed. Refreshing layer.")
-            return None, None
-        if meta.get("where_clause") != where_clause:
-            log(f"{layer_name}: cache WHERE changed. Refreshing layer.")
-            return None, None
-        signature = out_field_request_signature(layer_name)
-        stale_fields = meta.get("out_field_signature") != signature
-        gdf = pd.read_pickle(data_path, compression="gzip")
-        if stale_fields:
-            # The signature says the request has changed, but the question that
-            # actually matters is whether this cache already holds what is now
-            # asked for. Checking the columns answers it exactly, and saves
-            # re-downloading 1.27 million service pipes because the signature was
-            # reorganised or a leak field was added.
-            missing = missing_requested_columns(gdf, required_fields)
-            if missing is None or missing:
-                log(f"{layer_name}: the requested fields have changed since this "
-                    f"cache was written"
-                    + (f" and it has no {', '.join(missing)}" if missing else "")
-                    + ". Refreshing the layer in full so the new fields are "
-                    "populated for every record.")
-                return None, None
-            log(f"{layer_name}: the requested fields have changed, but this cache "
-                f"already carries every one of them. Keeping it.")
-        log(f"{layer_name}: loaded {len(gdf):,} records from local cache: {data_path}")
-        return gdf, meta
-    except Exception as ex:  # noqa: BLE001 - see below
-        # Deliberately broad. Unpickling a cache written by a different pandas,
-        # geopandas or Python raises whatever that payload's classes raise,
-        # including ModuleNotFoundError and AttributeError, and a truncated file
-        # raises EOFError or a gzip error. No cache is worth ending a run for:
-        # the error is reported and the layer is refreshed from the service.
-        warn(
-            f"{layer_name}: failed to read cache. Full refresh will be used. Error={ex}"
-        )
-        return None, None
-
-
-def write_layer_cache(
-    layer_name, layer_url, where_clause, server_count, modified_field, gdf
-):
-    if not USE_LAYER_CACHE:
-        return
-    data_path, meta_path = layer_cache_paths(layer_name)
-    max_modified_ms = max_modified_epoch_ms(gdf, modified_field)
-    try:
-        gdf.to_pickle(data_path, compression="gzip")
-        meta = {
-            "layer_name": layer_name,
-            "layer_url": layer_url,
-            "where_clause": where_clause,
-            "server_count": int(server_count) if server_count is not None else None,
-            "modified_field": modified_field,
-            "max_modified_epoch_ms": int(max_modified_ms)
-            if max_modified_ms is not None
-            else None,
-            "cached_utc": dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z"),
-            "record_count_written": len(gdf),
-            "out_field_signature": out_field_request_signature(layer_name),
-        }
-        with open(meta_path, "w", encoding="utf-8") as handle:
-            json.dump(meta, handle, indent=2)
-        log(f"{layer_name}: wrote local cache: {data_path}")
-        log(f"{layer_name}: max cached {modified_field} = {max_modified_ms}")
-    except Exception as ex:  # noqa: BLE001 - the cache is an optimisation
-        # Pickling a frame can fail on an unpicklable column, and the write
-        # itself on a full disk or a permission problem. A run that has already
-        # done the work should finish, just without leaving a cache behind.
-        warn(f"{layer_name}: failed to write cache. Error={ex}")
-
-
-def chunk_list(values, chunk_size):
-    for index in range(0, len(values), chunk_size):
-        yield values[index : index + chunk_size]
-
-
-def query_object_ids(session, layer_url, where_clause, layer_name):
-    log(f"{layer_name}: requesting matching OBJECTIDs for WHERE [{where_clause}]")
-
-    params = {"f": "json", "where": where_clause, "returnIdsOnly": "true"}
-
-    data = request_json(session, layer_url + "/query", params)
-
-    object_ids = data.get("objectIds") or data.get("objectids") or []
-    object_id_field = data.get("objectIdFieldName") or data.get("objectIdField") or None
-
-    object_ids = sorted([int(value) for value in object_ids])
-
-    log(f"{layer_name}: returnIdsOnly returned {len(object_ids):,} OBJECTIDs")
-
-    if object_id_field:
-        log(f"{layer_name}: returnIdsOnly objectIdFieldName={object_id_field}")
-
-    return object_ids
-
-
-def fetch_objectid_batch(
-    layer_url,
-    object_id_batch,
-    layer_name,
-    meta,
-    out_fields,
-    batch_number,
-    batch_total,
-    token,
-):
-    local_session = worker_session(token)
-
-    params = {
-        "f": "json",
-        "objectIds": ",".join([str(value) for value in object_id_batch]),
-        "outFields": out_fields,
-        "returnGeometry": "true",
-        "token": token,
-    }
-
-    if meta["wkid"]:
-        params["outSR"] = meta["wkid"]
-
-    data = request_json_post(local_session, layer_url + "/query", params)
-    batch = data.get("features", [])
-    log(
-        f"{layer_name}: objectId batch {batch_number:,}/{batch_total:,} returned {len(batch):,} features"
-    )
-    return batch
-
-
-def query_feature_set(session, layer_url, where_clause, layer_name, meta, out_fields):
-    source_crs = f"EPSG:{meta['wkid']}" if meta["wkid"] else None
-
-    if USE_OBJECTID_BATCH_DOWNLOAD:
-        object_ids = query_object_ids(session, layer_url, where_clause, layer_name)
-
-        if not object_ids:
-            log(
-                f"{layer_name}: no OBJECTIDs returned for WHERE. Returning empty GeoDataFrame."
-            )
-            return gpd.GeoDataFrame([], geometry=[], crs=source_crs)
-
-        active_token = getattr(session, "_arcgis_access_token", None)
-
-        if not active_token:
-            active_token = get_arcgis_token(session)
-            session._arcgis_access_token = active_token
-
-        batches = list(chunk_list(object_ids, OBJECTID_BATCH_SIZE))
-        total_batches = len(batches)
-        log(
-            f"{layer_name}: downloading {len(object_ids):,} OBJECTIDs in {total_batches:,} POST batches with {OBJECTID_DOWNLOAD_WORKERS} workers"
-        )
-
-        features = []
-
-        with futures.ThreadPoolExecutor(
-            max_workers=OBJECTID_DOWNLOAD_WORKERS
-        ) as executor:
-            future_lookup = {
-                executor.submit(
-                    fetch_objectid_batch,
-                    layer_url,
-                    object_id_batch,
-                    layer_name,
-                    meta,
-                    out_fields,
-                    batch_number,
-                    total_batches,
-                    active_token,
-                ): batch_number
-                for batch_number, object_id_batch in enumerate(batches, start=1)
-            }
-
-            for completed_batches, future in enumerate(
-                futures.as_completed(future_lookup), start=1
-            ):
-                batch_number = future_lookup[future]
-
-                try:
-                    features.extend(future.result())
-                except Exception as ex:  # noqa: BLE001 - re-raised from a worker
-                    # future.result() re-raises whatever the download raised, so
-                    # narrowing here would mean listing every failure mode of
-                    # the request path. It is turned into one fatal message that
-                    # names the batch.
-                    #
-                    # Reaching here means the batch already failed
-                    # REQUEST_RETRY_ATTEMPTS times with backoff, so this is a
-                    # network that is not coming back on its own.
-                    fail(
-                        f"{layer_name}: objectId POST batch {batch_number:,}/{total_batches:,} "
-                        f"failed after {REQUEST_RETRY_ATTEMPTS} attempts: {ex}\n"
-                        f"  If this keeps happening, fewer parallel requests often "
-                        f"helps: set LEAKRELOCATION_DOWNLOAD_WORKERS=2 (currently "
-                        f"{OBJECTID_DOWNLOAD_WORKERS}), or raise "
-                        f"LEAKRELOCATION_RETRY_ATTEMPTS."
-                    )
-
-                if (
-                    completed_batches == 1
-                    or completed_batches % 10 == 0
-                    or completed_batches == total_batches
-                ):
-                    log(
-                        f"{layer_name}: completed {completed_batches:,}/{total_batches:,} batches; accumulated {len(features):,} features"
-                    )
-
-    else:
-        page_size = meta["page_size"]
-        offset = 0
-        features = []
-
-        while True:
-            params = {
-                "f": "json",
-                "where": where_clause,
-                "outFields": out_fields,
-                "returnGeometry": "true",
-                "resultOffset": offset,
-                "resultRecordCount": page_size,
-                "orderByFields": meta["object_id_field"],
-            }
-
-            if meta["wkid"]:
-                params["outSR"] = meta["wkid"]
-
-            data = request_json(session, layer_url + "/query", params)
-            batch = data.get("features", [])
-
-            if not batch:
-                break
-
-            features.extend(batch)
-            log(f"{layer_name}: fetched {len(features):,} records")
-
-            if len(batch) < page_size and not data.get("exceededTransferLimit"):
-                break
-
-            offset += page_size
-
-    rows = []
-    geometries = []
-
-    for feature in features:
-        attrs = feature.get("attributes", {}) or {}
-        geom = esri_geometry_to_shape(feature.get("geometry"))
-        rows.append(attrs)
-        geometries.append(geom)
-
-    if not rows:
-        return gpd.GeoDataFrame([], geometry=[], crs=source_crs)
-
-    gdf = gpd.GeoDataFrame(rows, geometry=geometries, crs=source_crs)
-    gdf = gdf[gdf.geometry.notna()].copy()
-    log(f"{layer_name}: usable geometries = {len(gdf):,}")
-    return gdf
-
-
-def upsert_cached_layer(cached_gdf, delta_gdf, object_id_field):
-    if delta_gdf is None or len(delta_gdf) == 0:
-        return cached_gdf
-    if (
-        object_id_field not in cached_gdf.columns
-        or object_id_field not in delta_gdf.columns
-    ):
-        warn(
-            "Cannot upsert delta because OBJECTID field is missing. Returning full delta only is unsafe, so keeping cached layer."
-        )
-        return cached_gdf
-    delta_ids = set(delta_gdf[object_id_field].astype(str).tolist())
-    keep_cached = cached_gdf[
-        ~cached_gdf[object_id_field].astype(str).isin(delta_ids)
-    ].copy()
-    merged = pd.concat([keep_cached, delta_gdf], ignore_index=True)
-    return gpd.GeoDataFrame(
-        merged, geometry="geometry", crs=cached_gdf.crs or delta_gdf.crs
-    )
-
-
-def cache_age_seconds(layer_name, layer_url, where_clause):
-    """Age of a usable cache in seconds, or None if there is not one."""
-    if not USE_LAYER_CACHE or FORCE_LAYER_REFRESH:
-        return None
-    data_path, meta_path = layer_cache_paths(layer_name)
-    if not os.path.isfile(data_path) or not os.path.isfile(meta_path):
-        return None
-    try:
-        with open(meta_path, encoding="utf-8") as handle:
-            meta = json.load(handle)
-        if meta.get("layer_url") != layer_url or meta.get("where_clause") != where_clause:
-            return None
-        cached_utc = meta.get("cached_utc")
-        if not cached_utc:
-            return None
-        stamp = dt.datetime.fromisoformat(cached_utc.replace("Z", "+00:00"))
-        return max(0.0, (dt.datetime.now(dt.UTC) - stamp).total_seconds())
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as ex:
-        # A cache we cannot read the age of is simply treated as absent.
-        detail(f"{layer_name}: could not read cache age ({ex})")
-        return None
-
-
-def query_arcgis_layer(session, layer_url, where_clause, layer_name):
-    step(f"Querying ArcGIS REST layer: {layer_name}")
-
-    # A recent cache is trusted without contacting the server. Checking costs a
-    # metadata request plus two count queries per layer and needs a valid token,
-    # which dominates start-up when the data has not changed.
-    age = cache_age_seconds(layer_name, layer_url, where_clause)
-    if age is not None and config.CACHE_FRESH_SECONDS > 0 and age < config.CACHE_FRESH_SECONDS:
-        cached_gdf, _ = read_layer_cache(layer_name, layer_url, where_clause)
-        if cached_gdf is not None:
-            log(
-                f"{layer_name}: cache is {age / 60:.0f} min old; skipping server check. "
-                f"Set FORCE_LAYER_REFRESH=1 to refresh."
-            )
-            return cached_gdf
-
-    meta = layer_metadata(session, layer_url)
-    if not meta["object_id_field"]:
-        fail(f"Could not determine object id field for {layer_name}")
-
-    object_id_field = meta["object_id_field"]
-    modified_field = modified_field_from_meta(meta, layer_name)
-    out_fields = build_out_fields(meta, layer_name)
-    server_count = query_count(session, layer_url, where_clause, layer_name)
-
-    cached_gdf, cached_meta = read_layer_cache(
-        layer_name, layer_url, where_clause, out_fields)
-
-    if cached_gdf is not None and modified_field and cached_meta:
-        last_epoch_ms = cached_meta.get("max_modified_epoch_ms")
-        if last_epoch_ms:
-            delta_where = build_delta_where(where_clause, modified_field, last_epoch_ms)
-            log(f"{layer_name}: attempting delta refresh WHERE [{delta_where}]")
-            delta_count = query_count(
-                session, layer_url, delta_where, layer_name + " delta"
-            )
-            if delta_count == 0:
-                if server_count is None or len(cached_gdf) == int(server_count):
-                    log(f"{layer_name}: no delta changes found. Using local cache.")
-                    return cached_gdf
-                warn(
-                    f"{layer_name}: no modified deltas, but count differs cached={len(cached_gdf):,}, server={int(server_count):,}. Full refresh required."
-                )
-            else:
-                delta_gdf = query_feature_set(
-                    session,
-                    layer_url,
-                    delta_where,
-                    layer_name + " delta",
-                    meta,
-                    out_fields,
-                )
-                merged_gdf = upsert_cached_layer(cached_gdf, delta_gdf, object_id_field)
-                if server_count is not None and len(merged_gdf) != int(server_count):
-                    warn(
-                        f"{layer_name}: merged cache count {len(merged_gdf):,} does not equal server count {int(server_count):,}. This usually means deletes occurred; doing full refresh."
-                    )
-                else:
-                    log(
-                        f"{layer_name}: delta refresh merged {len(delta_gdf):,} changed records into cache."
-                    )
-                    write_layer_cache(
-                        layer_name,
-                        layer_url,
-                        where_clause,
-                        server_count,
-                        modified_field,
-                        merged_gdf,
-                    )
-                    return merged_gdf
-
-    elif cached_gdf is not None and (
-        server_count is None or len(cached_gdf) == int(server_count)
-    ):
-        log(
-            f"{layer_name}: using local cache by count because modified field metadata is unavailable."
-        )
-        return cached_gdf
-
-    log(f"{layer_name}: performing full layer download.")
-    gdf = query_feature_set(
-        session, layer_url, where_clause, layer_name, meta, out_fields
-    )
-    write_layer_cache(
-        layer_name, layer_url, where_clause, server_count, modified_field, gdf
-    )
-    return gdf
 
 
 def load_supplemental():
@@ -1553,24 +134,24 @@ def load_supplemental():
     log(f"Supplemental rows: {len(df):,}")
     # Required: this is the join key. Falling back to the leak number would
     # reintroduce exactly the wrong-attribute bug this replaced, and silently.
-    globalid_field = resolved_field(
-        df.columns, SUPP_GLOBALID_CANDIDATES, True, "supplemental leak GlobalID"
+    globalid_field = layer_fields.resolved_field(
+        df.columns, layer_fields.SUPP_GLOBALID_CANDIDATES, True, "supplemental leak GlobalID"
     )
     # Carried for labelling and the audit, not used to join.
-    number_field = resolved_field(
-        df.columns, SUPP_KEY_CANDIDATES, False, "supplemental leak number"
+    number_field = layer_fields.resolved_field(
+        df.columns, layer_fields.SUPP_KEY_CANDIDATES, False, "supplemental leak number"
     )
-    diameter_field = resolved_field(
-        df.columns, SUPP_DIAMETER_CANDIDATES, False, "supplemental diameter"
+    diameter_field = layer_fields.resolved_field(
+        df.columns, layer_fields.SUPP_DIAMETER_CANDIDATES, False, "supplemental diameter"
     )
-    material_field = resolved_field(
-        df.columns, SUPP_MATERIAL_CANDIDATES, False, "supplemental material"
+    material_field = layer_fields.resolved_field(
+        df.columns, layer_fields.SUPP_MATERIAL_CANDIDATES, False, "supplemental material"
     )
-    pressure_field = resolved_field(
-        df.columns, SUPP_PRESSURE_CANDIDATES, False, "supplemental pressure"
+    pressure_field = layer_fields.resolved_field(
+        df.columns, layer_fields.SUPP_PRESSURE_CANDIDATES, False, "supplemental pressure"
     )
-    facility_field = resolved_field(
-        df.columns, SUPP_FACILITY_CANDIDATES, False, "supplemental facility type"
+    facility_field = layer_fields.resolved_field(
+        df.columns, layer_fields.SUPP_FACILITY_CANDIDATES, False, "supplemental facility type"
     )
     records = {}
     skipped_no_key = 0
@@ -1652,10 +233,10 @@ def load_retired_pipes(session):
     step("Loading retired pipes")
     log(f"Layer: {RETIRED_PIPE_URL}")
     try:
-        retired = query_arcgis_layer(session, RETIRED_PIPE_URL, WHERE_MA,
+        retired = layer_cache.query_arcgis_layer(session, RETIRED_PIPE_URL, WHERE_MA,
                                      "retired pipes")
-        retired = assign_native_crs(session, "retired_pipes", retired)
-        retired = to_analysis_crs(session, "retired_pipes", retired)
+        retired = native_crs.assign_native_crs(session, "retired_pipes", retired)
+        retired = native_crs.to_analysis_crs(session, "retired_pipes", retired)
         return decode_pipe_materials(session, retired, RETIRED_PIPE_URL,
                                      "retired pipes")
     except Exception as ex:  # noqa: BLE001 - reported, and the run continues
@@ -1695,11 +276,11 @@ def leak_date_with_source(row, primary_field, fallback_fields, use_fallback):
     fallback column held a date, whether or not it was used - that is how a run
     reports the size of the gap without changing what it does about it.
     """
-    primary_ms = (date_value_to_epoch_ms(row.get(primary_field))
+    primary_ms = (dates.date_value_to_epoch_ms(row.get(primary_field))
                   if primary_field else None)
     available = None
     for field in fallback_fields:
-        candidate = date_value_to_epoch_ms(row.get(field))
+        candidate = dates.date_value_to_epoch_ms(row.get(field))
         if candidate is not None:
             available = (candidate, field)
             break
@@ -1712,17 +293,17 @@ def leak_date_with_source(row, primary_field, fallback_fields, use_fallback):
 
 def prepare_leaks(leaks_gdf, supplemental):
     step("Preparing leak records")
-    leak_oid_field = resolved_field(
-        leaks_gdf.columns, OBJECTID_CANDIDATES, True, "leak OBJECTID"
+    leak_oid_field = layer_fields.resolved_field(
+        leaks_gdf.columns, layer_fields.OBJECTID_CANDIDATES, True, "leak OBJECTID"
     )
-    leak_key_field = resolved_field(
-        leaks_gdf.columns, LEAK_KEY_CANDIDATES, True, "leak key"
+    leak_key_field = layer_fields.resolved_field(
+        leaks_gdf.columns, layer_fields.LEAK_KEY_CANDIDATES, True, "leak key"
     )
     # Required: the supplemental join is on the GlobalID. The leak number is not
     # unique in the supplemental file, so joining on it took an arbitrary row's
     # diameter and material for 5,364 leak numbers.
-    leak_globalid_field = resolved_field(
-        leaks_gdf.columns, GLOBALID_CANDIDATES, True, "leak GlobalID"
+    leak_globalid_field = layer_fields.resolved_field(
+        leaks_gdf.columns, layer_fields.GLOBALID_CANDIDATES, True, "leak GlobalID"
     )
     # Optional for the same reason as the date: a cache written before a field
     # was requested has no such column. None of these is matched on - they say
@@ -1732,7 +313,7 @@ def prepare_leaks(leaks_gdf, supplemental):
     # that matters and the rest are what a row without one still has.
     location_fields = {}
     for name in location.SERVICE_FIELDS:
-        column = resolved_field(leaks_gdf.columns, [name], False, f"leak {name}")
+        column = layer_fields.resolved_field(leaks_gdf.columns, [name], False, f"leak {name}")
         if column:
             location_fields[name] = column
     if not location_fields:
@@ -1740,8 +321,8 @@ def prepare_leaks(leaks_gdf, supplemental):
              "include them: python run.py --refresh")
     # Optional: a cache downloaded before the date rule existed has no such
     # column, and every leak then matches unfiltered rather than not at all.
-    leak_date_field = resolved_field(
-        leaks_gdf.columns, LEAK_DATE_CANDIDATES, False, "leak revised date"
+    leak_date_field = layer_fields.resolved_field(
+        leaks_gdf.columns, layer_fields.LEAK_DATE_CANDIDATES, False, "leak revised date"
     )
     if not leak_date_field:
         warn("No leak date column, so no relocation can be checked against the "
@@ -1749,8 +330,8 @@ def prepare_leaks(leaks_gdf, supplemental):
     # The other dates on the row. Always resolved, so the run can report how
     # many leaks a fallback would rescue even when it is not using them.
     date_fallback_fields = []
-    for name in LEAK_DATE_FALLBACK_CANDIDATES:
-        column = resolved_field(leaks_gdf.columns, [name], False, f"leak {name}")
+    for name in layer_fields.LEAK_DATE_FALLBACK_CANDIDATES:
+        column = layer_fields.resolved_field(leaks_gdf.columns, [name], False, f"leak {name}")
         if column:
             date_fallback_fields.append(column)
     use_date_fallback = config.USE_LEAK_DATE_FALLBACK
@@ -1835,7 +416,7 @@ def decode_pipe_materials(session, pipe_gdf, layer_url, layer_name):
              f"is missing from the download. ASSETTYPE is the material type. "
              f"Present: {sorted(pipe_gdf.columns)}")
 
-    layer_json = request_json(session, layer_url, {"f": "json"})
+    layer_json = arcgis.request_json(session, layer_url, {"f": "json"})
     type_id_field, decoder = build_assettype_decoder(layer_json)
     if not decoder:
         fail(f"{layer_name}: the layer metadata carries no ASSETTYPE subtype "
@@ -1883,18 +464,18 @@ def resolve_pipe_date_fields(pipe_gdf, layer_name):
     checked against needs its retirement date, so a run without it stops instead
     of matching every retired pipe unfiltered.
     """
-    created = resolved_field(pipe_gdf.columns, PIPE_CREATED_CANDIDATES, False,
+    created = layer_fields.resolved_field(pipe_gdf.columns, layer_fields.PIPE_CREATED_CANDIDATES, False,
                              layer_name + " created date")
-    retired = resolved_field(pipe_gdf.columns, PIPE_RETIRED_CANDIDATES, False,
+    retired = layer_fields.resolved_field(pipe_gdf.columns, layer_fields.PIPE_RETIRED_CANDIDATES, False,
                              layer_name + " retired date")
-    rule = LAYER_DATE_RULES.get(layer_name)
+    rule = layer_fields.LAYER_DATE_RULES.get(layer_name)
 
     if rule == RETIRED_AFTER_LEAK and not retired:
         fail(f"{layer_name}: no retirement date column, so a leak cannot be "
              f"checked against when the pipe left service. Looked for "
-             f"{PIPE_RETIRED_CANDIDATES}. Present: {sorted(pipe_gdf.columns)}")
+             f"{layer_fields.PIPE_RETIRED_CANDIDATES}. Present: {sorted(pipe_gdf.columns)}")
     if rule == IN_SERVICE_AT_LEAK and not created:
-        warn(f"{layer_name}: no {PIPE_CREATED_CANDIDATES[0]} column, so its pipes "
+        warn(f"{layer_name}: no {layer_fields.PIPE_CREATED_CANDIDATES[0]} column, so its pipes "
              f"are matched without checking that they pre-date the leak. "
              f"Re-download: python run.py --refresh")
     return created, retired
@@ -1902,8 +483,8 @@ def resolve_pipe_date_fields(pipe_gdf, layer_name):
 
 def prepare_pipes(pipe_gdf, layer_name):
     step(f"Preparing pipe records: {layer_name}")
-    pipe_oid_field = resolved_field(
-        pipe_gdf.columns, OBJECTID_CANDIDATES, True, layer_name + " OBJECTID"
+    pipe_oid_field = layer_fields.resolved_field(
+        pipe_gdf.columns, layer_fields.OBJECTID_CANDIDATES, True, layer_name + " OBJECTID"
     )
     # Read by name, not resolved. scripts/enrich_assettype_cache.py publishes the
     # decoded ASSETTYPE as this column specifically for this consumer. Resolving
@@ -1918,24 +499,24 @@ def prepare_pipes(pipe_gdf, layer_name):
             f"workflow; scripts/enrich_assettype_cache.py repairs an existing "
             f"cache. Present: {sorted(pipe_gdf.columns)}"
         )
-    diameter_field = resolved_field(
-        pipe_gdf.columns, PIPE_DIAMETER_CANDIDATES, True, layer_name + " diameter"
+    diameter_field = layer_fields.resolved_field(
+        pipe_gdf.columns, layer_fields.PIPE_DIAMETER_CANDIDATES, True, layer_name + " diameter"
     )
-    pressure_field = resolved_field(
-        pipe_gdf.columns, PIPE_PRESSURE_CANDIDATES, False, layer_name + " pressure"
+    pressure_field = layer_fields.resolved_field(
+        pipe_gdf.columns, layer_fields.PIPE_PRESSURE_CANDIDATES, False, layer_name + " pressure"
     )
-    globalid_field = resolved_field(
-        pipe_gdf.columns, GLOBALID_CANDIDATES, False, layer_name + " GlobalID"
+    globalid_field = layer_fields.resolved_field(
+        pipe_gdf.columns, layer_fields.GLOBALID_CANDIDATES, False, layer_name + " GlobalID"
     )
     if REQUIRE_PRESSURE_MATCH and not pressure_field:
         fail(
             f"REQUIRE_PRESSURE_MATCH is True but no pressure field was resolved on {layer_name}."
         )
     created_field, retired_field = resolve_pipe_date_fields(pipe_gdf, layer_name)
-    date_rule = LAYER_DATE_RULES.get(layer_name)
+    date_rule = layer_fields.LAYER_DATE_RULES.get(layer_name)
     if date_rule is None:
         fail(f"{layer_name}: no date rule is defined for this layer. "
-             f"Known: {sorted(LAYER_DATE_RULES)}")
+             f"Known: {sorted(layer_fields.LAYER_DATE_RULES)}")
 
     records = []
     missing_material = 0
@@ -1957,9 +538,9 @@ def prepare_pipes(pipe_gdf, layer_name):
                 "diameter": diam,
                 "pressure": clean(row.get(pressure_field)) if pressure_field else "",
                 "date_rule": date_rule,
-                "created_ms": date_value_to_epoch_ms(row.get(created_field))
+                "created_ms": dates.date_value_to_epoch_ms(row.get(created_field))
                 if created_field else None,
-                "retired_ms": date_value_to_epoch_ms(row.get(retired_field))
+                "retired_ms": dates.date_value_to_epoch_ms(row.get(retired_field))
                 if retired_field else None,
                 "geometry": row.geometry,
             }
@@ -2170,7 +751,7 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
                     "DiameterMatch": "",
                     "DiameterMode": DIAMETER_MATCH_MODE,
                     "LeakSource": LEAK_SOURCE,
-                    "LeakDate": epoch_ms_to_iso(task.get("leak_date_ms")),
+                    "LeakDate": dates.epoch_ms_to_iso(task.get("leak_date_ms")),
                     "LeakDateSource": task.get("leak_date_source", ""),
                     "PipesRejectedOnDate": result.get("rejected_on_date", 0),
                     "MatchStatus": "NoMatch",
@@ -2207,7 +788,7 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
                 "DiameterMatch": result.get("diameter_match", ""),
                 "DiameterMode": DIAMETER_MATCH_MODE,
                 "LeakSource": LEAK_SOURCE,
-                "LeakDate": epoch_ms_to_iso(task.get("leak_date_ms")),
+                "LeakDate": dates.epoch_ms_to_iso(task.get("leak_date_ms")),
                 "LeakDateSource": task.get("leak_date_source", ""),
                 "DateRule": result.get("date_rule", ""),
                 "DateCheck": result.get("date_reason", ""),
@@ -2245,10 +826,10 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
                 "DiameterMatch": result.get("diameter_match", ""),
                 "DiameterMode": DIAMETER_MATCH_MODE,
                 "LeakSource": LEAK_SOURCE,
-                "LeakDate": epoch_ms_to_iso(task.get("leak_date_ms")),
+                "LeakDate": dates.epoch_ms_to_iso(task.get("leak_date_ms")),
                 "LeakDateSource": task.get("leak_date_source", ""),
-                "PipeCreated": epoch_ms_to_iso(pipe.get("created_ms")),
-                "PipeRetired": epoch_ms_to_iso(pipe.get("retired_ms")),
+                "PipeCreated": dates.epoch_ms_to_iso(pipe.get("created_ms")),
+                "PipeRetired": dates.epoch_ms_to_iso(pipe.get("retired_ms")),
                 "DateRule": result.get("date_rule", ""),
                 # "ok" means the dates were compared and the pipe was in service.
                 # Anything else says why the check could not be made.
@@ -2317,7 +898,7 @@ def banner(leak_source, output_gpkg):
     log(f"Material family fallback: {ALLOW_MATERIAL_FAMILY_FALLBACK}")
     log(f"Diameter match mode: {DIAMETER_MATCH_MODE}")
     log(f"Leak date fallback: "
-        f"{'on - ' + ', '.join(LEAK_DATE_FALLBACK_CANDIDATES) if config.USE_LEAK_DATE_FALLBACK else 'off'}")
+        f"{'on - ' + ', '.join(layer_fields.LEAK_DATE_FALLBACK_CANDIDATES) if config.USE_LEAK_DATE_FALLBACK else 'off'}")
     if DIAMETER_MATCH_MODE != DIAMETER_EXACT:
         log(f"  A pipe may be one nominal size up or down from the leak's "
             f"diameter. Nominal sizes (in): "
@@ -2343,15 +924,15 @@ def load_pipe_layers(session, with_leaks=None):
     if config.PARALLEL_LAYER_LOAD:
         # Independent reads. Fetch the token once up front so the workers do
         # not race into three interactive sign-ins.
-        get_arcgis_token(session)
+        auth.get_arcgis_token(session)
         with futures.ThreadPoolExecutor(max_workers=len(layer_specs)) as pool:
             submitted = {
-                name: pool.submit(query_arcgis_layer, session, url, WHERE_MA, name)
+                name: pool.submit(layer_cache.query_arcgis_layer, session, url, WHERE_MA, name)
                 for name, url in layer_specs
             }
             return {name: future.result() for name, future in submitted.items()}
     return {
-        name: query_arcgis_layer(session, url, WHERE_MA, name)
+        name: layer_cache.query_arcgis_layer(session, url, WHERE_MA, name)
         for name, url in layer_specs
     }
 
@@ -2368,17 +949,23 @@ def relocate(session, leaks, supplemental, distribution, service,
 
     `output_gpkg` keeps the two leak sets in separate files. Writing both to one
     would mean the second run silently replacing the first.
+
+    `leak_source` also decides where the leaks' coordinate system comes from.
+    Historic leaks were downloaded from layer 206 and are in its native CRS;
+    leaks from anywhere else are projected from the CRS their frame carries.
     """
     previous_output = OUTPUT_GPKG
     previous_source = LEAK_SOURCE
     if output_gpkg:
         globals()["OUTPUT_GPKG"] = str(output_gpkg)
     globals()["LEAK_SOURCE"] = leak_source
+    leak_layer_key = "historic_leaks" if leak_source == "historic" else None
     try:
-        with timed("normalize CRS"):
+        with output.timed("normalize CRS"):
             leaks, distribution, service, ANALYSIS_CRS = (
-                normalize_loaded_layers_to_analysis_crs(
-                    session, leaks, distribution, service)
+                native_crs.normalize_loaded_layers_to_analysis_crs(
+                    session, leaks, distribution, service,
+                    leak_layer_key=leak_layer_key)
             )
         globals()["TARGET_CRS"] = ANALYSIS_CRS
 
@@ -2388,7 +975,7 @@ def relocate(session, leaks, supplemental, distribution, service,
                            ("service pipes", service)]:
             detail(f"  {label}: CRS={gdf.crs} bounds={list(gdf.total_bounds)}")
 
-        with timed("decode pipe materials"):
+        with output.timed("decode pipe materials"):
             distribution = decode_pipe_materials(
                 session, distribution, DISTRIBUTION_PIPE_URL, "distribution pipes")
             service = decode_pipe_materials(
@@ -2396,21 +983,21 @@ def relocate(session, leaks, supplemental, distribution, service,
 
         retired = None
         if USE_RETIRED_PIPE_LAYER:
-            with timed("load retired pipes"):
+            with output.timed("load retired pipes"):
                 retired = load_retired_pipes(session)
 
-        with timed("prepare leaks"):
+        with output.timed("prepare leaks"):
             leak_tasks, initial_counters = prepare_leaks(leaks, supplemental)
-        with timed("build pipe indexes"):
+        with output.timed("build pipe indexes"):
             pipe_sources = {
                 "distribution": prepare_pipes(distribution, "distribution"),
                 "service": prepare_pipes(service, "service"),
             }
             if retired is not None and len(retired):
                 pipe_sources["retired"] = prepare_pipes(retired, "retired")
-        with timed("match leaks to pipes"):
+        with output.timed("match leaks to pipes"):
             match_results = run_matching(leak_tasks, pipe_sources)
-        with timed("write outputs"):
+        with output.timed("write outputs"):
             counters = write_outputs(
                 leak_tasks, match_results, pipe_sources, initial_counters)
 
@@ -2420,8 +1007,8 @@ def relocate(session, leaks, supplemental, distribution, service,
         rescuable = counters.get("leaks_a_date_fallback_would_rescue", 0)
         if rescuable and not config.USE_LEAK_DATE_FALLBACK:
             warn(f"{rescuable:,} leaks have no "
-                 f"{'/'.join(LEAK_DATE_CANDIDATES)} but do carry a "
-                 f"{', '.join(LEAK_DATE_FALLBACK_CANDIDATES)}. For those the "
+                 f"{'/'.join(layer_fields.LEAK_DATE_CANDIDATES)} but do carry a "
+                 f"{', '.join(layer_fields.LEAK_DATE_FALLBACK_CANDIDATES)}. For those the "
                  f"pipe-life rule decided nothing at all.\n"
                  f"  To check them against the pipe's life as well: "
                  f"python run.py --leak-date-fallback\n"
@@ -2429,7 +1016,7 @@ def relocate(session, leaks, supplemental, distribution, service,
                  f"Every row records which field supplied its date, in "
                  f"LeakDateSource.")
         log(f"GeoPackage: {OUTPUT_GPKG}")
-        report_timings()
+        output.report_timings()
         return counters
     finally:
         globals()["OUTPUT_GPKG"] = previous_output
@@ -2441,12 +1028,12 @@ def main():
     log(f"Supplemental CSV: {SUPPLEMENTAL_CSV}")
     ensure_output_folder()
 
-    with timed("supplemental CSV"):
+    with output.timed("supplemental CSV"):
         supplemental = load_supplemental()
 
-    session = make_session()
+    session = auth.make_session()
 
-    with timed("load layers"):
+    with output.timed("load layers"):
         loaded = load_pipe_layers(
             session, with_leaks=("historic leaks", HIST_LEAK_URL))
 

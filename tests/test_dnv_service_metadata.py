@@ -21,6 +21,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
 
 from leakrelocation import assettype, config, matching
+from leakrelocation import arcgis, layer_fields
 
 REFERENCE = os.path.join(REPO_ROOT, "reference", "mapserver_json",
                          "NY_DNV_Synergi_RiskResults_Assets_NY")
@@ -96,15 +97,15 @@ class TestFieldNamesUsedByTheWorkflow:
     def test_modified_field(self, workflow, distribution, service, leaks):
         for layer in (distribution, service, leaks):
             assert self.resolved(workflow, layer,
-                                 workflow.MODIFIED_FIELD_CANDIDATES) == "LASTUPDATE"
+                                 layer_fields.MODIFIED_FIELD_CANDIDATES) == "LASTUPDATE"
 
     def test_leak_key(self, workflow, leaks):
         assert self.resolved(workflow, leaks,
-                             workflow.LEAK_KEY_CANDIDATES) == "LMSLEAKNUMBER"
+                             layer_fields.LEAK_KEY_CANDIDATES) == "LMSLEAKNUMBER"
 
     def test_leak_address(self, workflow, leaks):
         assert self.resolved(workflow, leaks,
-                             workflow.LEAK_ADDRESS_CANDIDATES) == "ADDRESS"
+                             layer_fields.LEAK_ADDRESS_CANDIDATES) == "ADDRESS"
 
     def test_leak_address_is_a_string_field(self, leaks):
         """A 100 character string with no domain, so it needs no decoding - the
@@ -124,28 +125,28 @@ class TestFieldNamesUsedByTheWorkflow:
             assert [n for n in names(layer) if "address" in n.lower()] == \
                 ["ng_formattedaddress"]
             assert self.resolved(workflow, layer,
-                                 workflow.LEAK_ADDRESS_CANDIDATES) is None
+                                 layer_fields.LEAK_ADDRESS_CANDIDATES) is None
 
     def test_pipe_diameter(self, workflow, distribution, service):
         for layer in (distribution, service):
             assert self.resolved(workflow, layer,
-                                 workflow.PIPE_DIAMETER_CANDIDATES) == "nominaldiameter"
+                                 layer_fields.PIPE_DIAMETER_CANDIDATES) == "nominaldiameter"
 
     def test_pipe_material_is_assettype(self, workflow, distribution, service):
         """ASSETTYPE is the pipe material, with ASSETGROUP selecting the subtype
         domain that names it. Both are required, so both are requested."""
-        assert workflow.PIPE_MATERIAL_FIELDS == ["ASSETGROUP", "ASSETTYPE"]
+        assert layer_fields.PIPE_MATERIAL_FIELDS == ["ASSETGROUP", "ASSETTYPE"]
         for layer in (distribution, service):
-            for name in workflow.PIPE_MATERIAL_FIELDS:
+            for name in layer_fields.PIPE_MATERIAL_FIELDS:
                 assert self.resolved(workflow, layer, [name]) == name
 
     def test_the_dnv_material_field_is_not_requested(self, workflow):
         """It is a spec, grade or descriptor - not the material type - and is of
         no use to this workflow."""
-        for attribute in dir(workflow):
+        for attribute in dir(layer_fields):
             if not attribute.endswith("_CANDIDATES") or attribute.startswith("SUPP_"):
                 continue
-            values = getattr(workflow, attribute)
+            values = getattr(layer_fields, attribute)
             if not isinstance(values, list):
                 continue
             assert "material" not in [str(v).lower() for v in values], attribute
@@ -153,25 +154,25 @@ class TestFieldNamesUsedByTheWorkflow:
     def test_pipe_pressure(self, workflow, distribution, service):
         for layer in (distribution, service):
             assert self.resolved(workflow, layer,
-                                 workflow.PIPE_PRESSURE_CANDIDATES) == "operatingpressure"
+                                 layer_fields.PIPE_PRESSURE_CANDIDATES) == "operatingpressure"
 
     def test_globalid_resolves_to_each_layers_own_spelling(
             self, workflow, distribution, service, leaks):
         """The pipe layers spell it GLOBALID, layer 206 spells it GlobalID, and
         the single candidate resolves to whichever the layer uses."""
-        assert self.resolved(workflow, distribution, workflow.GLOBALID_CANDIDATES) == "GLOBALID"
-        assert self.resolved(workflow, service, workflow.GLOBALID_CANDIDATES) == "GLOBALID"
-        assert self.resolved(workflow, leaks, workflow.GLOBALID_CANDIDATES) == "GlobalID"
+        assert self.resolved(workflow, distribution, layer_fields.GLOBALID_CANDIDATES) == "GLOBALID"
+        assert self.resolved(workflow, service, layer_fields.GLOBALID_CANDIDATES) == "GLOBALID"
+        assert self.resolved(workflow, leaks, layer_fields.GLOBALID_CANDIDATES) == "GlobalID"
 
     def test_objectid(self, workflow, distribution, service, leaks):
         for layer in (distribution, service, leaks):
             assert self.resolved(workflow, layer,
-                                 workflow.OBJECTID_CANDIDATES) == "OBJECTID"
+                                 layer_fields.OBJECTID_CANDIDATES) == "OBJECTID"
 
     def test_jurisdiction(self, workflow, distribution, service, leaks):
         for layer in (distribution, service, leaks):
             assert self.resolved(workflow, layer,
-                                 workflow.JURISDICTION_CANDIDATES) == "jurisdiction"
+                                 layer_fields.JURISDICTION_CANDIDATES) == "jurisdiction"
 
     @pytest.mark.parametrize("attribute", [
         "MODIFIED_FIELD_CANDIDATES",
@@ -198,7 +199,7 @@ class TestFieldNamesUsedByTheWorkflow:
         # The column names maximo_sql.leak_records puts on its frame.
         available |= {"MAXIMOLEAKID", "MAXIMOLEAKDATE", "LEAKNUMBER", "OBJECTID",
                       "ADDRESS", "CITY", "NEARESTXSTREET"}
-        dead = [name for name in getattr(workflow, attribute) if name not in available]
+        dead = [name for name in getattr(layer_fields, attribute) if name not in available]
         assert dead == [], f"{attribute} carries names nothing provides: {dead}"
 
     def test_the_maximo_names_are_the_ones_the_reader_writes(self, workflow):
@@ -214,9 +215,9 @@ class TestFieldNamesUsedByTheWorkflow:
         produced = set(records[0])
         for name in ("MAXIMOLEAKID", "MAXIMOLEAKDATE", "LEAKNUMBER", "OBJECTID"):
             assert name in produced, name
-        assert "MAXIMOLEAKID" in workflow.GLOBALID_CANDIDATES
-        assert "MAXIMOLEAKDATE" in workflow.LEAK_DATE_CANDIDATES
-        assert "LEAKNUMBER" in workflow.LEAK_KEY_CANDIDATES
+        assert "MAXIMOLEAKID" in layer_fields.GLOBALID_CANDIDATES
+        assert "MAXIMOLEAKDATE" in layer_fields.LEAK_DATE_CANDIDATES
+        assert "LEAKNUMBER" in layer_fields.LEAK_KEY_CANDIDATES
 
     @pytest.mark.parametrize("attribute", [
         "MODIFIED_FIELD_CANDIDATES",
@@ -234,7 +235,7 @@ class TestFieldNamesUsedByTheWorkflow:
         so "NOMINALDIAMETER" beside "nominaldiameter" is one candidate written
         twice - it can never be reached. A second entry must be a different
         field, not a different casing."""
-        candidates = getattr(workflow, attribute)
+        candidates = getattr(layer_fields, attribute)
         simplified = [matching.simplify_field_name(name) for name in candidates]
         assert len(set(simplified)) == len(simplified), (
             f"{attribute} has unreachable duplicates: {candidates}")
@@ -359,11 +360,11 @@ class TestPipeLayerUrlMatching:
 
     def test_matches_the_pipe_layers(self, workflow):
         for layer_id in config.PIPE_LAYER_IDS:
-            assert workflow.is_pipe_layer_url(self.url(layer_id))
-            assert workflow.is_pipe_layer_url(self.url(layer_id, "/query"))
+            assert arcgis.is_pipe_layer_url(self.url(layer_id))
+            assert arcgis.is_pipe_layer_url(self.url(layer_id, "/query"))
 
     def test_does_not_match_the_leak_layer(self, workflow):
-        assert not workflow.is_pipe_layer_url(self.url(config.HISTORIC_LEAK_LAYER_ID))
+        assert not arcgis.is_pipe_layer_url(self.url(config.HISTORIC_LEAK_LAYER_ID))
 
     def test_does_not_match_layers_whose_id_merely_starts_with_a_pipe_id(
             self, workflow, real_layer_ids):
@@ -374,16 +375,16 @@ class TestPipeLayerUrlMatching:
                     and any(str(i).startswith(str(p)) for p in config.PIPE_LAYER_IDS)]
         assert prefixed, "expected the service to have such layers"
         for layer_id in prefixed:
-            assert not workflow.is_pipe_layer_url(self.url(layer_id)), layer_id
-            assert not workflow.is_pipe_layer_url(self.url(layer_id, "/query")), layer_id
+            assert not arcgis.is_pipe_layer_url(self.url(layer_id)), layer_id
+            assert not arcgis.is_pipe_layer_url(self.url(layer_id, "/query")), layer_id
 
     def test_domain_fields_are_appended_only_for_pipes(self, workflow):
         params = {"outFields": "OBJECTID,nominaldiameter,material"}
-        pipe = workflow.apply_pipe_domain_out_fields(
+        pipe = arcgis.apply_pipe_domain_out_fields(
             self.url(config.DISTRIBUTION_PIPE_LAYER_ID, "/query"), params)
         assert pipe["outFields"].endswith(",ASSETGROUP,ASSETTYPE")
 
-        other = workflow.apply_pipe_domain_out_fields(self.url(602, "/query"), params)
+        other = arcgis.apply_pipe_domain_out_fields(self.url(602, "/query"), params)
         assert other["outFields"] == params["outFields"]
 
 
@@ -419,7 +420,7 @@ class TestTheWorkflowDecodesTheMaterialItself:
         return gpd.GeoDataFrame(columns, crs="EPSG:4326")
 
     def decode(self, workflow, distribution, frame, monkeypatch):
-        monkeypatch.setattr(workflow, "request_json",
+        monkeypatch.setattr(arcgis, "request_json",
                             lambda session, url, params=None: distribution)
         with redirect_stdout(io.StringIO()) as buffer:
             result = workflow.decode_pipe_materials(
@@ -467,7 +468,7 @@ class TestTheWorkflowDecodesTheMaterialItself:
     def test_a_missing_domain_field_fails_naming_assettype(
             self, workflow, distribution, monkeypatch):
         frame = self.frame().drop(columns=["ASSETGROUP"])
-        monkeypatch.setattr(workflow, "request_json",
+        monkeypatch.setattr(arcgis, "request_json",
                             lambda session, url, params=None: distribution)
         with pytest.raises(RuntimeError, match="ASSETTYPE is the material type"), \
                 redirect_stdout(io.StringIO()):

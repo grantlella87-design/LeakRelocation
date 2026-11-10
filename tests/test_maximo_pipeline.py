@@ -389,3 +389,91 @@ class TestTheDateFallbackChangesOutcomes:
         tasks, _, counters, _ = relocate(
             workflow, leaks, attributes, distribution, tmp_path=tmp_path)
         assert counters["leaks_a_date_fallback_would_rescue"] == 1
+
+
+class TestRelocateKeepsTheLeaksOwnCrs:
+    """relocate() itself, with leaks in longitude and latitude.
+
+    The tests above call the stages one at a time and so never reached the
+    step in front of them: putting every frame in one coordinate system. That
+    step used to relabel whatever leaks it was handed with layer 206's CRS -
+    right for leaks downloaded from layer 206, and for Maximo leaks a
+    longitude read as an easting in feet, every leak hundreds of miles from
+    any pipe and nothing matched.
+    """
+
+    @pytest.fixture
+    def service(self, workflow, monkeypatch):
+        """The pipe layers' metadata, and a record of every layer asked."""
+        from leakrelocation import arcgis, config
+
+        asked = []
+
+        def request_json(session, url, params=None):
+            asked.append(url)
+            return {"extent": {"spatialReference": {"wkid": 2249,
+                                                    "latestWkid": 2249}}}
+
+        monkeypatch.setattr(arcgis, "request_json", request_json)
+        monkeypatch.setattr(workflow, "USE_RETIRED_PIPE_LAYER", False)
+        monkeypatch.setattr(workflow, "USE_MULTIPROCESSING", False)
+        return {"asked": asked, "leak_layer": config.HIST_LEAK_URL}
+
+    def lon_lat_leaks(self, x, y):
+        """A Maximo leak whose query returns degrees, at this state-plane spot."""
+        from pyproj import Transformer
+        lon, lat = Transformer.from_crs(
+            CRS, "EPSG:4326", always_xy=True).transform(x, y)
+        records, attributes, _ = mx.leak_records([sql_row("WO-1", lon, lat)])
+        return mx.leaks_frame(records, crs="EPSG:4326"), attributes
+
+    def run(self, workflow, leaks, attributes, distribution, tmp_path,
+            leak_source="maximo"):
+        out = tmp_path / "MaximoLeakRelocation.gpkg"
+        with redirect_stdout(io.StringIO()):
+            counters = workflow.relocate(
+                object(), leaks, attributes, distribution,
+                pipes([], "service"), output_gpkg=out,
+                leak_label="Maximo leaks", leak_source=leak_source)
+        return counters, out
+
+    def test_a_leak_in_degrees_lands_on_the_pipe_beside_it(
+            self, workflow, service, tmp_path):
+        import geopandas as gpd
+        leaks, attributes = self.lon_lat_leaks(760_000, 2_960_000)
+        distribution = pipes([(760_020, 2_960_000, "Cast Iron", 8.0)])
+        counters, out = self.run(
+            workflow, leaks, attributes, distribution, tmp_path)
+        assert counters["matched"] == 1
+        moved = gpd.read_file(out, layer="relocated_leaks")
+        assert moved.geometry.iloc[0].x == pytest.approx(760_020, abs=0.5)
+        assert moved.geometry.iloc[0].y == pytest.approx(2_960_000, abs=0.5)
+
+    def test_the_leak_layer_is_not_asked_about_leaks_it_did_not_supply(
+            self, workflow, service, tmp_path):
+        leaks, attributes = self.lon_lat_leaks(760_000, 2_960_000)
+        distribution = pipes([(760_020, 2_960_000, "Cast Iron", 8.0)])
+        self.run(workflow, leaks, attributes, distribution, tmp_path)
+        assert service["asked"], "the pipe layers' CRS was never looked up"
+        assert service["leak_layer"] not in service["asked"]
+
+    def test_leaks_with_no_crs_are_refused_rather_than_guessed_at(
+            self, workflow, service, tmp_path):
+        leaks, attributes = self.lon_lat_leaks(760_000, 2_960_000)
+        leaks = leaks.set_crs(None, allow_override=True)
+        distribution = pipes([(760_020, 2_960_000, "Cast Iron", 8.0)])
+        with pytest.raises(RuntimeError, match="no coordinate system"):
+            self.run(workflow, leaks, attributes, distribution, tmp_path)
+
+    def test_historic_leaks_still_take_layer_206s_crs(
+            self, workflow, service, tmp_path):
+        """The other half of the same switch: a frame downloaded from the leak
+        layer is in that layer's CRS whatever label it arrived with."""
+        records, attributes, _ = mx.leak_records(
+            [sql_row("WO-1", 760_000, 2_960_000)])
+        leaks = mx.leaks_frame(records, crs="EPSG:4326")   # a wrong label
+        distribution = pipes([(760_020, 2_960_000, "Cast Iron", 8.0)])
+        counters, _ = self.run(workflow, leaks, attributes, distribution,
+                               tmp_path, leak_source="historic")
+        assert service["leak_layer"] in service["asked"]
+        assert counters["matched"] == 1

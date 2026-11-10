@@ -137,8 +137,9 @@ def main(argv=None):
         os.environ["FORCE_LAYER_REFRESH"] = "1"
         log("FORCE_LAYER_REFRESH=1: pipe caches will be ignored.")
 
-    import importlib
-    workflow = importlib.import_module("leakrelocation.workflow")
+    # Imported here, not at the top: the workflow reads the diameter rule and
+    # the refresh flag when it is imported, and both were only just set.
+    from leakrelocation import auth, output, workflow
 
     workflow.banner(
         f"enterprise (Maximo) leaks, SQL - {config.MAXIMO_QUERY_FILE}",
@@ -146,8 +147,8 @@ def main(argv=None):
     log(f"Leak CRS: {config.MAXIMO_LEAK_CRS}")
     workflow.ensure_output_folder()
 
-    session = workflow.make_session()
-    with workflow.timed("load pipe layers"):
+    session = auth.make_session()
+    with output.timed("load pipe layers"):
         loaded = workflow.load_pipe_layers(session)
 
     workflow.relocate(

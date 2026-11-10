@@ -57,7 +57,7 @@ import datetime as dt
 import json
 import math
 
-from leakrelocation import config
+from leakrelocation import arcgis, config
 from leakrelocation.output import fail, log, warn
 
 # How many features go in one applyEdits call. The service takes a list; a list
@@ -158,7 +158,7 @@ def to_service_crs(gdf, wkid):
     return gdf.to_crs(target)
 
 
-def current_state(workflow, session, layer_url, object_ids, wkid,
+def current_state(session, layer_url, object_ids, wkid,
                   object_id_field="OBJECTID", globalid_field=None,
                   batch_size=APPLY_BATCH_SIZE):
     """Where the service has these features right now, and their GlobalIDs.
@@ -185,7 +185,7 @@ def current_state(workflow, session, layer_url, object_ids, wkid,
             "returnGeometry": "true",
             "outSR": wkid,
         }
-        data = workflow.request_json_post(
+        data = arcgis.request_json_post(
             session, layer_url.rstrip("/") + "/query", params)
         if data.get("error"):
             fail(f"Could not read the current geometry of the leak features: "
@@ -227,9 +227,9 @@ def normalise_globalid(value):
     return str(value).strip().strip("{}").upper()
 
 
-def current_geometry(workflow, session, layer_url, object_ids, wkid, **kwargs):
+def current_geometry(session, layer_url, object_ids, wkid, **kwargs):
     """Just the positions, for callers that do not need the GlobalIDs."""
-    state = current_state(workflow, session, layer_url, object_ids, wkid,
+    state = current_state(session, layer_url, object_ids, wkid,
                           **kwargs)
     return {oid: entry["xy"] for oid, entry in state.items()}
 
@@ -382,7 +382,7 @@ def read_rollback(path):
     return payload
 
 
-def apply_updates(workflow, session, layer_url, updates, wkid,
+def apply_updates(session, layer_url, updates, wkid,
                   batch_size=APPLY_BATCH_SIZE):
     """Send the updates, in batches, checking every feature's result.
 
@@ -403,7 +403,7 @@ def apply_updates(workflow, session, layer_url, updates, wkid,
             "rollbackOnFailure": "true",
         }
         try:
-            data = workflow.request_json_post(
+            data = arcgis.request_json_post(
                 session, layer_url.rstrip("/") + "/applyEdits", params)
         except Exception as ex:  # noqa: BLE001 - re-raised with what matters
             # request_json_post already turns an error response into an
@@ -467,7 +467,7 @@ def summarise(ready, held, succeeded=None, failed=None):
                 warn(f"  ... and {len(failed) - 10:,} more")
 
 
-def verify_globalids(workflow, session, layer_url, ready, wkid,
+def verify_globalids(session, layer_url, ready, wkid,
                      object_id_field="OBJECTID", globalid_field=None):
     """Confirm every edited feature still has the GlobalID it had.
 
@@ -494,7 +494,7 @@ def verify_globalids(workflow, session, layer_url, ready, wkid,
         warn(f"{len(ready) - len(expected):,} of the {len(ready):,} edited "
              f"features had no GlobalID recorded before the edit, so they "
              f"cannot be checked. The rest can.")
-    after = current_state(workflow, session, layer_url, list(expected), wkid,
+    after = current_state(session, layer_url, list(expected), wkid,
                           object_id_field=object_id_field,
                           globalid_field=globalid_field)
     changed = []

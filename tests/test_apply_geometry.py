@@ -26,19 +26,9 @@ pytest.importorskip("geopandas")
 pytest.importorskip("keyring")
 
 from leakrelocation import apply_geometry as ag
+from leakrelocation import arcgis, auth
 
 WKID = 2249
-
-
-@pytest.fixture(scope="module")
-def workflow():
-    import importlib.util
-    path = os.path.join(REPO_ROOT, "src", "leakrelocation", "workflow.py")
-    spec = importlib.util.spec_from_file_location("lr_apply", path)
-    module = importlib.util.module_from_spec(spec)
-    with redirect_stdout(io.StringIO()):
-        spec.loader.exec_module(module)
-    return module
 
 
 @pytest.fixture
@@ -159,7 +149,7 @@ def service():
 
 
 @pytest.fixture
-def session(workflow):
+def session():
     import requests
     made = requests.Session()
     made._arcgis_access_token = "test-token"
@@ -369,25 +359,25 @@ class TestTheConfirmation:
 
 
 class TestAgainstTheService:
-    def test_the_current_geometry_is_re_read(self, workflow, session, service):
+    def test_the_current_geometry_is_re_read(self, session, service):
         with redirect_stdout(io.StringIO()):
             found = ag.current_geometry(
-                workflow, session, service["url"], [1, 2, 3], WKID)
+                session, service["url"], [1, 2, 3], WKID)
         assert found == service["geometry"]
         assert service["queries"] >= 1
 
-    def test_the_updates_are_applied_and_counted(self, workflow, session,
+    def test_the_updates_are_applied_and_counted(self, session,
                                                  service):
         updates = [{"attributes": {"OBJECTID": 1},
                     "geometry": ag.esri_point(760_020.0, 2_960_000.0, WKID)}]
         with redirect_stdout(io.StringIO()):
             succeeded, failed = ag.apply_updates(
-                workflow, session, service["url"], updates, WKID)
+                session, service["url"], updates, WKID)
         assert succeeded == [1] and failed == []
         assert service["geometry"][1] == (760_020.0, 2_960_000.0)
 
     def test_a_feature_the_service_refuses_is_reported_not_counted_as_done(
-            self, workflow, session, service):
+            self, session, service):
         """applyEdits answers per feature. A batch can come back HTTP 200 with
         half of it rejected, and reporting that as success is the worst kind of
         wrong: the run says it moved leaks it did not."""
@@ -399,19 +389,19 @@ class TestAgainstTheService:
         ]
         with redirect_stdout(io.StringIO()):
             succeeded, failed = ag.apply_updates(
-                workflow, session, service["url"], updates, WKID)
+                session, service["url"], updates, WKID)
         assert succeeded == [1]
         assert len(failed) == 1
         assert failed[0]["object_id"] == 2
         assert "locked" in failed[0]["why"]
 
     def test_a_refused_batch_stops_the_run_and_says_what_was_applied(
-            self, workflow, session, service):
+            self, session, service):
         service["refuse_batch"] = True
         updates = [{"attributes": {"OBJECTID": 1},
                     "geometry": ag.esri_point(1.0, 2.0, WKID)}]
         with redirect_stdout(io.StringIO()), pytest.raises(RuntimeError) as raised:
-            ag.apply_updates(workflow, session, service["url"], updates, WKID)
+            ag.apply_updates(session, service["url"], updates, WKID)
         message = str(raised.value)
         assert "refused" in message
         # The part that only matters mid-run: earlier batches are already
@@ -419,7 +409,7 @@ class TestAgainstTheService:
         assert "earlier batches were" in message
         assert "rollback file" in message
 
-    def test_it_sends_in_batches(self, workflow, session, service):
+    def test_it_sends_in_batches(self, session, service):
         service["geometry"] = {oid: (760_000.0 + oid, 2_960_000.0)
                                for oid in range(1, 12)}
         updates = [
@@ -429,27 +419,24 @@ class TestAgainstTheService:
         ]
         with redirect_stdout(io.StringIO()):
             succeeded, _ = ag.apply_updates(
-                workflow, session, service["url"], updates, WKID, batch_size=4)
+                session, service["url"], updates, WKID, batch_size=4)
         assert len(succeeded) == 11
         assert len(service["applied"]) == 3
 
-    def test_each_batch_is_one_transaction(self, workflow, session, service):
+    def test_each_batch_is_one_transaction(self, session, service, monkeypatch):
         """A half-applied batch is the worst outcome: some leaks moved, some
         not, and no clean way to say which."""
         updates = [{"attributes": {"OBJECTID": 1},
                     "geometry": ag.esri_point(1.0, 2.0, WKID)}]
         sent = {}
-        original = workflow.request_json_post
+        original = arcgis.request_json_post
 
         def capture(session_, url, params):
             sent.update(params)
             return original(session_, url, params)
-        workflow.request_json_post = capture
-        try:
-            with redirect_stdout(io.StringIO()):
-                ag.apply_updates(workflow, session, service["url"], updates, WKID)
-        finally:
-            workflow.request_json_post = original
+        monkeypatch.setattr(arcgis, "request_json_post", capture)
+        with redirect_stdout(io.StringIO()):
+            ag.apply_updates(session, service["url"], updates, WKID)
         assert sent["rollbackOnFailure"] == "true"
 
 
@@ -457,7 +444,7 @@ class TestTheScriptEndToEnd:
     """The dry run, the refusals and a real apply, through main()."""
 
     @pytest.fixture
-    def script(self, workflow, session, monkeypatch):
+    def script(self, session, monkeypatch):
         """The script, with its session already carrying a token.
 
         Without this, main() builds a real session, request_json_post finds no
@@ -466,9 +453,7 @@ class TestTheScriptEndToEnd:
         """
         sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
         import apply_relocated_geometry
-        monkeypatch.setattr(apply_relocated_geometry, "load_workflow",
-                            lambda: workflow)
-        monkeypatch.setattr(workflow, "make_session", lambda *a, **k: session)
+        monkeypatch.setattr(auth, "make_session", lambda *a, **k: session)
         return apply_relocated_geometry
 
     @pytest.fixture
@@ -626,7 +611,7 @@ class TestTheScriptEndToEnd:
 
 
 class TestNothingSecretIsPrinted:
-    def test_the_token_never_appears(self, workflow, session, service, tmp_path,
+    def test_the_token_never_appears(self, session, service, tmp_path,
                                      monkeypatch):
         """The session carries a token. Nothing here should ever echo it."""
         session._arcgis_access_token = "SECRET-TOKEN-VALUE"
@@ -634,7 +619,7 @@ class TestNothingSecretIsPrinted:
                     "geometry": ag.esri_point(1.0, 2.0, WKID)}]
         buffer = io.StringIO()
         with redirect_stdout(buffer):
-            ag.apply_updates(workflow, session, service["url"], updates, WKID)
+            ag.apply_updates(session, service["url"], updates, WKID)
         assert "SECRET-TOKEN-VALUE" not in buffer.getvalue()
 
     def test_the_rollback_file_carries_no_credential(self, tmp_path):
@@ -712,37 +697,37 @@ class TestItUpdatesGeometryAndNothingElse:
 
 
 class TestTheGlobalIdsAreCheckedAfterwards:
-    def test_they_are_read_before_the_edit(self, workflow, session, service):
+    def test_they_are_read_before_the_edit(self, session, service):
         with redirect_stdout(io.StringIO()):
             state = ag.current_state(
-                workflow, session, service["url"], [1, 2], WKID,
+                session, service["url"], [1, 2], WKID,
                 globalid_field="GlobalID")
         assert state[1]["globalid"] == "AAAAAAAA-0000-0000-0000-000000000001"
         assert state[1]["xy"] == (760_000.0, 2_960_000.0)
         assert any("GlobalID" in asked for asked in service["out_fields"])
 
-    def test_an_ordinary_update_leaves_them_alone(self, workflow, session,
+    def test_an_ordinary_update_leaves_them_alone(self, session,
                                                   service):
         before = dict(service["globalid"])
         updates = [ag.geometry_only("OBJECTID", 1, 760_020.0, 2_960_000.0, WKID)]
         with redirect_stdout(io.StringIO()):
-            ag.apply_updates(workflow, session, service["url"], updates, WKID)
+            ag.apply_updates(session, service["url"], updates, WKID)
         assert service["globalid"] == before
         assert service["geometry"][1] == (760_020.0, 2_960_000.0)
 
     def test_verification_passes_when_nothing_was_renumbered(
-            self, workflow, session, service):
+            self, session, service):
         ready = [{"object_id": 1, "x": 760_020.0, "y": 2_960_000.0,
                   "globalid": ag.normalise_globalid(service["globalid"][1])}]
         buffer = io.StringIO()
         with redirect_stdout(buffer):
             changed = ag.verify_globalids(
-                workflow, session, service["url"], ready, WKID,
+                session, service["url"], ready, WKID,
                 globalid_field="GlobalID")
         assert changed == []
         assert "all 1 unchanged" in buffer.getvalue()
 
-    def test_a_renumbered_feature_is_caught_and_named(self, workflow, session,
+    def test_a_renumbered_feature_is_caught_and_named(self, session,
                                                       service):
         """What a delete-and-re-add looks like from outside: same object id,
         brand new GlobalID. If a service ever did that, every reference to
@@ -752,9 +737,9 @@ class TestTheGlobalIdsAreCheckedAfterwards:
         updates = [ag.geometry_only("OBJECTID", 1, 760_020.0, 2_960_000.0, WKID)]
         buffer = io.StringIO()
         with redirect_stdout(buffer):
-            ag.apply_updates(workflow, session, service["url"], updates, WKID)
+            ag.apply_updates(session, service["url"], updates, WKID)
             changed = ag.verify_globalids(
-                workflow, session, service["url"],
+                session, service["url"],
                 [{"object_id": 1, "globalid": before}], WKID,
                 globalid_field="GlobalID")
         assert len(changed) == 1
@@ -765,21 +750,21 @@ class TestTheGlobalIdsAreCheckedAfterwards:
         assert "points at nothing" in printed
 
     def test_a_feature_that_vanished_is_reported_as_changed(
-            self, workflow, session, service):
+            self, session, service):
         with redirect_stdout(io.StringIO()):
             changed = ag.verify_globalids(
-                workflow, session, service["url"],
+                session, service["url"],
                 [{"object_id": 99, "globalid": "SOMETHING"}], WKID,
                 globalid_field="GlobalID")
         assert len(changed) == 1
         assert "could not be read back" in changed[0]["after"]
 
     def test_a_layer_without_globalids_says_so_rather_than_claiming_a_check(
-            self, workflow, session, service):
+            self, session, service):
         buffer = io.StringIO()
         with redirect_stdout(buffer):
             changed = ag.verify_globalids(
-                workflow, session, service["url"],
+                session, service["url"],
                 [{"object_id": 1, "globalid": None}], WKID,
                 globalid_field=None)
         assert changed == []
@@ -791,12 +776,10 @@ class TestTheWholeRunKeepsThem:
     """Through main(), against the stub."""
 
     @pytest.fixture
-    def script(self, workflow, session, monkeypatch):
+    def script(self, session, monkeypatch):
         sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
         import apply_relocated_geometry
-        monkeypatch.setattr(apply_relocated_geometry, "load_workflow",
-                            lambda: workflow)
-        monkeypatch.setattr(workflow, "make_session", lambda *a, **k: session)
+        monkeypatch.setattr(auth, "make_session", lambda *a, **k: session)
         return apply_relocated_geometry
 
     @pytest.fixture

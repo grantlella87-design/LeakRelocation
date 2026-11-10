@@ -28,6 +28,7 @@ import sys
 
 from _bootstrap import config
 
+from leakrelocation import arcgis, auth, layer_fields
 from leakrelocation.output import fail, log, warn
 
 DEFAULT_FIELDS = "ADDRESS,NEARESTXSTREET,CITY,REVISEDLEAKDATE,DISCOVEREDDATE"
@@ -52,11 +53,11 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
-def count(workflow, session, url, where):
+def count(session, url, where):
     """Rows matching `where`, or None when the service would not answer."""
     params = {"f": "json", "where": where, "returnCountOnly": "true"}
     try:
-        data = workflow.request_json(session, url.rstrip("/") + "/query", params)
+        data = arcgis.request_json(session, url.rstrip("/") + "/query", params)
     except Exception as ex:  # noqa: BLE001 - one bad field must not end the probe
         warn(f"   could not ask [{where}]: {ex}")
         return None
@@ -68,7 +69,7 @@ def count(workflow, session, url, where):
     return None if value is None else int(value)
 
 
-def values(workflow, session, url, where, out_fields, limit):
+def values(session, url, where, out_fields, limit):
     """Attribute rows for `where`, empty when the service would not answer."""
     params = {
         "f": "json",
@@ -78,7 +79,7 @@ def values(workflow, session, url, where, out_fields, limit):
         "resultRecordCount": limit,
     }
     try:
-        data = workflow.request_json(session, url.rstrip("/") + "/query", params)
+        data = arcgis.request_json(session, url.rstrip("/") + "/query", params)
     except Exception as ex:  # noqa: BLE001 - as above
         warn(f"   could not fetch [{where}]: {ex}")
         return []
@@ -104,8 +105,8 @@ def has_value(where, field, is_text):
     return f"({where}) AND {clause}" if where else clause
 
 
-def show_samples(workflow, session, url, where, field, extra, limit):
-    rows = values(workflow, session, url, where,
+def show_samples(session, url, where, field, extra, limit):
+    rows = values(session, url, where,
                   ",".join([field, *extra]), limit)
     if not rows:
         return False
@@ -116,13 +117,13 @@ def show_samples(workflow, session, url, where, field, extra, limit):
     return True
 
 
-def probe(workflow, session, url, field, is_text, where, samples):
+def probe(session, url, field, is_text, where, samples):
     """Count one field four ways and show values from rows that have one."""
     log(f"\n--- {field} ---")
-    everywhere = count(workflow, session, url, has_value("", field, is_text))
-    in_scope = count(workflow, session, url, has_value(where, field, is_text))
-    null_anywhere = count(workflow, session, url, f"{field} IS NULL")
-    blank = (count(workflow, session, url, f"{field} = ''") if is_text else None)
+    everywhere = count(session, url, has_value("", field, is_text))
+    in_scope = count(session, url, has_value(where, field, is_text))
+    null_anywhere = count(session, url, f"{field} IS NULL")
+    blank = (count(session, url, f"{field} = ''") if is_text else None)
 
     width = max(len(where), 11)
     log(f"   with a value, {'whole layer':<{width}} : {fmt(everywhere)}")
@@ -133,11 +134,11 @@ def probe(workflow, session, url, field, is_text, where, samples):
 
     if in_scope:
         log("   values on the rows this project downloads:")
-        show_samples(workflow, session, url, has_value(where, field, is_text),
+        show_samples(session, url, has_value(where, field, is_text),
                      field, ["LMSLEAKNUMBER"], samples)
     elif everywhere:
         log(f"   no value on any {where} row. Values elsewhere on the layer:")
-        show_samples(workflow, session, url, has_value("", field, is_text),
+        show_samples(session, url, has_value("", field, is_text),
                      field, ["jurisdiction", "STATE"], samples)
     return {"everywhere": everywhere, "in_scope": in_scope}
 
@@ -165,18 +166,16 @@ def verdict(result, cached_in_request):
 
 def main(argv=None):
     args = parse_args(argv)
-    import importlib
-    workflow = importlib.import_module("leakrelocation.workflow")
 
     fields = [name.strip() for name in args.fields.split(",") if name.strip()]
     url = args.url.rstrip("/")
-    session = workflow.make_session()
+    session = auth.make_session()
 
     log(f"Layer: {url}")
     log(f"The rows this project downloads: {args.where}")
 
-    meta = workflow.layer_metadata(session, url)
-    asked = workflow.build_out_fields(meta, "historic leaks")
+    meta = arcgis.layer_metadata(session, url)
+    asked = layer_fields.build_out_fields(meta, "historic leaks")
     log(f"\nThe workflow asks the service for:\n   {asked}")
     requested = {name.strip().lower() for name in asked.split(",")}
 
@@ -187,7 +186,7 @@ def main(argv=None):
             fail(f"The layer has no {name} field. It has: "
                  f"{', '.join(sorted(types))}")
 
-    total = count(workflow, session, url, args.where)
+    total = count(session, url, args.where)
     log(f"Rows matching that WHERE: {fmt(total)}")
     if total == 0:
         fail(f"The layer returned no rows at all for [{args.where}], so nothing "
@@ -195,7 +194,7 @@ def main(argv=None):
 
     results = {}
     for name in fields:
-        results[name] = probe(workflow, session, url, name,
+        results[name] = probe(session, url, name,
                               types[name.lower()] in TEXT_FIELD_TYPES,
                               args.where, args.samples)
 
