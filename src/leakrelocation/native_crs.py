@@ -6,6 +6,8 @@ that no EPSG code describes - and everything is then projected to the
 distribution pipes' CRS for matching. Nothing is forced to a state plane first.
 """
 import os
+import re
+import sqlite3
 import sys
 
 from pyproj import CRS
@@ -161,3 +163,51 @@ def normalize_loaded_layers_to_analysis_crs(
     analysis_crs = get_analysis_crs(session)
     print(f"Analysis CRS for all spatial matching: {analysis_crs.name}", flush=True)
     return leaks, distribution_pipes, service_pipes, analysis_crs
+
+
+# --- GeoPackages that ArcGIS can open ----------------------------------------
+#
+# The DNV layers publish their custom equidistant conic as Esri WKT. GDAL writes
+# it into a GeoPackage as GDAL WKT1 - latitude_of_center, longitude_of_center,
+# AXIS[...] - and ArcGIS Pro rejects that outright: "The coordinate system
+# description is invalid", and the layer will not add. Rewriting the stored
+# definition as Esri WKT fixes Pro, and GDAL and pyproj read Esri WKT back to the
+# same CRS, so nothing in this project notices the difference.
+
+# pyproj's WKT1_ESRI keeps PROJ's name for the US foot; Esri's is Foot_US.
+_ESRI_UNIT_NAMES = {"US survey foot": ("Foot_US", "0.3048006096012192")}
+
+
+def esri_wkt(crs):
+    """`crs` as Esri WKT, in the form ArcGIS Pro accepts."""
+    wkt = CRS(crs).to_wkt("WKT1_ESRI")
+    for proj_name, (esri_name, factor) in _ESRI_UNIT_NAMES.items():
+        wkt = re.sub(rf'UNIT\["{re.escape(proj_name)}",[^\]]*\]',
+                     f'UNIT["{esri_name}",{factor}]', wkt)
+    return wkt
+
+
+def make_gpkg_crs_readable_by_arcgis(path):
+    """Rewrite the GeoPackage's custom coordinate systems as Esri WKT.
+
+    Only the records with no EPSG code are touched: ArcGIS reads those by code.
+    Returns how many records were rewritten.
+    """
+    connection = sqlite3.connect(str(path))
+    try:
+        rows = connection.execute(
+            "SELECT srs_id, definition FROM gpkg_spatial_ref_sys "
+            "WHERE upper(organization) <> 'EPSG' AND srs_id > 0 "
+            "AND lower(definition) <> 'undefined'").fetchall()
+        rewritten = 0
+        for srs_id, definition in rows:
+            replacement = esri_wkt(CRS.from_wkt(definition))
+            if replacement != definition:
+                connection.execute(
+                    "UPDATE gpkg_spatial_ref_sys SET definition = ? "
+                    "WHERE srs_id = ?", (replacement, srs_id))
+                rewritten += 1
+        connection.commit()
+    finally:
+        connection.close()
+    return rewritten

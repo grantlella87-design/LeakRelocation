@@ -3,6 +3,18 @@
 What changed, newest first, and why. Changes that alter which leaks relocate
 are marked **output**.
 
+## Unreleased
+
+- The GeoPackage now opens in ArcGIS Pro. GDAL wrote the DNV equidistant conic
+  in its own WKT dialect, which Pro rejected as "The coordinate system
+  description is invalid"; `write_outputs` now stores it as Esri WKT. The
+  coordinates and every attribute are unchanged, and GDAL reads it back as the
+  same CRS.
+- `scripts/update_leak_layer_arcpy.py`, run in ArcGIS Pro's Python, copies
+  layer 206 into a file geodatabase and moves the copy's leaks to their
+  relocated positions. It reads the GeoPackage from SharePoint (through a
+  OneDrive sync or WebDAV) or a local path, and leaves the live layer alone.
+
 ## 1.0.0 — November 2026
 
 A restructuring for production use. No command changed and the relocation

@@ -868,6 +868,9 @@ def write_outputs(leak_tasks, match_results, pipe_sources, initial_counters):
     lines_gdf.to_file(
         OUTPUT_GPKG, layer=schema.OFFSET_LINES_LAYER, driver="GPKG")
     audit_gdf.to_file(OUTPUT_GPKG, layer=schema.AUDIT_LAYER, driver="GPKG")
+    # GDAL stores the DNV equidistant conic in a form ArcGIS Pro rejects as
+    # invalid; store it as Esri WKT so the GeoPackage opens in Pro.
+    native_crs.make_gpkg_crs_readable_by_arcgis(OUTPUT_GPKG)
     log(f"Wrote relocated_leaks: {len(relocated_gdf):,}")
     log(f"Wrote relocated_leak_offset_lines: {len(lines_gdf):,}")
     log(f"Wrote leak_relocation_audit: {len(audit_gdf):,}")

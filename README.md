@@ -43,6 +43,7 @@ More on installing, proxies and certificates: [docs/setup.md](docs/setup.md).
 | `python scripts\maximo_leaks.py` | Relocate the enterprise (Maximo) leaks, read from SQL. |
 | `python scripts\relocation_dashboard.py` | Write the relocation-distance dashboard as one HTML file. |
 | `python scripts\apply_relocated_geometry.py` | Move the leaks on the live layer to their relocated positions. **A dry run unless `--apply` is given.** |
+| `propy.bat scripts\update_leak_layer_arcpy.py` | In ArcGIS Pro's Python: copy layer 206 into a file geodatabase and move the copy's leaks to their relocated positions. Leaves the live layer alone. |
 
 Every command answers `--help`.
 
